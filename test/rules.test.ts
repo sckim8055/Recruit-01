@@ -56,7 +56,7 @@ describe('nextStatus', () => {
 
 describe('authz', () => {
   const job = { company_id: 'c1', agency_id: null, created_by: 'u9' };
-  const app = { seeker_id: 's1', job, cross_border_consent_at: null as number | null };
+  const app = { seeker_id: 's1', job, cross_border_consent_at: null as number | null, status: 'submitted' };
   const mk = (p: Partial<Actor>): Actor => ({ id: 'x', role: 'company', companyIds: [], hqCompanyIds: [], agencyIds: [], ...p });
   it('다른 구직자는 볼 수 없다', () => expect(canViewApplication(mk({ role: 'seeker', id: 's2' }), app).allow).toBe(false));
   it('한국법인 담당자는 볼 수 있다', () => expect(canViewApplication(mk({ companyIds: ['c1'] }), app).allow).toBe(true));

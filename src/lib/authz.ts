@@ -25,11 +25,13 @@ export interface ApplicationRef {
   seeker_id: string;
   job: JobRef;
   cross_border_consent_at: number | null;
+  /** 지원 상태. 'withdrawn'(구직자가 취소) 이면 본인 말고는 아무도 볼 수 없다. */
+  status: string;
 }
 
 export type ViewDecision =
   | { allow: true; needsReason: boolean }
-  | { allow: false; why: 'not_related' | 'no_cross_border_consent' };
+  | { allow: false; why: 'not_related' | 'no_cross_border_consent' | 'withdrawn' };
 
 /**
  * 지원서(이력서 복사본)를 볼 수 있는가.
@@ -37,12 +39,14 @@ export type ViewDecision =
  * - 기업 담당자: 자기 기업의 직접 공고. 본사 소속 담당자는 국외 이전 동의가 있어야 한다
  * - 헤드헌터: 자기 업체가 올린 공고
  * - 관리자: 사유를 입력해야 열린다 (needsReason). 호출부는 access_log 에 사유를 남긴다
+ * - 구직자가 취소한 지원(withdrawn)은 본인 말고는 아무도 볼 수 없다 (기업·헤드헌터·관리자 모두). 취소할 때 내용도 지운다.
  * 열람이 허용되면 호출부는 반드시 access_log 에 기록한다.
  */
 export function canViewApplication(a: Actor, app: ApplicationRef): ViewDecision {
   if (a.role === 'seeker') {
     return a.id === app.seeker_id ? { allow: true, needsReason: false } : { allow: false, why: 'not_related' };
   }
+  if (app.status === 'withdrawn') return { allow: false, why: 'withdrawn' };
   if (a.role === 'admin') return { allow: true, needsReason: true };
   if (a.role === 'company') {
     if (app.job.agency_id !== null || !a.companyIds.includes(app.job.company_id)) return { allow: false, why: 'not_related' };

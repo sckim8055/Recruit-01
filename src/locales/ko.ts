@@ -35,6 +35,8 @@ export const ko: Record<string, string> = {
   'mail.code.body': '인증코드: {code}\n\n10분 안에 입력해 주세요. 요청한 적이 없다면 이 메일을 무시하셔도 됩니다.',
   'mail.invite.subject': '{company} 채용 페이지 담당자 초대',
   'mail.invite.body': '{company}에서 {site}의 채용 페이지를 함께 관리하도록 초대했습니다.\n\n수락하는 방법\n1. {url} 을 엽니다.\n2. 이 메일을 받은 이메일 주소를 입력하고, 회원 유형은 "기업 담당자"를 골라 로그인합니다.\n3. 기업 관리 화면의 "받은 초대"에서 "수락"을 누릅니다.\n\n모르는 기업이거나 초대받을 일이 없다면 이 메일을 무시하셔도 됩니다.',
+  'mail.applicant.subject': '새 지원자: {job}',
+  'mail.applicant.body': '"{job}" 공고에 새 지원자가 있습니다.\n\n지원서는 {site}에 로그인해 기업 관리 화면에서 확인해 주세요.\n{url}\n\n이 메일에는 지원자의 개인정보가 들어 있지 않습니다.',
   'footer.disclaimer': '본 사이트는 채용 정보를 제공하며, 채용 당사자가 아닙니다. 채용 여부와 근로조건은 구인 기업이 정합니다.',
   'footer.registration': '직업정보제공사업 신고번호',
   'footer.test': '테스트 환경 — 실제 공고가 아닙니다',

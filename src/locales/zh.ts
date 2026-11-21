@@ -35,6 +35,8 @@ export const zh: Record<string, string> = {
   'mail.code.body': '验证码：{code}\n\n请在10分钟内输入。如非本人操作，请忽略此邮件。',
   'mail.invite.subject': '{company} 邀请您管理招聘页面',
   'mail.invite.body': '{company} 邀请您共同管理该企业在 {site} 上的招聘页面。\n\n接受方法：\n1. 打开 {url}\n2. 输入收到本邮件的邮箱地址，账号类型选择“企业招聘负责人”并登录。\n3. 在“企业管理”页面的“收到的邀请”中点击“接受”。\n\n如果您不认识该企业或未预期收到邀请，可以忽略此邮件。',
+  'mail.applicant.subject': '新的应聘者：{job}',
+  'mail.applicant.body': '职位“{job}”收到了新的应聘。\n\n请登录{site}，在企业管理页面查看应聘资料。\n{url}\n\n本邮件不包含应聘者的个人信息。',
   'footer.disclaimer': '本网站仅提供招聘信息，并非招聘当事方。是否录用及劳动条件由招聘企业决定。',
   'footer.registration': '职业信息提供业申报编号',
   'footer.test': '测试环境 — 并非真实职位',
