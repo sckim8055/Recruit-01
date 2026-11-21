@@ -13,12 +13,14 @@
 //   메시지 글은 POST 본문으로만 오가며 주소·로그·email_log 에 남지 않는다. 보낸 뒤에는 지원자 목록으로 리다이렉트한다 (지원서 화면으로 가면 열람이 또 기록되므로).
 //   관리자·운영자가 지원자에게 메일을 보내는 경로는 없다.
 import { Hono, type Context } from 'hono';
-import type { AppEnv, Locale } from '../env';
+import { now, type AppEnv, type Env, type Locale } from '../env';
 import { INTERVIEW_MAIL_MAX, readMessage, rejectMail, REJECT_BATCH_MAX, sendInterviewRequest, sendRejection, type MailResult } from '../lib/applicant-mail';
 import { downloadApplicationFile, openApplication, refOf } from '../lib/applicants';
 import { canEditJob, canViewApplication } from '../lib/authz';
 import { t } from '../lib/i18n';
 import { MESSAGE_MAX, translateMessage } from '../lib/localize/message';
+import { availableEngines } from '../lib/localize';
+import { QUOTA_MSG, limitsOf, quotaText, takeCompanyMail, takeLocalize, type QuotaTake } from '../lib/quota';
 import { render, renderError } from '../render';
 import { ApplicantList, CompanyApplicationNotice, CompanyApplicationPage } from '../views/applicants';
 import { InterviewCompose, InterviewPreview, isMailOpen, MailResultPage, RejectConfirm, tf, type MailHeadInfo } from '../views/applicant-mail';
@@ -32,15 +34,17 @@ export const bizApplicants = new Hono<AppEnv>();
 
 // ── 지원자 목록
 
+const batchNum = (q: (k: string) => string | undefined, k: string) => {
+  const v = q(k) ?? '';
+  return /^\d{1,2}$/.test(v) && Number(v) <= REJECT_BATCH_MAX ? Number(v) : 0;
+};
+
 /** 결과 표시: ?ok=interview, ?ok=rejected&sent=N&failed=M (숫자만, 0~REJECT_BATCH_MAX). */
 function listOk(l: Locale, q: (k: string) => string | undefined): string[] {
   const ok = q('ok');
   if (ok === 'interview') return [t(l, 'aplm.ok.interview')];
   if (ok !== 'rejected') return [];
-  const num = (k: string) => {
-    const v = q(k) ?? '';
-    return /^\d{1,2}$/.test(v) && Number(v) <= REJECT_BATCH_MAX ? Number(v) : 0;
-  };
+  const num = (k: string) => batchNum(q, k);
   const sent = num('sent'), failed = num('failed');
   return [
     ...(sent > 0 ? [tf(l, 'aplm.ok.rejected', { sent })] : []),
@@ -67,8 +71,28 @@ bizApplicants.get('/jobs/:id/applicants', async (c) => {
   if (ctx instanceof Response) return ctx;
   const job = await loadCompanyJob(c, ctx);
   if (!job) return renderError(c, 404);
-  return renderList(c, ctx, job, { ok: listOk(c.var.locale, (k) => c.req.query(k)) });
+  const q = (k: string) => c.req.query(k);
+  return renderList(c, ctx, job, { ok: listOk(c.var.locale, q), error: rejectLimitNote(c.var.locale, c.env, q) });
 });
+
+/** 메일 한도에 걸린 몫의 안내 (T-05c). 숫자는 지금 설정의 한도. */
+function mailLimitText(l: Locale, env: Env, pool: 'company' | 'site'): string {
+  const L = limitsOf(env);
+  return pool === 'company' ? quotaText(l, QUOTA_MSG.mailCompany, { n: L.MAIL_PER_COMPANY_DAY }) : quotaText(l, QUOTA_MSG.mailSite, { n: L.MAIL_SITE_DAY });
+}
+
+/** 불합격 통보 결과의 한도 안내: ?ok=rejected&limited=K&pool=company|site (숫자·이름만). K 가 0 이면 없음. */
+function rejectLimitNote(l: Locale, env: Env, q: (k: string) => string | undefined): string | undefined {
+  if (q('ok') !== 'rejected') return undefined;
+  const unsent = batchNum(q, 'limited');
+  if (!unsent) return undefined;
+  const pool = q('pool') === 'site' ? 'site' : 'company';
+  return `${quotaText(l, QUOTA_MSG.rejectUnsent, { unsent })} ${mailLimitText(l, env, pool)}`;
+}
+
+/** 메일 한도 잡기 결과 → 안내 글 (거절일 때만). */
+const mailRefusal = (l: Locale, env: Env, q: QuotaTake): string | null =>
+  q.ok ? null : mailLimitText(l, env, q.pool === 'site' ? 'site' : 'company');
 
 /** 이 기업 공고의 지원서만 (공고 수정 권한과 같은 조건). 없거나 남의 것이면 null → 404. */
 async function loadCompanyApp(c: Context<AppEnv>, ctx: CompanyCtx): Promise<ApplicationWithJob | null> {
@@ -184,6 +208,18 @@ bizApplicants.post('/applications/:id/interview/preview', async (c) => {
       <InterviewCompose locale={l} head={head} appId={g.app.id} sent={g.sent} replyTo={ctx.user.email} text={formText(f.message)} error={messageError(l, m.why)} />
     ), 'aplm.iv.title', 400);
   }
+  // 하루 번역 한도 (T-05c): 공고 현지화와 같은 기업 몫 → 사이트 몫. 엔진이 없으면 한도를 쓰지 않는다 (translateMessage 가 no_engine).
+  // 한도에 걸리면 번역 없이 원문만 — 보내기는 막지 않는다.
+  if (availableEngines(c.env).length > 0) {
+    const q = await takeLocalize(c.env, ctx.company.id, now());
+    if (!q.ok) {
+      const key = q.pool === 'company' ? QUOTA_MSG.previewCompany : QUOTA_MSG.previewSite;
+      return render(c, (
+        <InterviewPreview locale={l} head={head} appId={g.app.id} original={m.text} translation={null} limitNote={quotaText(l, key, { n: q.limit })}
+          replyTo={ctx.user.email} sent={g.sent} />
+      ), 'aplm.pv.title');
+    }
+  }
   // 엔진에는 메시지 글만 간다 (지원자 정보 없음). 실패해도 예외 없이 { ok: false }.
   const tr = await translateMessage(c.env, m.text);
   const same = tr.ok && tr.ko.trim() === m.text.trim();
@@ -209,6 +245,16 @@ bizApplicants.post('/applications/:id/interview/send', async (c) => {
   }
   const onlyOriginal = f.only_original === '1';
   const translationKo = cleanTranslation(f.translation, m.text, onlyOriginal);
+  // 하루 메일 한도 (T-05c): 보내기 전에 잡는다. 걸리면 보내지 않고(기록도 없음) 글을 지닌 미리 보기로.
+  const limitError = mailRefusal(l, c.env, await takeCompanyMail(c.env, ctx.company.id, now()));
+  if (limitError) {
+    const hidden = typeof f.translation === 'string' ? cleanTranslation(f.translation, m.text, false) : null;
+    return render(c, (
+      <InterviewPreview locale={l} head={await headOf(c, g.app)} appId={g.app.id} original={m.text} translation={hidden}
+        noTranslation={hidden === null ? 'failed' : undefined} onlyOriginal={onlyOriginal} replyTo={ctx.user.email} sent={g.sent}
+        error={limitError} />
+    ), 'aplm.pv.title', 400);
+  }
   let r: MailResult;
   try {
     r = await sendInterviewRequest(c.env, ctx.actor, g.app, { companyName: ctx.company.name_ko, original: m.text, translationKo, replyTo: ctx.user.email }, t);
@@ -281,11 +327,19 @@ bizApplicants.post('/jobs/:id/applicants/reject/send', async (c) => {
   if (ctx instanceof Response) return ctx;
   const p = await pickForReject(c, ctx);
   if (p instanceof Response) return p;
-  let sent = 0, failed = p.skipped;
+  let sent = 0, failed = p.skipped, limited = 0;
+  let pool: 'company' | 'site' = 'company';
   // 차례로 하나씩 (요청 하나의 처리량을 작게, 메일 API 에 한꺼번에 몰리지 않게). 최대 REJECT_BATCH_MAX 건.
-  for (const id of p.ids) {
+  for (const [i, id] of p.ids.entries()) {
     const app = await getApplicationWithJob(c.env.DB, id);
     if (!app || app.job_id !== p.job.id || !canEditJob(ctx.actor, refOf(app).job)) { failed++; continue; }
+    // 하루 메일 한도 (T-05c): 한 통마다 보내기 전에. 처음 걸린 곳에서 멈추고 남은 건수는 보내지 않는다 (기록도 없다 — 핵심 함수는 보낸 뒤에만 기록한다).
+    const q = await takeCompanyMail(c.env, ctx.company.id, now());
+    if (!q.ok) {
+      limited = p.ids.length - i;
+      pool = q.pool === 'site' ? 'site' : 'company';
+      break;
+    }
     let r: MailResult;
     try {
       r = await sendRejection(c.env, ctx.actor, app, { companyName: ctx.company.name_ko, replyTo: ctx.user.email }, t);
@@ -294,5 +348,6 @@ bizApplicants.post('/jobs/:id/applicants/reject/send', async (c) => {
     }
     if (r.ok) sent++; else failed++;
   }
-  return c.redirect(`/biz/jobs/${p.job.id}/applicants?ok=rejected&sent=${sent}&failed=${failed}`, 303);
+  const lim = limited ? `&limited=${limited}&pool=${pool}` : '';
+  return c.redirect(`/biz/jobs/${p.job.id}/applicants?ok=rejected&sent=${sent}&failed=${failed}${lim}`, 303);
 });

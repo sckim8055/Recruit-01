@@ -125,7 +125,11 @@ export const LoginTotp = ({ locale, setup, error }: { locale: Locale; setup?: { 
 );
 
 /** 관리자 첫 화면: 처리할 일의 개수만 보여준다. 기업 검증 목록은 /admin/companies, 공고 검토는 /admin/jobs, 신고 목록은 T-09 에서 만든다. */
-export const AdminHome = ({ locale, counts }: { locale: Locale; counts: { companies: number; agencies: number; jobReviews: number; reports: number } }) => (
+export interface AdminUsage { day: string; localize: { n: number; limit: number }; mail: { n: number; limit: number } }
+
+export const AdminHome = ({ locale, counts, usage }: {
+  locale: Locale; counts: { companies: number; agencies: number; jobReviews: number; reports: number }; usage?: AdminUsage;
+}) => (
   <section class="wide">
     <h1>{t(locale, 'admin.title')}</h1>
     <ul class="stats">
@@ -134,6 +138,16 @@ export const AdminHome = ({ locale, counts }: { locale: Locale; counts: { compan
       <li><a class="stat" href="/admin/jobs"><b>{counts.jobReviews}</b><span>{t(locale, 'admin.count.job_reviews')}</span></a></li>
       <li><b>{counts.reports}</b><span>{t(locale, 'admin.count.reports')}</span></li>
     </ul>
+    {usage && <div class="box usage">
+      <h2>{t(locale, 'admin.usage.title')} <span class="muted">({usage.day})</span></h2>
+      <table>
+        <tbody>
+          <tr><th>{t(locale, 'admin.usage.localize')}</th><td>{usage.localize.n} / {usage.localize.limit}</td></tr>
+          <tr><th>{t(locale, 'admin.usage.mail')}</th><td>{usage.mail.n} / {usage.mail.limit}</td></tr>
+        </tbody>
+      </table>
+      <p class="hint">{t(locale, 'admin.usage.note')}</p>
+    </div>}
     <p><a href="/admin/settings">{t(locale, 'adm.set.title')}</a> · <a href="/admin/options">{t(locale, 'adm.opt.title')}</a> · <a href="/admin/access-log">{t(locale, 'adm.log.title')}</a></p>
     <p class="muted">{t(locale, 'admin.note')}</p>
   </section>

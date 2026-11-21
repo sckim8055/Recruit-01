@@ -44,11 +44,12 @@ src/
     consent.ts       이용약관·개인정보 필수 동의 판단(판, 빠진 동의, 예외 주소, 돌아갈 주소) — 순수 함수 (13절)
     account.ts       회원 탈퇴: 막는 경우 판단 → 파일 키 모으기 → DB 지우기 → R2 지우기 (13절)
     static-files.ts  public/ 의 파일 주소 (동의 확인에서 건너뜀)
+    quota.ts         남용 방지 한도: 한도 숫자(한 곳)·변수 해석·한국 시간 날짜·기업 몫 → 사이트 몫 잡기 (15절)
     localize/        현지화 엔진 층 (7절)
   db/                SQL 과 D1 호출은 여기에만 (T-05d). users · sessions(인증코드·세션·TOTP 대기) · companies(기업·담당자·초대·서류 행)
                      · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수) · settings(site_settings) · options(job_options) · resumes(이력서)
                      · applications(지원·동의·취소) · application-views(지원 현황 화면용 읽기) · applicants(기업·관리자 쪽: 내용 없는 지원자 목록·개수·지원 한 건·viewed·열람 기록 읽기)
-                     · consents(이용약관·개인정보 동의 읽기·쓰기) · account(탈퇴 트랜잭션). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
+                     · consents(이용약관·개인정보 동의 읽기·쓰기) · account(탈퇴 트랜잭션) · usage(하루 사용량 한도, 15절). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
                      PostgreSQL 로 옮길 때 고칠 곳과 SQLite 전용 문법 목록은 docs/DB-PORTING.md
   legal/             이용약관(terms.ts)·개인정보처리방침(privacy.ts) 본문, 운영자 정보(types.ts OPERATOR). 한국어 기준 + 중국어 참고 번역 (13절)
   locales/ko.ts zh.ts  화면 문구
@@ -161,7 +162,7 @@ docs/                이 문서, API.md, TASKS.md
 
 - 1350 답변에 따라 바뀌는 것: 헤드헌터 공고, 이력서 중국어 요약, 통역 서비스, 한국법인 없는 본사의 검증 서류(营业执照).
 - 브랜드명: 화면의 `Recruit` 는 임시다 (`src/locales/` 의 `site.name`).
-- Cloudflare Turnstile(봇 방지): 중국 접속 테스트 뒤 결정. 지금은 발송 횟수 제한만 있다.
+- Cloudflare Turnstile(봇 방지): 중국 접속 테스트 뒤 결정. 지금은 발송 횟수 제한(로그인 코드 이메일당 60초)과 15절의 하루 한도만 있다.
 
 ## 9. 공개 공고 화면 (T-06)
 
@@ -327,6 +328,7 @@ docs/                이 문서, API.md, TASKS.md
 | 동의 기록(철회된 것)·지원했다는 사실(내용 없는 행·이벤트) | `ERASED_ROW_KEEP` = 730일 | "탈퇴 후에도 2년간 보관할 수 있습니다 【확인 필요: 기간】" | dropOldRows |
 | 메일 발송 기록 `email_log`(주소 해시) | `EMAIL_LOG_KEEP` = 365일 | (방침에 따로 없음) | dropOldRows |
 | 만료된 세션·인증코드·2단계 대기 | 만료 시각 | — | dropOldRows |
+| 하루 사용량 `usage_counters`(id·날짜·횟수, 15절) | `lib/quota.USAGE_KEEP_DAYS` = 35일 | (개인정보 아님) | dropOldRows |
 | 마감일 없는 공고 | `JOB_STALE_AFTER` = 30일, 안내 `JOB_CLOSE_NOTICE_BEFORE` = 3일 | — | closeJobs |
 | R2 고아 객체 | `ORPHAN_MIN_AGE` = 24시간 | — | sweepOrphans |
 
@@ -375,7 +377,8 @@ D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다)
 3. **purgeApplications** — `purge_after < 지금` 이고 내용·파일이 남은 지원 10건: **D1 먼저**(한 batch: 진행 중이면 `auto_closed` + 상태, `resume_snapshot = ''`·`file_r2_key = NULL`·`summary_zh = NULL`, 그 지원의 국외 이전 동의 `withdrawn_at`)
    → 아직 어떤 행이 그 키를 가리키는지 다시 확인 → 아무도 가리키지 않는 `rfiles/` 객체만 R2 에서 삭제. R2 삭제 실패는 세어 두고(행은 이미 지워짐) 고아 정리가 치운다. 공고 상태는 보지 않는다(기한이 지났으면 지운다).
 4. **dropOldRows** — 표마다 200행, 자식 먼저, 한 batch: 내용이 지워진(`resume_snapshot = ''`·파일 키 없음) 지원 중 `purge_after < 지금 - 2년` 의 이벤트 → 이벤트가 남지 않은 그 지원 행,
-   철회된 지 2년 지난 동의, 2년 지난 열람 기록, 1년 지난 메일 기록, 만료된 세션·인증코드·관리자 2단계 대기. `company_invites` 와 `users` 는 건드리지 않는다.
+   철회된 지 2년 지난 동의, 2년 지난 열람 기록, 1년 지난 메일 기록, 만료된 세션·인증코드·관리자 2단계 대기, 35일(한국 시간 날짜)보다 오래된 하루 사용량(T-05c).
+   `company_invites` 와 `users` 는 건드리지 않는다. (batch 9문장 + 집계 2 = 11문장, 상한 25 안.)
    지원 행이 지워지면 그 공고에 같은 구직자가 다시 지원할 수 있게 된다(취소 후 2년 — UNIQUE 가 풀림).
 5. **purgeVerificationDocs** — 확인(`approved`·`rejected`)이 1년 전에 끝난 서류 5건(`vdocs/` 키만): **행을 먼저**(행마다 한 문장) 지우고, 지워진 행의 `vdocs/` 객체만 R2 에서 지운다. 확인 대기(`pending`) 서류는 건드리지 않는다.
    서류가 모두 지워진 검증 완료 기업은 **검증 완료 그대로**다(검증 상태는 서류 행으로 다시 계산하지 않는다. `verifyBlocks` 의 "서류 없음" 은 검증 대기 기업의 승인 버튼에만 쓰인다 — 관리자 화면·공개 화면이 그대로 그려지는지 테스트).
@@ -392,3 +395,29 @@ D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다)
   (dev·test 에서 Resend 키가 없으면 `lib/email.sendMail` 이 받는 주소와 본문을 콘솔에 출력한다 — 기존 동작, 운영에서는 출력하지 않는다.)
 - 정리 작업을 실행하는 **HTTP 경로는 없다.** `scheduled` 만 실행한다. 개발용으로 cron 문자열 `maint:<단계>` 로 단계를 고르는 것은 `APP_ENV === 'dev'` 일 때만 받는다(배포 환경의 cron 문자열은 `wrangler.jsonc` 에 적은 `"0 * * * *"` 뿐이라 닿지 않는다. test 환경에서 같은 문자열을 보내도 시간표대로 실행됨을 확인).
 - `users` 행은 이 작업에서 지우지 않는다: `jobs.created_by`·`access_log.actor_id`·`application_events.actor_id`·`consents.user_id` 등이 외래키로 가리킨다(D1 은 외래키를 검사한다). 탈퇴 계정은 이메일이 익명화된 상태로 남는다 → 남은 일.
+
+## 15. 남용 방지 한도 (T-05c)
+
+코드: `src/lib/quota.ts`(한도 숫자·변수 해석·날짜·몫 잡기, 한 곳), `src/db/usage.ts`(SQL), 마이그레이션 0010 `usage_counters`.
+운영자가 비용을 내는 것(번역 API 호출·메일)과 누구나 만들 수 있는 것(공고 초안)에 단순하고 예측할 수 있는 한도를 둔다.
+
+| 한도 (변수 = 기본값) | 무엇을 세나 | 어디서 잡나 | 걸리면 |
+|---|---|---|---|
+| `LOCALIZE_PER_COMPANY_DAY` = 30 / 기업·하루 | 자동 번역 호출. 공고 현지화·"다시 만들기"·면접 요청 번역 미리 보기가 **한 몫**을 같이 쓴다 | `POST /biz/jobs/:id/localize`(엔진 없음 검사·20초 간격 자리 잡기 뒤, 엔진 호출 전), `POST /biz/applications/:id/interview/preview`(엔진이 있을 때만, `translateMessage` 전) | 현지화: 400 + 안내, 한국어 직접 입력 칸은 그대로. 미리 보기: 번역 없이 원문만 + 안내(보내기는 막지 않음) |
+| `LOCALIZE_SITE_DAY` = 500 / 사이트·하루 | 위 + 관리자 엔진 비교 | 위 두 곳 + `POST /admin/localize-test` (기업·관리자 몫 다음) | 위와 같음 |
+| `ADMIN_LOCALIZE_TEST_DAY` = 50 / 관리자·하루 | 엔진 비교. 고른 엔진 하나마다 1 (cost = 엔진 수) | `POST /admin/localize-test` (입력 검사·엔진 선택 뒤) | 400 + 안내, 엔진을 부르지 않음 |
+| `MAIL_PER_COMPANY_DAY` = 100 / 기업·하루 | 기업이 보내는 메일: 면접 요청·불합격 통보(한 통마다)·담당자 초대 | `…/interview/send`, `…/applicants/reject/send`(한 통마다), `POST /biz/members/invite`(검증된 기업이라 실제로 보낼 때만) — 모두 메일 핵심 함수를 부르기 **전** | 보내지 않음, 기록·상태 변화 없음. 면접: 400 + 글을 지닌 미리 보기. 불합격 묶음: 처음 걸린 곳에서 멈추고 `?limited=K&pool=` 로 보낸 수·못 보낸 수 안내. 초대: 초대는 저장, `?mail=limit_company\|limit_site` "직접 알려 주세요" |
+| `MAIL_SITE_DAY` = 1000 / 사이트·하루 | 위 세 가지의 사이트 합계 | 위와 같음 (기업 몫 다음) | 위와 같음 |
+| `DRAFT_JOBS_PER_COMPANY` = 20 / 기업 (개수) | 작성 중인 공고 = `status NOT IN ('published','closed')`(초안·차단), 헤드헌터 공고 제외 | `POST /biz/jobs/new` — `db/jobs.insertJob` 이 개수 확인과 추가를 한 문장으로 | 400 + 입력 유지 + 안내. 기존 초안은 고칠 수 있고, 게재·마감되면 한도에서 빠진다 |
+
+- **세지 않는 것:** 로그인 인증코드 메일(로그인 흐름은 바꾸지 않았다 — 이메일당 60초 제한만), 새 지원자 알림 메일(구직자의 지원이 보내는 것), 예약 작업 메일(마감 안내·운영 보고).
+- **하루:** 한국 시간(UTC+9) 날짜 `YYYY-MM-DD`(`kstDay`). 0시에 새 행으로 시작한다.
+- **한 문장 가드:** `db/usage.takeQuota` = `INSERT … SELECT … WHERE cost <= limit ON CONFLICT DO UPDATE … WHERE n + cost <= limit`. 영향 행 1 이면 센 것. 동시에 들어와도 한도를 넘지 않는다(D1 은 쓰기를 차례로 한다).
+- **순서:** 항상 기업(또는 관리자) 몫을 먼저, 그다음 사이트 몫. 기업 몫이 거절되면 사이트 몫은 건드리지 않는다. 사이트 몫이 거절되면 기업 몫에서 하나 쓴 것은 그대로 남는다(되돌리지 않는다 — 단순하게, 사이트 몫이 찬 날에만 생기는 일).
+- **되돌리기 없음:** 몫을 잡은 뒤 엔진·메일이 실패하거나 핵심 함수가 다른 이유(끝난 지원 등)로 거절해도 한 번 쓴 것으로 센다. 실패를 일부러 일으켜 한도를 우회할 수 없게.
+- **쓰지 않는 경우:** 엔진이 없으면(현지화는 `no_engine` 검사가 먼저, 미리 보기는 `availableEngines` 확인) 몫을 잡지 않는다. 검증 전 기업의 초대는 메일을 보내지 않으므로 잡지 않는다.
+- **무게:** 한도가 걸린 동작마다 작은 문장 1~2개(기업 몫·사이트 몫)를 더한다. 초안 한도는 기존 INSERT 한 문장에 조건을 붙였다(문장 수 그대로).
+- **보이는 곳:** 기업 화면에는 그 요청에서 한도에 걸렸을 때만 안내가 보인다(숫자는 `{n}` 으로 넣는다, 한국어·중국어). 관리자 첫 화면의 "오늘 사용량" 상자에 사이트 번역 호출·기업 메일 `쓴 수 / 한도`(읽기 두 번).
+- **변수:** 같은 이름의 vars(`wrangler.jsonc` 에 빈 값으로 적어 둠). 앞뒤 공백을 뺀 0~1,000,000 의 정수만 받고, 비었거나 그 밖의 값은 기본값(`limitsOf`). 0 은 "그 기능을 쓰지 않음".
+- **개인정보 없음:** `usage_counters` 의 subject 는 기업 id·관리자 user id·`'site'` 뿐(이메일·IP 없음). 35일 지난 행은 14절 dropOldRows 가 지운다.
+

@@ -7,6 +7,7 @@ import { requireRole } from '../lib/auth';
 import { identitySnapshot, parseRevokeAction, parseVerifyAction } from '../lib/company';
 import { serveVerificationDoc } from '../lib/files';
 import { verifyBlocks } from '../lib/rules';
+import { todayUsage } from '../lib/quota';
 import { render, renderError } from '../render';
 import { AdminCompanyDetail, AdminCompanyList } from '../views/admin-company';
 import { AdminHome } from '../views/pages';
@@ -29,10 +30,10 @@ admin.use('/access-log', noStore, humanGetOnly);
 // /admin 아래 모든 경로는 관리자만.
 admin.use('*', requireRole('admin'));
 
-// 첫 화면: 처리할 일의 개수. 개수만 읽고 개인정보는 읽지 않는다.
+// 첫 화면: 처리할 일의 개수 + 오늘 사용량(T-05c, 사이트 전체 번역 호출·기업 메일 — 읽기 두 번). 개수만 읽고 개인정보는 읽지 않는다.
 admin.get('/', async (c) => {
-  const counts = await adminCounts(c.env.DB);
-  return render(c, <AdminHome locale={c.var.locale} counts={counts} />, 'admin.title');
+  const [counts, usage] = await Promise.all([adminCounts(c.env.DB), todayUsage(c.env, now())]);
+  return render(c, <AdminHome locale={c.var.locale} counts={counts} usage={usage} />, 'admin.title');
 });
 
 // ── 기업 검증

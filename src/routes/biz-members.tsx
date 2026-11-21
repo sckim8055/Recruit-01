@@ -6,6 +6,7 @@ import { now, type AppEnv } from '../env';
 import { canManageMembers } from '../lib/authz';
 import { MAX_COMPANY_SEATS, hasSeatLeft, inviteIsHq, inviteMail, parseInvite, removeCheck } from '../lib/company';
 import { sendMail } from '../lib/email';
+import { QUOTA_MSG, limitsOf, quotaText, takeCompanyMail } from '../lib/quota';
 import { render, renderError } from '../render';
 import { MembersPage } from '../views/company';
 import {
@@ -39,9 +40,13 @@ bizMembers.get('/members', async (c) => {
   const ok = OK[c.req.query('ok') ?? ''];
   // 초대는 저장했지만 안내 메일을 못 보낸 경우
   const mail = c.req.query('mail');
+  const L = limitsOf(c.env);
   const error = ok !== 'inv.ok.invited' ? undefined
     : mail === 'failed' ? 'inv.err.mail_failed'
     : mail === 'skipped' ? 'inv.err.mail_unverified'
+    // 오늘 메일 한도에 걸려 안내 메일을 보내지 않음 (T-05c). 초대는 저장됐다.
+    : mail === 'limit_company' ? quotaText(c.var.locale, QUOTA_MSG.inviteCompany, { n: L.MAIL_PER_COMPANY_DAY })
+    : mail === 'limit_site' ? quotaText(c.var.locale, QUOTA_MSG.inviteSite, { n: L.MAIL_SITE_DAY })
     : undefined;
   return membersPage(c, ctx, { ok, error });
 });
@@ -71,6 +76,9 @@ bizMembers.post('/members/invite', async (c) => {
   // 검증 전 기업은 메일을 보내지 않는다: 누구나 기업을 등록할 수 있으므로, 운영자가 확인하지 않은 기업명이 담긴 메일을
   // 임의의 주소로 보내는 통로(스팸·피싱)가 되지 않게 한다. 초대 자체는 저장되고, 받은 사람이 로그인하면 보인다.
   if (ctx.company.verify_status !== 'verified') return c.redirect('/biz/members?ok=invited&mail=skipped');
+  // 하루 메일 한도 (T-05c): 메일을 실제로 보낼 때만 잡는다. 걸리면 보내지 않고 초대는 그대로 둔다 (직접 알리라고 안내).
+  const q = await takeCompanyMail(c.env, coId, now());
+  if (!q.ok) return c.redirect(`/biz/members?ok=invited&mail=${q.pool === 'site' ? 'limit_site' : 'limit_company'}`);
   // 안내 메일: 기업 이름과 로그인 주소만 들어간다. 실패해도 초대는 그대로 둔다.
   let mailed = false;
   try {

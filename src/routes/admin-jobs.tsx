@@ -1,12 +1,13 @@
 // 관리자 공고 화면. 관리자는 공고 내용을 고칠 수 없고 게재도 할 수 없다 (CLAUDE.md 규칙 1: 운영자는 공고를 쓰거나 올리지 않는다).
 // 할 수 있는 일: 기술유출 검토 통과(review_cleared_by), 차단(사유 필수), 차단 해제(→ 초안). 그리고 현지화 엔진 비교(저장하지 않음).
 import { Hono, type Context } from 'hono';
-import type { AppEnv } from '../env';
+import { now, type AppEnv } from '../env';
 import { loadActor } from '../lib/actor';
 import { canBlockJob } from '../lib/authz';
 import { JOB_LIMITS, hasContactInText, readBlockReason, readRev } from '../lib/jobs';
 import { availableEngines, runEngine } from '../lib/localize';
 import { ENGINES } from '../lib/localize/registry';
+import { QUOTA_MSG, quotaText, takeAdminLocalizeTest } from '../lib/quota';
 import type { EngineRun } from '../lib/localize/types';
 import { render, renderError } from '../render';
 import { AdminJobDetail, AdminJobList, LocalizeTestPage } from '../views/admin-jobs';
@@ -102,6 +103,9 @@ adminJobs.post('/localize-test', async (c) => {
   if (input.title.length > JOB_LIMITS.title || input.body.length > JOB_LIMITS.body) return page([], 'adm.lt.err.too_long', 400);
   if (hasContactInText(`${input.title}\n${input.body}`)) return page([], 'adm.lt.err.contact', 400);
   if (!selected.length) return page([], avail.length ? 'adm.lt.err.pick' : 'adm.lt.none', 400);
+  // 하루 한도 (T-05c): 고른 엔진 하나마다 1 — 관리자 몫 → 사이트 번역 몫. 고를 엔진이 있을 때만 여기까지 온다.
+  const q = await takeAdminLocalizeTest(c.env, c.var.user!.id, now(), selected.length);
+  if (!q.ok) return page([], quotaText(c.var.locale, q.pool === 'site' ? QUOTA_MSG.adminTestSite : QUOTA_MSG.adminTest, { n: q.limit }), 400);
   // 엔진별로 한 번씩, 동시에 부른다.
   const runs = await Promise.all(selected.map((e) => runEngine(e, c.env, { titleZh: input.title, bodyZh: input.body })));
   return page(selected.map((e, i) => ({ id: e.id, run: runs[i]! })));

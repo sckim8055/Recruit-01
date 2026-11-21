@@ -5,6 +5,8 @@
 
 예약 작업(T-12, 공고 자동 마감·보관 기한 삭제·정리)은 cron(`scheduled`)으로만 실행되며 HTTP 경로가 없다 (docs/ARCHITECTURE.md 14절).
 
+남용 방지 한도(T-05c, docs/ARCHITECTURE.md 15절): 아래 "한도" 라고 적은 경로는 하루 한도(한국 시간)를 먼저 잡는다 — 기업(또는 관리자) 몫 → 사이트 몫. 한도에 걸린 응답에만 안내가 보인다. 한도 숫자는 vars `LOCALIZE_PER_COMPANY_DAY` · `LOCALIZE_SITE_DAY` · `ADMIN_LOCALIZE_TEST_DAY` · `MAIL_PER_COMPANY_DAY` · `MAIL_SITE_DAY` · `DRAFT_JOBS_PER_COMPANY`.
+
 ## 공통
 | 경로 | 설명 | 권한 | 상태 |
 |---|---|---|---|
@@ -54,12 +56,12 @@
 | GET·POST /biz/company/docs | 검증 서류 목록·업로드 (R2 비공개, 기업당 5개) | canManageCompany | ✅ |
 | GET /biz/docs/:id | 검증 서류 내려받기 (access_log) | canViewVerificationDoc | ✅ |
 | GET /biz/members | 담당자·대기 초대 목록 (대표 담당자가 아니면 읽기만) | canManageCompany | ✅ |
-| POST /biz/members/invite · /biz/members/:userId/remove · /biz/invites/:id/cancel | 담당자 초대(초대 메일 `company_invite` 발송, 실패해도 초대 유지)·내보내기·초대 취소 | canManageMembers (owner) | ✅ |
+| POST /biz/members/invite · /biz/members/:userId/remove · /biz/invites/:id/cancel | 담당자 초대(초대 메일 `company_invite` 발송, 실패해도 초대 유지)·내보내기·초대 취소. **한도**(T-05c): 메일을 실제로 보낼 때(검증된 기업)만 메일 몫을 잡고, 걸리면 메일 없이 `?ok=invited&mail=limit_company\|limit_site`(초대는 저장, "직접 알려 주세요" 안내) | canManageMembers (owner) | ✅ |
 | POST /biz/invites/:id/accept | 초대 수락 (초대받은 이메일 본인, 소속 없을 때만) | company | ✅ |
-| GET /biz/jobs · GET·POST /biz/jobs/new | 공고 목록(공고마다 "지원 N건 · 새 지원 M건" → 지원자 목록, 취소된 지원은 세지 않음) · 새 공고(중국어 원문 + 조건). 남의 공고는 404 | 소속 기업 담당자 | ✅ |
+| GET /biz/jobs · GET·POST /biz/jobs/new | 공고 목록(공고마다 "지원 N건 · 새 지원 M건" → 지원자 목록, 취소된 지원은 세지 않음) · 새 공고(중국어 원문 + 조건). 남의 공고는 404. **한도**(T-05c): 작성 중인 공고(게재 중·마감이 아닌 것)가 `DRAFT_JOBS_PER_COMPANY` 개면 400 + 입력 유지 + 안내 | 소속 기업 담당자 | ✅ |
 | GET /biz/jobs/:id | 확인 화면: 원문 \| 한국어 초안 \| 대조본, 숫자 대조 경고, 게재 조건 목록 | canEditJob | ✅ |
 | GET·POST /biz/jobs/:id/edit | 원문·조건 편집 (마감된 공고는 불가). 글을 고치면 승인이 풀리고 게재 중이면 게재 중단 | canEditJob | ✅ |
-| POST /biz/jobs/:id/localize | 현지화 초안 + 대조본 생성 (`again=1` 이면 지난번 다음 엔진부터). 엔진이 없으면 수동 입력 안내 | canEditJob | ✅ |
+| POST /biz/jobs/:id/localize | 현지화 초안 + 대조본 생성 (`again=1` 이면 지난번 다음 엔진부터). 엔진이 없으면 수동 입력 안내. 순서: 엔진 없음 → 20초 간격 → **한도**(T-05c, 번역 몫: 기업 → 사이트, 걸리면 400 + 안내, 엔진 호출 없음, 수동 입력 칸은 그대로) → 엔진 | canEditJob | ✅ |
 | POST /biz/jobs/:id/korean | 한국어 초안 직접 입력·수정 (대조본 지움, 다시 승인 필요) | canEditJob | ✅ |
 | POST /biz/jobs/:id/approve | 한국어 초안 승인 (본 rev 일 때만) | canEditJob | ✅ |
 | POST /biz/jobs/:id/publish | 게재 (`publishBlocks` 가 비어야 함) | canEditJob | ✅ |
@@ -69,22 +71,22 @@
 | GET /biz/applications/:id/file | 지원서 첨부 내려받기 (`downloadApplicationFile`: 권한 → access_log → attachment, 상태 변경 없음). 볼 수 없거나 첨부 없음 404. HEAD 405 | canViewApplication | ✅ T-09a |
 | GET /biz/applications/:id (T-09b 추가) | 진행 중인 지원(새 지원·열람함·검토 중·면접 요청함)이면 아래에 "면접 요청 보내기" 칸(메시지 2000자, 남은 횟수 "N번 더 보낼 수 있습니다", 답장 주소 = 로그인한 담당자 본인 이메일)과 "불합격 통보" 입구(한 건으로 확인 화면). 횟수를 다 썼으면 안내만. 지원서는 이 요청에서 한 번만 연다 | canViewApplication | ✅ T-09b |
 | POST /biz/applications/:id/interview/compose | 쓰기 화면 (미리 보기의 "고치기"). 공고 제목·지원 순서 번호·지원일·상태 + 폼(글 유지)만 — 지원서를 열지 않음(기록 없음), 개인정보 없음 | canViewApplication | ✅ T-09b |
-| POST /biz/applications/:id/interview/preview | `message` → `readMessage`(비었거나 2000자 초과는 400 + 쓰기 화면, 글 유지) → `translateMessage`(엔진에는 메시지 글만) → 원문 \| 한국어 자동 번역 나란히 + "번역 없이 원문만 보내기" + 보내기/고치기. 엔진 없음·실패·원문과 같음이면 "원문만 보냅니다" 안내. 원문·번역은 숨은 칸으로 다음 단계에 | canViewApplication (+ 진행 중, 3번 미만) | ✅ T-09b |
-| POST /biz/applications/:id/interview/send | `message`·`translation`·`only_original` → 원문 다시 검사, 번역 정리(비었거나 원문만·원문과 같음·4배+200자 초과면 버림) → `sendInterviewRequest`(답장 주소 = 담당자 이메일) → 303 `/biz/jobs/:jobId/applicants?ok=interview`(지원서 화면으로 가지 않음 — 열람이 또 기록되므로). 끝난 지원·3번 초과·열 수 없음은 400 안내, 메일 실패는 400 + 글을 지닌 미리 보기, "메일은 보냈지만 기록되지 않음" 안내, 권한 없음 404 | canViewApplication (lib/applicant-mail) | ✅ T-09b |
+| POST /biz/applications/:id/interview/preview | `message` → `readMessage`(비었거나 2000자 초과는 400 + 쓰기 화면, 글 유지) → `translateMessage`(엔진에는 메시지 글만) → 원문 \| 한국어 자동 번역 나란히 + "번역 없이 원문만 보내기" + 보내기/고치기. 엔진 없음·실패·원문과 같음이면 "원문만 보냅니다" 안내. 원문·번역은 숨은 칸으로 다음 단계에. **한도**(T-05c): 엔진이 있을 때만 번역 몫(공고 현지화와 같은 기업 몫 → 사이트)을 잡고, 걸리면 엔진 없이 원문만 + 한도 안내(200, 보내기는 됨) | canViewApplication (+ 진행 중, 3번 미만) | ✅ T-09b |
+| POST /biz/applications/:id/interview/send | `message`·`translation`·`only_original` → 원문 다시 검사, 번역 정리(비었거나 원문만·원문과 같음·4배+200자 초과면 버림) → **한도**(T-05c, 메일 몫: 기업 → 사이트, 걸리면 400 + 글을 지닌 미리 보기 + 안내, 메일·기록 없음) → `sendInterviewRequest`(답장 주소 = 담당자 이메일) → 303 `/biz/jobs/:jobId/applicants?ok=interview`(지원서 화면으로 가지 않음 — 열람이 또 기록되므로). 끝난 지원·3번 초과·열 수 없음은 400 안내, 메일 실패는 400 + 글을 지닌 미리 보기, "메일은 보냈지만 기록되지 않음" 안내, 권한 없음 404 | canViewApplication (lib/applicant-mail) | ✅ T-09b |
 | POST /biz/jobs/:id/applicants/reject/confirm | 고른 `id`(여러 개, 중복 제거) → 0개·10개 초과는 400 + 목록, 이 공고의 지원이 아닌 id 가 섞이면 404, 끝난 지원·(본사 담당자) 동의 없는 지원은 빼고 센다(모두 빠지면 400). 확인 화면: 보낼 수, 보낼 정해진 글 그대로(`rejectMail`, 한국어 — 중국어 화면은 같은 문구 키의 중국어 참고도), 되돌릴 수 없음·지원자 상태가 "불합격"·답장 주소 안내 | canEditJob + canViewApplication | ✅ T-09b |
-| POST /biz/jobs/:id/applicants/reject/send | 확인과 같은 검사 → 한 건씩 차례로 `sendRejection` → 303 `/biz/jobs/:id/applicants?ok=rejected&sent=N&failed=M`(숫자만) | canEditJob + canViewApplication (lib/applicant-mail) | ✅ T-09b |
+| POST /biz/jobs/:id/applicants/reject/send | 확인과 같은 검사 → 한 건씩 차례로 (**한도**(T-05c): 한 통마다 메일 몫을 먼저 잡고, 처음 걸린 곳에서 멈춤 — 남은 건은 보내지도 기록하지도 않음) `sendRejection` → 303 `/biz/jobs/:id/applicants?ok=rejected&sent=N&failed=M`(숫자만, 한도로 멈췄으면 `&limited=K&pool=company\|site` — 목록에 "K건은 한도에 걸려 보내지 않음" + 한도 안내) | canEditJob + canViewApplication (lib/applicant-mail) | ✅ T-09b |
 
 ## 관리자
 | 경로 | 설명 | 작업 |
 |---|---|---|
-| GET /admin | 처리할 일 개수 (검증 대기·검토 대기·신고). 검증 대기 기업 → /admin/companies, 검토 대기 공고 → /admin/jobs, 신고 목록은 T-09 | ✅ |
+| GET /admin | 처리할 일 개수 (검증 대기·검토 대기·신고). 검증 대기 기업 → /admin/companies, 검토 대기 공고 → /admin/jobs, 신고 목록은 T-09. "오늘 사용량"(T-05c): 사이트 전체 자동 번역 호출·기업 메일의 `쓴 수 / 한도`(한국 시간 오늘) | ✅ |
 | GET /admin/companies · /admin/companies/:id | 기업 목록(검증 대기 먼저)·상세 (담당자 이메일, 서류, `verifyBlocks` 결과) | ✅ |
 | POST /admin/companies/:id/verify | 기업 승인(`verifyBlocks` 가 비어야 함)·반려(사유 필수, `reject_docs` 체크 시 서류도 반려). 검증 대기 상태에서만 | ✅ |
 | POST /admin/companies/:id/revoke | 승인 취소(사유 필수, `reject_docs` 체크 시 서류도 반려). 검증 완료 상태에서만. 기업은 반려 상태, 게재 중 공고는 `closed` | ✅ |
 | GET /admin/docs/:id | 검증 서류 내려받기 (access_log) | ✅ |
 | GET /admin/jobs · /admin/jobs/:id | 검토 대기(기술유출 필터)·차단 공고 목록·상세 (한국어·원문·대조본·사유) | ✅ |
 | POST /admin/jobs/:id/clear-review · /block · /unblock | 검토 통과(본 rev 일 때만) · 차단(사유 필수) · 차단 해제(→ 미게재). 내용 수정·게재는 없다 | ✅ |
-| GET·POST /admin/localize-test | 현지화 엔진 비교 (같은 글을 엔진별로, 초안·대조본·시간·오류). 저장하지 않음 | ✅ |
+| GET·POST /admin/localize-test | 현지화 엔진 비교 (같은 글을 엔진별로, 초안·대조본·시간·오류). 저장하지 않음. **한도**(T-05c): 고른 엔진 수만큼 관리자 몫(`ADMIN_LOCALIZE_TEST_DAY`) → 사이트 번역 몫, 걸리면 400 + 안내(엔진 호출 없음) | ✅ |
 | GET·POST /admin/settings | 사이트 설정: `/jobs` 검색 칸에 보일 필터 체크박스(`filters`, 여러 개). `FILTER_KEYS` 밖의 값은 버림, 모두 끄면 빈 목록 저장(`site_settings.public_job_filters`). 저장 후 `?ok=saved` 로 302. 비로그인 화면 반영은 최대 60초 | ✅ |
 | GET /admin/options | 직무·업계·근무지 항목 관리: 종류별 표(코드·한국어·중국어 이름·순서·상태·쓰는 공고 수), 줄마다 이름·순서 수정과 사용 종료/다시 사용, 종류마다 추가 폼. 삭제 없음 | ✅ |
 | POST /admin/options/:kind/add | 항목 추가 (`code`·`label_ko`·`label_zh`·`sort`). code 형식 `[a-z][a-z0-9_]{1,29}`, 같은 종류 안에서 중복 금지(사용 종료 포함). 오류는 400 + 안내 | ✅ |

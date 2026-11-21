@@ -253,12 +253,13 @@ export interface DropOldRowsInput {
   erasedBefore: number;   // now - ERASED_ROW_KEEP
   accessBefore: number;   // now - ACCESS_LOG_KEEP
   emailBefore: number;    // now - EMAIL_LOG_KEEP
+  usageBefore: string;    // 이 날짜('YYYY-MM-DD', 한국 시간)보다 앞선 하루 사용량 행을 지운다 (lib/quota.USAGE_KEEP_DAYS, T-05c)
   limit: number;          // 표마다 이 행 수까지
 }
 
 export interface DropOldRowsResult {
   application_events: number; applications: number; consents: number; access_log: number; email_log: number;
-  sessions: number; auth_codes: number; admin_totp_pending: number;
+  sessions: number; auth_codes: number; admin_totp_pending: number; usage_counters: number;
 }
 
 /**
@@ -294,11 +295,16 @@ export async function dropOldRows(db: D1Database, x: DropOldRowsInput): Promise<
     db.prepare('DELETE FROM auth_codes WHERE email IN (SELECT email FROM auth_codes WHERE expires_at < ? LIMIT ?)').bind(x.now, x.limit),
     // 지우는 것: 만료된 관리자 2단계 인증 대기(admin_totp_pending).
     db.prepare('DELETE FROM admin_totp_pending WHERE id IN (SELECT id FROM admin_totp_pending WHERE expires_at < ? LIMIT ?)').bind(x.now, x.limit),
+    // 지우는 것: 35일이 지난 하루 사용량(usage_counters: 범위·id·날짜·횟수, 개인정보 없음). day 는 고정 형식 'YYYY-MM-DD' 라 글자 비교 = 날짜 비교.
+    // [sqlite] 기본 키가 세 컬럼이라 행 값 `(a, b, c) IN (SELECT …)` 로 한도를 건다 (SQLite 3.15+, PostgreSQL 도 된다).
+    db.prepare(
+      'DELETE FROM usage_counters WHERE (scope, subject, day) IN (SELECT scope, subject, day FROM usage_counters WHERE day < ? LIMIT ?)',
+    ).bind(x.usageBefore, x.limit),
   ]);
   const n = (i: number) => res[i]?.meta.changes ?? 0;
   return {
     application_events: n(0), applications: n(1), consents: n(2), access_log: n(3), email_log: n(4),
-    sessions: n(5), auth_codes: n(6), admin_totp_pending: n(7),
+    sessions: n(5), auth_codes: n(6), admin_totp_pending: n(7), usage_counters: n(8),
   };
 }
 

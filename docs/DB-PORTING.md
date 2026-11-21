@@ -26,6 +26,7 @@
 | `src/db/consents.ts` | consents (type `terms`·`privacy`): 그 회원의 필수 동의 읽기(요청마다 한 번, `idx_consents_user`), 같은 판의 유효한 동의가 없을 때만 추가. 국외 이전(`cross_border`)은 `applications.ts` |
 | `src/db/account.ts` | 회원 탈퇴(T-11): 다른 담당자가 있는 기업의 대표인지 세기, 한 트랜잭션으로 지우기 — applications·application_events·consents·resumes·seeker_profiles·alerts·jobs(혼자 맡던 기업의 게재 중 공고 마감)·company_members·agency_members·company_invites·sessions·admin_totp_pending·auth_codes·users(이메일 익명화, `status = 'deleted'`) |
 | `src/db/maintenance.ts` | 예약 작업(T-12, 데이터를 지운다): jobs(자동 마감·안내 표시), company_members+users(활성 담당자 주소), applications·application_events·consents(보관 기한 붙이기/떼기·자동 종료·내용 삭제·동의 철회·오래된 행 삭제), access_log·email_log·sessions·auth_codes·admin_totp_pending(기간 지난 행 삭제), verification_docs(1년 지난 서류 행 삭제), resumes+applications(R2 키 참조 확인), site_settings(`maint.*` 키: 고아 정리 커서·일별 집계), 개수(users·jobs·applications). 모든 UPDATE·DELETE 에 바인딩한 시각 조건 + 행 수 한도 |
+| `src/db/usage.ts` | usage_counters (T-05c 남용 방지 한도): 한도 안에서만 하루 횟수 더하기(한 문장), 하루 횟수 읽기. subject 는 id 또는 `'site'` — 개인정보 없음 |
 | `src/db/applicant-views.ts` | application_events + applications (기업 지원자 목록 화면, T-09b): 공고 하나의 지원별 면접 요청 메일 수 — `GROUP BY` 한 번, 읽기만. `COUNT(*)` 는 `Number()` 로 바꿔 쓴다 (PostgreSQL bigint 대비) |
 
 - 스키마는 `migrations/` (SQLite 문법). 판단 규칙(`rules.ts`·`authz.ts`)·TTL·횟수 제한은 DB 와 무관하므로 옮길 때 고치지 않는다.
@@ -86,7 +87,9 @@
 | `account.countOwnedCompaniesWithOthers` | `COUNT(*)` 가 숫자로 옴 | `COUNT(*)::int` 또는 변환(호출부가 `Number()` 로 감싼다) |
 | `maintenance.ts` (전체) | 행 수 한도를 `WHERE id IN (SELECT id … LIMIT ?)` 로 건다 — SQLite 는 `DELETE/UPDATE … LIMIT` 을 기본 빌드에서 지원하지 않는다. `auth_codes` 는 기본 키가 email 이라 `email IN (SELECT email … LIMIT ?)` | 문법은 그대로 된다. 잠금 범위는 4장 |
 | `maintenance.autoCloseApplications` · `erasePurgedApplications` | batch: 상태별로 이벤트 `INSERT … SELECT lower(hex(randomblob(16))), …` → `UPDATE … WHERE … AND EXISTS (그 지원의 auto_closed 이벤트, at = 지금, actor NULL)`. 이벤트 id 를 SQL 안에서 만든다(하이픈 없는 32자, `account.eraseUser` 와 같음). 판단은 문장별 영향 행 수의 합 | `gen_random_uuid()::text`, `BEGIN … COMMIT`, 순서 그대로 (상태 문장이 이벤트 문장 뒤여야 한다) |
-| `maintenance.dropOldRows` | batch 8문장, **자식 먼저**(application_events → applications(이벤트가 남지 않은 것만) → consents → access_log → email_log → sessions → auth_codes → admin_totp_pending). D1 은 외래키를 검사한다 | `BEGIN … COMMIT`, 순서 그대로 |
+| `maintenance.dropOldRows` | batch 9문장, **자식 먼저**(application_events → applications(이벤트가 남지 않은 것만) → consents → access_log → email_log → sessions → auth_codes → admin_totp_pending → usage_counters). D1 은 외래키를 검사한다. usage_counters 는 기본 키가 세 컬럼이라 행 값 `(scope, subject, day) IN (SELECT … LIMIT ?)` 로 한도를 건다(SQLite 3.15+), `day < ?` 는 고정 형식 'YYYY-MM-DD' 글자 비교 | `BEGIN … COMMIT`, 순서 그대로. 행 값 IN 은 PostgreSQL 도 된다. day 를 `date` 형으로 바꾸면 바인딩도 date 로 |
+| `usage.takeQuota` | `INSERT … SELECT ?,… WHERE ? <= ? ON CONFLICT (scope, subject, day) DO UPDATE SET n = usage_counters.n + excluded.n … WHERE usage_counters.n + excluded.n <= ?` — 한도 확인과 더하기를 한 문장으로, 판단은 meta.changes = 1. SQLite 는 `INSERT … SELECT` 와 `ON CONFLICT` 를 같이 쓸 때 SELECT 에 WHERE 가 있어야 한다(없으면 ON 을 조인으로 읽음) — 지금은 한도 조건이 그 WHERE 다 | 문법은 된다(DO UPDATE 의 WHERE 가 거짓이면 rowCount 0). FROM 없는 SELECT 의 매개변수 형 지정(`$4::integer`)이 필요할 수 있다(확인 필요). 동시성: 같은 키의 UPSERT 는 행 잠금으로 차례가 되어 한도를 넘지 않는다고 본다(확인 필요). 첫 행을 두 요청이 동시에 넣으면 한쪽이 충돌 → DO UPDATE 경로로 간다 |
+| `jobs.insertJob` | `INSERT … SELECT ?,… WHERE (SELECT COUNT(*) FROM jobs WHERE company_id = ? AND agency_id IS NULL AND status NOT IN ('published','closed')) < ?` — 작성 중인 공고 한도(T-05c)를 한 문장으로 | 문법은 된다. FROM 없는 SELECT 의 매개변수 형 지정이 필요할 수 있다(확인 필요). 동시에 두 번 추가하면 둘 다 통과해 한도 + 1 이 될 수 있다(4장, `resumes.insertResume` 과 같음) |
 | `maintenance.findReferencedFileKeys` · `maintenanceCounts` | 읽기 batch(SELECT 여러 개). 키는 문장당 50개(D1 바인딩 한도 100) | 조회 여러 번. PostgreSQL 은 `= ANY($1::text[])` 로 배열 하나를 넘길 수 있다 |
 | `maintenance.listExpiredVerificationDocs` · `deleteVerificationDocRows` · `deleteMaintSetting` · `deleteOldMaintStats` | 접두어 비교를 `substr(col, 1, n) = '접두어'` 로 한다 (LIKE 는 `_` 가 와일드카드) | `substr` 그대로 되거나 `left(col, n)` / `starts_with` |
 | `maintenance.markCloseNoticeSent` | `WHERE (id = ? AND updated_at = ?) OR (…)` — 공고마다 읽은 updated_at 이 그대로일 때만 (10개 이하) | 그대로 된다 |
@@ -100,7 +103,7 @@ PostgreSQL 에서도 그대로 되는 것(표시하지 않음): `ON CONFLICT …
 `ORDER BY 식 = '값' DESC`(참/거짓 정렬), `CASE`, `LIMIT`, `rev = rev + 1`.
 `public-jobs.ts` 의 `LIMIT ? OFFSET ?`, `CASE WHEN … END`(ELSE 없으면 NULL)도 그대로 된다. 목록 정렬 `published_at DESC, id DESC` 의 id 는 TEXT 이므로
 PostgreSQL 콜레이션에 따라 같은 시각 안의 순서만 달라질 수 있다(페이지가 겹치지 않으려면 `COLLATE "C"` 권장, 확인 필요).
-지금 코드는 `datetime()`·`strftime`·`rowid`·`INSERT OR IGNORE/REPLACE`·`LIKE` 를 쓰지 않는다 (`randomblob` 은 `account.ts`·`maintenance.ts` 두 곳).
+`usage.readUsage` 의 기본 키 한 행 읽기도 그대로 된다. 지금 코드는 `datetime()`·`strftime`·`rowid`·`INSERT OR IGNORE/REPLACE`·`LIKE` 를 쓰지 않는다 (`randomblob` 은 `account.ts`·`maintenance.ts` 두 곳).
 
 ## 4. 이 계층으로 쉬워지지 않는 것
 

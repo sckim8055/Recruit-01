@@ -25,6 +25,7 @@ import {
   putMaintSetting, unmarkPurgeAfter, type AutoCloseGroup, type CloseNoticeJobRow, type MaintCounts,
 } from '../db/maintenance';
 import { getSetting } from '../db/settings';
+import { USAGE_KEEP_DAYS, kstDay } from './quota';
 
 // ───────── 단계 이름·시간표·상한
 
@@ -301,7 +302,8 @@ export async function purgeApplications(env: Env, now: number): Promise<StepResu
 /** 4. 보관 기간이 지난 행을 지운다 (표마다 200행까지). users 행은 지우지 않는다. */
 export async function dropOldRowsStep(env: Env, now: number): Promise<StepResult> {
   const r = await dropOldRows(env.DB, {
-    now, erasedBefore: now - ERASED_ROW_KEEP, accessBefore: now - ACCESS_LOG_KEEP, emailBefore: now - EMAIL_LOG_KEEP, limit: CAPS.dropRowsPerTable,
+    now, erasedBefore: now - ERASED_ROW_KEEP, accessBefore: now - ACCESS_LOG_KEEP, emailBefore: now - EMAIL_LOG_KEEP,
+    usageBefore: kstDay(now - USAGE_KEEP_DAYS * DAY), limit: CAPS.dropRowsPerTable,
   });
   return { step: 'dropOldRows', done: { ...r } };
 }

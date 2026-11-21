@@ -14,6 +14,7 @@ import { availableEngines, localizeJob } from '../lib/localize';
 import { translatorNoteLines } from '../lib/localize/prompt';
 import { buildOptionSet, selectableAll, type OptionKind, type OptionSet } from '../lib/options';
 import { parseOperatorDomains, publishBlocks } from '../lib/rules';
+import { QUOTA_MSG, limitsOf, quotaText, takeLocalize } from '../lib/quota';
 import { render, renderError } from '../render';
 import { JobFormPage, JobList, JobReview } from '../views/jobs';
 import type { CompanyCtx } from './biz-ctx';
@@ -130,7 +131,12 @@ bizJobs.post('/jobs/new', async (c) => {
   const review = reviewAfterSave({ ...empty, review_cleared_by: null }, { ...empty, title_zh: v.title_zh, source_zh: v.source_zh });
   const id = crypto.randomUUID();
   const ts = now();
-  await insertJob(c.env.DB, { id, companyId: ctx.company.id, createdBy: ctx.user.id, v, reviewFlag: review.review_flag, ts });
+  // 작성 중인 공고 수 한도 (T-05c, lib/quota DRAFT_JOBS_PER_COMPANY): 개수 확인과 추가가 한 문장이다. 넘으면 입력값을 그대로 두고 안내.
+  const maxDrafts = limitsOf(c.env).DRAFT_JOBS_PER_COMPANY;
+  const added = await insertJob(c.env.DB, { id, companyId: ctx.company.id, createdBy: ctx.user.id, v, reviewFlag: review.review_flag, ts, maxDrafts });
+  if (!added) {
+    return formPage(c, { ...fo, input, errors: [], action: '/biz/jobs/new', error: quotaText(c.var.locale, QUOTA_MSG.drafts, { n: maxDrafts }) }, 400);
+  }
   return c.redirect(`/biz/jobs/${id}?ok=created`);
 });
 
@@ -190,6 +196,13 @@ bizJobs.post('/jobs/:id/localize', async (c) => {
   const ts = now();
   const claimed = await claimLocalize(c.env.DB, { ts, id: job.id, rev: job.rev, notAfter: ts - LOCALIZE_GAP });
   if (!claimed) return reviewPage(c, ctx, job, { error: 'job.err.too_soon' }, 400);
+  // 하루 번역 한도 (T-05c): 기업 몫 → 사이트 몫. 엔진이 있을 때만 여기까지 온다 (위의 no_engine 검사가 먼저 — 엔진이 없으면 한도를 쓰지 않는다).
+  // 한도에 걸려도 한국어 직접 입력 칸은 그대로 쓸 수 있다.
+  const q = await takeLocalize(c.env, ctx.company.id, ts);
+  if (!q.ok) {
+    const key = q.pool === 'company' ? QUOTA_MSG.localizeCompany : QUOTA_MSG.localizeSite;
+    return reviewPage(c, ctx, job, { error: quotaText(c.var.locale, key, { n: q.limit }) }, 400);
+  }
 
   // 엔진에는 중국어 제목·본문만 보낸다. 연락처·연봉 같은 항목은 보내지 않는다.
   const again = f.again === '1';

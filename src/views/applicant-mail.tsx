@@ -115,6 +115,8 @@ export interface InterviewPreviewProps {
   translation: string | null;
   /** 번역이 없는 이유: 'failed' 만들지 못함, 'same' 원문이 이미 한국어. */
   noTranslation?: 'failed' | 'same';
+  /** 오늘 자동 번역 한도에 걸려 번역하지 않았을 때의 안내 (T-05c). 있으면 noTranslation 문구 대신 보인다. 보내기는 그대로 된다. */
+  limitNote?: string;
   onlyOriginal?: boolean;
   replyTo: string;
   sent: number;
@@ -145,7 +147,7 @@ export const InterviewPreview = (p: InterviewPreviewProps) => {
           <>
             <h2>{t(l, 'aplm.pv.original')}</h2>
             <div class="quote pre">{p.original}</div>
-            <p class="warn">{t(l, p.noTranslation === 'same' ? 'aplm.pv.same' : 'aplm.pv.no_translation')}</p>
+            <p class="warn">{p.limitNote ?? t(l, p.noTranslation === 'same' ? 'aplm.pv.same' : 'aplm.pv.no_translation')}</p>
           </>
         )}
         <input type="hidden" name="message" value={p.original} />

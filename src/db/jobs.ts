@@ -77,20 +77,29 @@ export async function listCompanyJobs(db: D1Database, companyId: string): Promis
   return r.results;
 }
 
+/**
+ * 새 공고(초안) 추가 — 그 기업의 작성 중인 공고(게재 중·마감이 아닌 것 = 초안·차단, 헤드헌터 공고 제외)가 maxDrafts 개 미만일 때만 (T-05c).
+ * 개수 확인과 추가를 한 문장으로 한다. 추가했으면 true.
+ * [sqlite] `INSERT … SELECT ?,… WHERE (SELECT COUNT(*) …) < ?` 조건부 추가 + meta.changes. PostgreSQL 에서도 문법은 되지만
+ *   FROM 없는 SELECT 의 매개변수 형 지정이 필요할 수 있고, 동시에 두 번 추가하면 둘 다 통과할 수 있다 (docs/DB-PORTING.md 4장).
+ */
 export async function insertJob(
-  db: D1Database, x: { id: string; companyId: string; createdBy: string; v: JobValues; reviewFlag: string | null; ts: number },
-): Promise<void> {
+  db: D1Database, x: { id: string; companyId: string; createdBy: string; v: JobValues; reviewFlag: string | null; ts: number; maxDrafts: number },
+): Promise<boolean> {
   const v = x.v;
-  await db.prepare(
+  const res = await db.prepare(
     `INSERT INTO jobs (id, company_id, agency_id, created_by, job_family, title_zh, source_zh, localize_status, role_category, industry,
        location, salary_min, salary_max, salary_basis, work_hours, report_line, chinese_level, contact_email, review_flag,
        status, closes_at, created_at, updated_at, rev)
-     VALUES (?,?,NULL,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,0)`,
+     SELECT ?,?,NULL,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,0
+     WHERE (SELECT COUNT(*) FROM jobs WHERE company_id = ? AND agency_id IS NULL AND status NOT IN ('published','closed')) < ?`,
   ).bind(
     x.id, x.companyId, x.createdBy, v.job_family, v.title_zh, v.source_zh, v.role_category, v.industry, v.location,
     v.salary_min, v.salary_max, v.salary_basis, v.work_hours, v.report_line, v.chinese_level, v.contact_email, x.reviewFlag,
     v.closes_at, x.ts, x.ts,
+    x.companyId, x.maxDrafts,
   ).run();
+  return res.meta.changes === 1;
 }
 
 /** 원문·조건 저장. 읽은 rev·상태가 그대로이고, 게재 상태로 남기려면 기업이 아직 검증 완료일 때만. */

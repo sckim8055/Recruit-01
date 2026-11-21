@@ -125,7 +125,7 @@
       wrangler dev + Chromium(Playwright)으로 면접 요청(엔진 없음 → 원문만)·불합격 2건·구직자 상태·끝난 지원 거절·다른 기업 404·중국어 화면을 확인하고,
       로컬 D1 에 `interview_mail` 1·`reject_mail` 2 이벤트, `email_log` 3줄(템플릿 이름·결과·주소 해시), 메시지 글·연락 이메일 평문이 없음을 확인.
       남은 일: 번역 엔진 실호출 확인(T-05b 와 함께, 키 발급 뒤), 미리 보기의 번역은 숨은 칸으로 돌아오므로 담당자가 고쳐 보낼 수 있다(자기 메시지이므로 허용, 메일에는 "자동 번역" 으로 표시됨 —
-      서명으로 묶을지 운영자 판단), 기업당 하루 메일 수 한도(지금은 지원당 면접 3번·요청당 불합격 10건만), 메일 API 가 느릴 때 10건 차례 발송의 처리 시간(무료 플랜 한도) 실측,
+      서명으로 묶을지 운영자 판단), 기업당 하루 메일 수 한도(→ T-05c 에서 함), 메일 API 가 느릴 때 10건 차례 발송의 처리 시간(무료 플랜 한도) 실측,
       상태 "검토 중"(`summary_shared`)을 만드는 화면은 아직 없음
 - [x] T-11 약관·개인정보처리방침·동의·회원 탈퇴. 핵심(`src/legal/`, `lib/consent.ts`, `db/consents.ts`, `lib/account.ts`, `db/account.ts`, `test/account.test.ts`)은 먼저 따로 커밋하고, 화면은 그것만 쓴다.
       문서 `/terms`·`/privacy`(현재 언어, JSX 출력, 주소는 글자 그대로, 비로그인은 page-cache 60초), 모든 화면 바닥글·로그인 화면에서 링크.
@@ -165,6 +165,31 @@
       정한 것: 무수정 마감은 안내를 보낸 지 3일이 지나야 한다(안내 없이 마감되지 않게 — 그래서 실제 마감은 max(무수정 30일, 안내 + 3일)), 담당자 없는 공고는 메일 없이 안내 완료로 표시,
       기한이 지난 지원은 공고 상태와 관계없이 지움, 시간표는 `hour % 단계 수` 대신 24칸 표(보고를 하루 한 번으로 하기 위해), 보고 메일은 운영자용이라 한국어만.
       남은 일 → T-12b
+- [x] T-05c 남용 방지 한도 (번역 호출·메일 발송·초안 개수). 숫자는 `src/lib/quota.ts` 한 곳(`DEFAULT_LIMITS`)에 있고 같은 이름의 vars 로 바꾼다
+      (`limitsOf`: 앞뒤 공백을 뺀 0~1,000,000 정수만, 비었거나 잘못된 값은 기본값, 0 = 쓰지 않음, `wrangler.jsonc` 에 빈 값으로 적어 둠). 하루는 한국 시간(`kstDay`).
+      하루 횟수는 새 표 `usage_counters`(0010, (scope, subject, day) 기본 키, subject = 기업 id·관리자 id·`'site'` 뿐 — 이메일·IP 없음)에
+      `db/usage.takeQuota` 한 문장(`INSERT … SELECT … WHERE cost <= limit ON CONFLICT DO UPDATE … WHERE n + cost <= limit`)으로 센다 — 동시에 와도 한도를 넘지 않음. 되돌리기 없음(실패해도 한 번 씀).
+
+      | 한도 (기본값) | 세는 것 | 잡는 곳 (항상 기업·관리자 몫 → 사이트 몫) | 걸리면 |
+      |---|---|---|---|
+      | `LOCALIZE_PER_COMPANY_DAY` (30/기업/일) | 공고 현지화·다시 만들기·면접 요청 번역 미리 보기 (한 몫) | `POST /biz/jobs/:id/localize` (엔진 없음 검사·20초 자리 잡기 뒤, 엔진 전), `POST /biz/applications/:id/interview/preview` (엔진이 있을 때만) | 현지화 400 + 안내(수동 입력 칸 그대로) / 미리 보기는 원문만 + 안내, 보내기는 됨 |
+      | `LOCALIZE_SITE_DAY` (500/일) | 위 + 관리자 엔진 비교 | 위 + `POST /admin/localize-test` | 위와 같음 |
+      | `ADMIN_LOCALIZE_TEST_DAY` (50/관리자/일) | 엔진 비교, 고른 엔진마다 1 | `POST /admin/localize-test` | 400 + 안내, 엔진 호출 없음 |
+      | `MAIL_PER_COMPANY_DAY` (100/기업/일) | 면접 요청·불합격 통보(한 통마다)·담당자 초대 메일 | `…/interview/send`, `…/reject/send`(한 통마다, 처음 걸린 곳에서 멈춤), `POST /biz/members/invite`(실제로 보낼 때만) — 메일 핵심 함수 전 | 보내지 않음·기록 없음. 면접 400 + 글 유지 / 불합격 `&limited=K&pool=` 안내 / 초대 저장 + "직접 알려 주세요" |
+      | `MAIL_SITE_DAY` (1000/일) | 위 세 가지 합계 (로그인 코드·새 지원자 알림·예약 작업 메일 제외) | 위와 같음 | 위와 같음 |
+      | `DRAFT_JOBS_PER_COMPANY` (20/기업, 개수) | `status NOT IN ('published','closed')` (초안·차단), 헤드헌터 공고 제외 | `POST /biz/jobs/new` — `insertJob` 에 개수 조건을 붙인 한 문장 | 400 + 입력 유지 + 안내 |
+
+      관리자 첫 화면에 "오늘 사용량"(사이트 번역 호출·기업 메일 `쓴 수 / 한도`, 읽기 두 번). 기업 화면에는 그 요청에서 걸렸을 때만 안내(한·중, 숫자는 `{n}`).
+      예약 작업 dropOldRows 에 35일 지난 `usage_counters` 삭제를 더함(200행, 행 값 IN, 결과에 `usage_counters`, batch 9문장 + 집계 2 = 11 ≤ 25).
+      테스트 `test/quota.test.ts`(16: KST 자정 경계·변수 해석·takeQuota 한도/독립/cost/동시성·몫 순서), `test/quota-routes.test.ts`(16, app.fetch: 현지화 기업·사이트 한도·엔진 없음·날짜 바뀜,
+      미리 보기 원문만, 보내기·불합격 묶음·사이트 메일 한도, 초대 한도·미검증 기업, 초안 한도, 관리자 비교 한도, 관리자 사용량, 평소엔 안내 없음, 카운터에 id 만),
+      `test/maintenance.test.ts` 의 dropOldRows 테스트에 사용량 행(35일 경계)을 더하고 결과 모양을 고침 + 200행 테스트 하나.
+      wrangler dev(한도 2/2/2) + Chromium 으로 세 번째 초안 거절·세 번째 초대 메일 한도·중국어 안내·관리자 사용량 상자·엔진 없을 때 카운터 없음 확인.
+      정한 것: 엔진이 없으면 한도를 쓰지 않음(현지화는 기존 no_engine 검사가 자리 잡기·한도보다 먼저), 사이트 몫 거절 때 기업 몫은 되돌리지 않음,
+      초안 한도에 차단 공고도 셈(브리프의 "non-closed, non-published"), 0 은 "끄기"로 받음, 사이트 메일 한도 안내에는 숫자를 보이지 않음(기업에게 사이트 전체 수치를 알리지 않음, 관리자 화면에는 보임).
+      남은 일: 초안을 지우거나 마감하는 길이 없다(마감은 게재 중 공고만) — 게재할 수 없는 기업(미검증)은 초안 20개에서 멈춘다. 초안 삭제·보관 기능이 필요한지 운영자 판단,
+      기업 화면에 "오늘 남은 번역 N회" 표시(지금은 걸렸을 때만), 메일 핵심 함수가 거절할 때(끝난 지원 등)도 메일 몫이 하나 줄어듦(게이트가 대부분 먼저 거른다),
+      PostgreSQL 이전 때 UPSERT 동시성 확인(docs/DB-PORTING.md)
 ## 운영자 설정 (사람이 하는 일 — 안내 문서를 먼저 써서 건넨다)
 - [ ] O-1 GitHub 저장소에 이 폴더 올리기
 - [ ] O-2 Cloudflare: D1 `recruit-test` 생성 → `wrangler.jsonc` 의 `database_id` 교체, R2 `recruit-test-files` 생성
@@ -178,7 +203,6 @@
 - [ ] T-05b 현지화 엔진 실호출 확인 (운영자가 키를 넣은 뒤): `/admin/localize-test` 로 claude·gemini·workers_ai 각각 호출해
       응답 모양·소요 시간(25초 안인지)·JSON 준수·숫자 보존을 확인하고, 기본 모델(`DEFAULT_*_MODEL`)이 맞는지 정한다.
       Gemini `thinkingLevel`, Workers AI 모델의 출력 모양(`choices` / `response`)과 `max_tokens` 인식 여부, Claude `anthropic-version` 을 새 버전(2026-10-21)으로 올릴지 함께 본다
-- [ ] T-05c 공고 남용 방지: 기업당 초안 개수 한도, 기업당 하루 현지화 호출 한도(지금은 같은 공고 20초 간격만 있다)
 - [ ] T-06b 디자인 패스: 공고 목록·상세·로그인 화면이 생긴 뒤 한 번에 한다. 밝은 톤, 사무직·전문직 대상의 차분한 인상.
       Claude Code 에서 unslop 스킬(https://github.com/heydamir/unslop, CC BY 4.0)을 쓸 수 있다. 단 이 프로젝트 제약이 우선한다:
       외부 폰트·CDN·외부 스크립트 금지, 유료 이미지 생성 금지, 이모지 라벨·보라색 그라데이션·글로우 금지, 색 강조는 한두 곳만,

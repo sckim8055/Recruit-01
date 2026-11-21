@@ -24,6 +24,13 @@ export interface Env {
   AI?: { run(model: string, input: unknown): Promise<unknown> };
   // 예약 작업(T-12)의 하루 보고를 받을 운영자 주소. 비어 있으면 보고 메일을 보내지 않는다 (lib/maintenance.report).
   OPS_EMAIL?: string;
+  // 남용 방지 한도(T-05c, src/lib/quota.ts). 0 이상의 정수 문자열. 비었거나 잘못된 값이면 코드의 기본값을 쓴다.
+  LOCALIZE_PER_COMPANY_DAY?: string;
+  LOCALIZE_SITE_DAY?: string;
+  ADMIN_LOCALIZE_TEST_DAY?: string;
+  MAIL_PER_COMPANY_DAY?: string;
+  MAIL_SITE_DAY?: string;
+  DRAFT_JOBS_PER_COMPANY?: string;
   // secrets
   ENC_KEY: string;
   SESSION_PEPPER: string;

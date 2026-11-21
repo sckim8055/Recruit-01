@@ -13,6 +13,7 @@ import {
   jobCloseNoticeMail, mergeStats, parseStats, pickOrphans, planNotices, reportText, runMaintenance, statsKey, stepForTime, type StepName,
 } from '../src/lib/maintenance';
 import { WITHDRAWABLE } from '../src/lib/application';
+import { USAGE_KEEP_DAYS, kstDay } from '../src/lib/quota';
 import { verifyBlocks } from '../src/lib/rules';
 import { t } from '../src/lib/i18n';
 import { identitySnapshot } from '../src/lib/company';
@@ -629,9 +630,14 @@ describe.skipIf(!hasSqlite)('dropOldRows', () => {
     raw.prepare('INSERT INTO admin_totp_pending (id, user_id, expires_at) VALUES (?,?,?)').run('p-old', members[0]!, NOW - 1);
     raw.prepare('INSERT INTO admin_totp_pending (id, user_id, expires_at) VALUES (?,?,?)').run('p-new', members[0]!, NOW + 600);
     raw.prepare("INSERT INTO company_invites (id, company_id, email, invited_by, created_at, accepted_at) VALUES ('inv', ?, 'i@x.test', ?, 0, 0)").run(co, members[0]!);
+    // 하루 사용량 (T-05c): 35일 전 날짜(한국 시간)보다 앞선 행만. NOW = 2027-01-15 17:00 KST → 기준 2026-12-11
+    const cutDay = kstDay(NOW - USAGE_KEEP_DAYS * DAY);
+    expect(cutDay).toBe('2026-12-11');
+    for (const d of ['2026-12-10', cutDay, '2027-01-15']) raw.prepare("INSERT INTO usage_counters (scope, subject, day, n, updated_at) VALUES ('mail_company', ?, ?, 3, 0)").run(co, d);
 
     const r = await STEPS.dropOldRows(env, NOW);
-    expect(r.done).toEqual({ application_events: 1, applications: 1, consents: 1, access_log: 1, email_log: 1, sessions: 1, auth_codes: 1, admin_totp_pending: 1 });
+    expect(r.done).toEqual({ application_events: 1, applications: 1, consents: 1, access_log: 1, email_log: 1, sessions: 1, auth_codes: 1, admin_totp_pending: 1, usage_counters: 1 });
+    expect(q(raw, 'SELECT day FROM usage_counters ORDER BY day').map((x) => x.day)).toEqual([cutDay, '2027-01-15']);
     const has = (tbl: string, col: string, v: string) => num(raw, `SELECT COUNT(*) FROM ${tbl} WHERE ${col} = ?`, v) === 1;
     expect(has('applications', 'id', old)).toBe(false);
     expect(has('application_events', 'application_id', old)).toBe(false);
@@ -655,6 +661,16 @@ describe.skipIf(!hasSqlite)('dropOldRows', () => {
     expect((await STEPS.dropOldRows(env, NOW)).done.access_log).toBe(200);
     expect((await STEPS.dropOldRows(env, NOW)).done.access_log).toBe(50);
     expect(num(raw, 'SELECT COUNT(*) FROM access_log')).toBe(0);
+  });
+
+  it('하루 사용량도 표마다 200행씩 (T-05c)', async () => {
+    const { raw, env } = setup();
+    for (let i = 0; i < 230; i++) raw.prepare("INSERT INTO usage_counters (scope, subject, day, n, updated_at) VALUES ('localize_company', ?, '2020-01-01', 1, 0)").run(`co-${i}`);
+    raw.prepare("INSERT INTO usage_counters (scope, subject, day, n, updated_at) VALUES ('localize_site', 'site', ?, 1, 0)").run(kstDay(NOW));
+    expect((await STEPS.dropOldRows(env, NOW)).done.usage_counters).toBe(200);
+    expect((await STEPS.dropOldRows(env, NOW)).done.usage_counters).toBe(30);
+    expect((await STEPS.dropOldRows(env, NOW)).done.usage_counters).toBe(0);
+    expect(num(raw, 'SELECT COUNT(*) FROM usage_counters')).toBe(1);
   });
 
   it('이벤트가 많은 지원: 이벤트를 다 지운 뒤에 지원 행을 지운다 (외래키)', async () => {
