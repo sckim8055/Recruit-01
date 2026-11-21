@@ -152,7 +152,9 @@ export const BizStart = (p: { locale: Locale; invites: InviteView[]; input: Comp
 );
 
 /** 소속 기업이 있는 담당자의 첫 화면. */
-export const BizHome = (p: { locale: Locale; company: CompanyRow; isOwner: boolean; blocks: VerifyBlock[]; ok?: string }) => {
+export const BizHome = (p: {
+  locale: Locale; company: CompanyRow; isOwner: boolean; blocks: VerifyBlock[]; applicants: { total: number; unread: number }; ok?: string;
+}) => {
   const c = p.company;
   return (
     <section class="wide">
@@ -184,7 +186,18 @@ export const BizHome = (p: { locale: Locale; company: CompanyRow; isOwner: boole
         <li><a href="/biz/members">{t(p.locale, 'mem.title')}</a></li>
         <li><a href="/biz/jobs">{t(p.locale, 'job.list.title')}</a></li>
       </ul>
-      <p class="muted">{t(p.locale, 'biz.soon_applicants')}</p>
+      <div class="box">
+        <h2>{t(p.locale, 'biz.apl.title')}</h2>
+        {p.applicants.total === 0 ? <p class="muted">{t(p.locale, 'biz.apl.none')}</p> : (
+          <p>
+            {p.applicants.unread > 0
+              ? <b>{t(p.locale, 'biz.apl.unread').replace('{n}', String(p.applicants.unread))}</b>
+              : t(p.locale, 'biz.apl.no_unread')}
+            {' · '}{t(p.locale, 'biz.apl.total').replace('{n}', String(p.applicants.total))}
+            {' · '}<a href="/biz/jobs">{t(p.locale, 'biz.apl.go')}</a>
+          </p>
+        )}
+      </div>
     </section>
   );
 };

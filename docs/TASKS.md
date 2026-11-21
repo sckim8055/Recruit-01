@@ -96,6 +96,21 @@
       로컬 D1 의 복사본은 암호문(취소 후 `''`), R2 객체는 `RF1` 로 시작하고 취소한 지원의 객체는 지워졌음을 직접 확인.
       남은 일: 기업 지원자 목록·열람(`viewed`)·관리자 사유 입력 열람 → T-09, 동의 문구 확정·`consents` 화면 → T-11, R2 고아 객체(복사·삭제 실패 때) 정리 → T-12,
       취소한 지원의 `cross_border_consent_at` 값은 지우지 않음(동의 철회는 `consents.withdrawn_at` 에 남고, 취소된 지원은 본인 말고 아무도 볼 수 없음 — authz)
+- [x] T-09a 지원자 관리 1 (목록·열람·열람 기록). 보안 핵심(`lib/applicants.ts` `openApplication`·`downloadApplicationFile`, `db/applicants.ts`)은 먼저 따로 커밋하고, 화면은 그것만 쓴다.
+      기업: `/biz/jobs` 공고마다 "지원 N건 · 새 지원 M건"(취소 제외, `countApplicationsByJob`) → 지원자 목록, `/biz` 첫 화면에 새 지원 요약(알림 메일이 `/biz` 로 연결).
+      지원자 목록 `/biz/jobs/:id/applicants`(`canEditJob`, 남의 공고 404): 지원 순서 번호·지원일·기업용 상태 이름·첨부 여부만 — **이름·연락처·한 줄 소개 등 개인정보 없음**,
+      정렬·점수·추천 표시·메모·내보내기·전달·상태 변경 버튼 없음. 취소된 지원은 링크 없는 "지원 취소됨", 본사 소속 담당자에게 동의 없는 지원은 링크 없는 "국외 이전 동의 없음 — 한국 담당자만 열람 가능".
+      지원서 `/biz/applications/:id`: 이 기업의 지원서가 아니면 404 → `openApplication` 한 번(권한 → 복호화 → access_log → 처음 열면 `viewed` 이벤트로 상태 변경). 취소됨·동의 없음(403)·열 수 없음은 안내 화면, 기록 없음.
+      내용은 구직자 본인 화면과 같은 조각(`SnapshotFields`). 첨부 `/biz/applications/:id/file` = `downloadApplicationFile`(기록 한 줄, 상태 변경 없음).
+      HEAD 는 405, 브라우저 미리 가져오기(`Sec-Purpose`/`Purpose: prefetch·prerender`)는 503 으로 기록 전에 거절(`routes/guards.humanGetOnly`, 권한 검사보다 먼저).
+      구직자: `/my/applications/:id` 에 "열람 기록"(시각 + 역할: 기업 채용 담당자·운영자만, 이름·이메일·사유 없음, 본인 내려받기 제외, 취소한 지원에는 없음).
+      관리자: `/admin/applications/:id` 는 개인정보 없는 정보(공고·기업 id·날짜·상태·동의/첨부 여부) + 사유 폼(필수, 300자)만이고 기록하지 않음.
+      `POST /admin/applications/:id/open` 사유 → 내용은 POST 응답에만(리다이렉트 없음), 기록에 사유, 상태 변경 없음. 첨부는 `POST /admin/applications/:id/file`(사유 함께).
+      관리자 지원자 목록·사람 검색·수정·전달·일괄 내려받기는 없다. `/admin/access-log`: 50건씩 최근 순, `?type=application|resume|verification_doc`(그 밖의 값은 무시), `?before=` 커서
+      (커서가 시각뿐이라 페이지 끝과 같은 초의 줄은 다음 페이지로 넘김 — 한 초에 50줄을 넘으면 빠질 수 있음), 지원서 줄은 관리자 지원서 화면으로 연결, 관리자 첫 화면에 링크.
+      위 화면은 모두 `private, no-store`(로그인 리다이렉트·403 포함). 마이그레이션 없음. 라우트 테스트 `test/applicant-routes.test.ts`(11개, console 감시).
+      wrangler dev + Chromium(Playwright)으로 목록(이름 없음)·열람·첨부 바이트 비교·구직자 상태/열람 기록·본사 담당자 차단/동의 지원 열람·다른 기업 404·취소 후 목록/직접 주소·
+      관리자 TOTP 로그인 후 사유 열람·열람 기록 화면·중국어 화면을 확인하고, 로컬 D1 의 access_log 가 수행한 열람과 같고(막힌 시도는 없음) `viewed` 가 지원서마다 한 번임을 확인
 ## 운영자 설정 (사람이 하는 일 — 안내 문서를 먼저 써서 건넨다)
 - [ ] O-1 GitHub 저장소에 이 폴더 올리기
 - [ ] O-2 Cloudflare: D1 `recruit-test` 생성 → `wrangler.jsonc` 의 `database_id` 교체, R2 `recruit-test-files` 생성
@@ -117,8 +132,8 @@
 - [ ] T-06c 공개 화면 보완: 생산직 플래그를 켤 때 목록 질의 계획 다시 확인(`job_family IN (...)` 이면 정렬용 임시 B-tree 가 전체 게재 공고를 읽을 수 있음),
       공고가 수천 건을 넘으면 필터별 인덱스 필요 여부 확인(D1 대시보드의 rows read), 캐시를 우회하는 임의 검색 조건(홈 `/?x=`) 처리,
       마감·차단 직후 캐시 즉시 지우기(지금은 최대 60초 남음 — 배포 환경의 Cache API purge 는 zone 단위라 확인 필요)
-- [ ] T-09 지원자 관리: 목록, 지원서 열람(`viewed` + access_log), 면접 요청 메일(중국어 입력 → 한국어 변환, 답장 주소는 기업 담당자),
-      불합격 일괄 통보, 관리자 사유 입력 열람, 열람 기록 화면
+- [ ] T-09b 지원자 관리 2: 면접 요청 메일(중국어 입력 → 한국어 변환, 답장 주소는 기업 담당자), 불합격 일괄 통보.
+      상태는 이벤트(`interview_mail`·`reject_mail`)로만 바꾼다. 목록·열람·관리자 사유 입력 열람·열람 기록 화면은 T-09a 에서 했다
 - [ ] T-10 조건 알림: 필터 저장, 일간·주간 메일(제목 "조건에 맞는 새 공고"). 무료 플랜 CPU 한도를 넘지 않게 한 번에 보내는 수를 제한
 - [ ] T-11 약관·개인정보처리방침·국외 이전 동의 문구 화면 (초안 작성 → 운영자 확인), `consents` 기록, 회원 탈퇴(즉시 삭제)
 - [ ] T-04c 국세청 사업자 상태조회 (공공데이터포털 키 발급 후)

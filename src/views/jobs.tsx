@@ -79,7 +79,9 @@ export interface JobListRow {
   review_flag: string | null; review_cleared_by: string | null; updated_at: number;
 }
 
-export const JobList = ({ locale, rows, verified }: { locale: Locale; rows: JobListRow[]; verified: boolean }) => (
+export const JobList = ({ locale, rows, counts, verified }: {
+  locale: Locale; rows: JobListRow[]; counts: Record<string, { total: number; unread: number }>; verified: boolean;
+}) => (
   <section class="wide">
     <p class="crumbs"><a href="/biz">{t(locale, 'biz.title')}</a></p>
     <h1>{t(locale, 'job.list.title')}</h1>
@@ -89,7 +91,8 @@ export const JobList = ({ locale, rows, verified }: { locale: Locale; rows: JobL
       <div class="box">
         <table>
           <thead><tr>
-            <th>{t(locale, 'job.f.title_zh')}</th><th>{t(locale, 'job.status')}</th><th>{t(locale, 'job.loc')}</th><th>{t(locale, 'job.updated')}</th>
+            <th>{t(locale, 'job.f.title_zh')}</th><th>{t(locale, 'job.status')}</th><th>{t(locale, 'job.loc')}</th>
+            <th>{t(locale, 'apl.list.title')}</th><th>{t(locale, 'job.updated')}</th>
           </tr></thead>
           <tbody>
             {rows.map((r) => (
@@ -101,6 +104,7 @@ export const JobList = ({ locale, rows, verified }: { locale: Locale; rows: JobL
                 </td>
                 <td><JobStatusBadge locale={locale} status={r.status} /></td>
                 <td><LocalizeBadge locale={locale} status={r.localize_status} /></td>
+                <td><ApplicantCount locale={locale} jobId={r.id} n={counts[r.id]} /></td>
                 <td>{fmtDate(r.updated_at)}</td>
               </tr>
             ))}
@@ -110,6 +114,17 @@ export const JobList = ({ locale, rows, verified }: { locale: Locale; rows: JobL
     )}
   </section>
 );
+
+/** "지원 N건 · 새 지원 M건" → 지원자 목록 (취소된 지원은 N 에 들지 않는다 — db/applicants.countApplicationsByJob). */
+const ApplicantCount = ({ locale, jobId, n }: { locale: Locale; jobId: string; n?: { total: number; unread: number } }) => {
+  if (!n) return <span class="muted">{t(locale, 'apl.count.none')}</span>;
+  return (
+    <a href={`/biz/jobs/${jobId}/applicants`}>
+      {n.total === 0 ? t(locale, 'apl.count.none') : t(locale, 'apl.count.total').replace('{n}', String(n.total))}
+      {n.unread > 0 && <> · <b>{t(locale, 'apl.count.unread').replace('{n}', String(n.unread))}</b></>}
+    </a>
+  );
+};
 
 // ── 작성·편집 폼
 

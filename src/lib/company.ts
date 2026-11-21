@@ -272,3 +272,9 @@ export function fmtDate(ts: number | null | undefined): string {
   if (ts == null) return '';
   return new Date((ts + 9 * 3600) * 1000).toISOString().slice(0, 10);
 }
+
+/** 화면 표시용 날짜·시각 (한국 시간, YYYY-MM-DD HH:MM). 열람 기록 화면용. */
+export function fmtDateTime(ts: number | null | undefined): string {
+  if (ts == null) return '';
+  return new Date((ts + 9 * 3600) * 1000).toISOString().slice(0, 16).replace('T', ' ');
+}

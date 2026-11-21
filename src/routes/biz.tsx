@@ -15,8 +15,15 @@ import { companyDocTypes, hasCompany, loadBizCtx } from './biz-ctx';
 import { bizCompany } from './biz-company';
 import { bizJobs } from './biz-jobs';
 import { bizMembers } from './biz-members';
+import { bizApplicants } from './biz-applicants';
+import { humanGetOnly, noStore } from './guards';
+import { countApplicationsByJob } from '../db/applicants';
 
 export const biz = new Hono<AppEnv>();
+
+// 지원자 화면(T-09a): 권한 검사보다 먼저 no-store·HEAD/미리 가져오기 거절을 건다 (로그인 리다이렉트·403 에도 붙게, 기록 전에 거절되게).
+biz.use('/jobs/:id/applicants', noStore, humanGetOnly);
+biz.use('/applications/*', noStore, humanGetOnly);
 
 // /biz 아래 모든 경로는 기업 담당자·헤드헌터만.
 biz.use('*', requireRole('company', 'headhunter'));
@@ -38,9 +45,12 @@ biz.get('/', async (c) => {
   }
   const co = ctx.company;
   const blocks = verifyBlocks({ entity_type: co.entity_type, biz_no: co.biz_no, docTypes: await companyDocTypes(c, co.id) });
+  // 새 지원 요약 (알림 메일이 /biz 로 연결된다). 개수만 읽는다.
+  const counts = Object.values(await countApplicationsByJob(c.env.DB, co.id));
+  const applicants = { total: counts.reduce((n, x) => n + x.total, 0), unread: counts.reduce((n, x) => n + x.unread, 0) };
   return render(
     c,
-    <BizHome locale={l} company={co} isOwner={ctx.member.member_role === 'owner'} blocks={blocks} ok={HOME_OK[c.req.query('ok') ?? '']} />,
+    <BizHome locale={l} company={co} isOwner={ctx.member.member_role === 'owner'} blocks={blocks} applicants={applicants} ok={HOME_OK[c.req.query('ok') ?? '']} />,
     'biz.title',
   );
 });
@@ -97,3 +107,4 @@ biz.get('/docs/:id', async (c) => {
 biz.route('/', bizCompany);
 biz.route('/', bizMembers);
 biz.route('/', bizJobs);
+biz.route('/', bizApplicants);

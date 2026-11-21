@@ -10,7 +10,9 @@ import { verifyBlocks } from '../lib/rules';
 import { render, renderError } from '../render';
 import { AdminCompanyDetail, AdminCompanyList } from '../views/admin-company';
 import { AdminHome } from '../views/pages';
+import { adminApplicants } from './admin-applicants';
 import { adminJobs } from './admin-jobs';
+import { humanGetOnly, noStore } from './guards';
 import { adminOptions } from './admin-options';
 import { adminSettings } from './admin-settings';
 import { adminCounts } from '../db/admin';
@@ -19,6 +21,10 @@ import {
 } from '../db/companies';
 
 export const admin = new Hono<AppEnv>();
+
+// 지원서 열람·열람 기록(T-09a): 권한 검사보다 먼저 no-store·HEAD/미리 가져오기 거절 (로그인 리다이렉트·403 에도 붙게).
+admin.use('/applications/*', noStore, humanGetOnly);
+admin.use('/access-log', noStore, humanGetOnly);
 
 // /admin 아래 모든 경로는 관리자만.
 admin.use('*', requireRole('admin'));
@@ -122,3 +128,6 @@ admin.route('/', adminSettings);
 
 // 직무·업계·근무지 선택 항목 관리 (/admin/options). 추가·이름·순서·사용 종료만, 삭제 없음
 admin.route('/', adminOptions);
+
+// 지원서 사유 입력 열람·열람 기록 (/admin/applications/:id, /admin/access-log). 지원자 목록·사람 검색은 없다
+admin.route('/', adminApplicants);

@@ -131,7 +131,7 @@ export const AdminHome = ({ locale, counts }: { locale: Locale; counts: { compan
       <li><a class="stat" href="/admin/jobs"><b>{counts.jobReviews}</b><span>{t(locale, 'admin.count.job_reviews')}</span></a></li>
       <li><b>{counts.reports}</b><span>{t(locale, 'admin.count.reports')}</span></li>
     </ul>
-    <p><a href="/admin/settings">{t(locale, 'adm.set.title')}</a> · <a href="/admin/options">{t(locale, 'adm.opt.title')}</a></p>
+    <p><a href="/admin/settings">{t(locale, 'adm.set.title')}</a> · <a href="/admin/options">{t(locale, 'adm.opt.title')}</a> · <a href="/admin/access-log">{t(locale, 'adm.log.title')}</a></p>
     <p class="muted">{t(locale, 'admin.note')}</p>
   </section>
 );

@@ -38,6 +38,7 @@ import {
   companyMemberEmails, getOwnApplication, hasApplied, insertApplication, listOwnApplications, memberCounts, withdrawApplication,
   type ApplicationRow,
 } from '../db/applications';
+import { listViewsOfApplication } from '../db/applicants';
 import { listVisibleAppliedJobIds } from '../db/application-views';
 import { findCompanyBrief } from '../db/companies';
 import { loadJob } from '../db/jobs';
@@ -336,10 +337,16 @@ async function snapshotOf(c: Context<AppEnv>, row: ApplicationRow): Promise<Snap
   return body ? { kind: 'ok', body } : { kind: 'unavailable' };
 }
 
-const appPage = async (c: Context<AppEnv>, x: OwnApp, msg: { ok?: string; error?: string } = {}, status: 200 | 400 = 200) =>
-  render(c, (
-    <ApplicationPage locale={c.var.locale} row={x.row} job={x.job} snapshot={await snapshotOf(c, x.row)} canWithdraw={canWithdraw(x.row.status)} {...msg} />
+/**
+ * 열람 기록 (T-09): 본인 아닌 사람(기업 담당자·운영자)이 이 지원서·첨부를 연 시각과 역할만. 취소한 지원에는 보이지 않는다.
+ * 구직자 본인의 첨부 내려받기 기록은 빠진다 (listViewsOfApplication 이 본인 id 를 뺀다).
+ */
+const appPage = async (c: Context<AppEnv>, x: OwnApp, msg: { ok?: string; error?: string } = {}, status: 200 | 400 = 200) => {
+  const views = x.row.status === 'withdrawn' ? undefined : await listViewsOfApplication(c.env.DB, x.row.id, c.var.user!.id);
+  return render(c, (
+    <ApplicationPage locale={c.var.locale} row={x.row} job={x.job} snapshot={await snapshotOf(c, x.row)} canWithdraw={canWithdraw(x.row.status)} views={views} {...msg} />
   ), 'app.page.title', status);
+};
 
 applications.get('/:id', async (c) => {
   const x = await loadOwnApp(c);

@@ -23,6 +23,7 @@ import {
   updateJobSource, type JobRow,
 } from '../db/jobs';
 import { listOptions } from '../db/options';
+import { countApplicationsByJob } from '../db/applicants';
 
 export const bizJobs = new Hono<AppEnv>();
 
@@ -81,8 +82,8 @@ async function reviewPage(
 bizJobs.get('/jobs', async (c) => {
   const ctx = await requireCompany(c);
   if (ctx instanceof Response) return ctx;
-  const rows = await listCompanyJobs(c.env.DB, ctx.company.id);
-  return render(c, <JobList locale={c.var.locale} rows={rows} verified={ctx.company.verify_status === 'verified'} />, 'job.list.title');
+  const [rows, counts] = await Promise.all([listCompanyJobs(c.env.DB, ctx.company.id), countApplicationsByJob(c.env.DB, ctx.company.id)]);
+  return render(c, <JobList locale={c.var.locale} rows={rows} counts={counts} verified={ctx.company.verify_status === 'verified'} />, 'job.list.title');
 });
 
 // ── 새 공고

@@ -22,6 +22,7 @@
 | `src/db/options.ts` | job_options (직무·업계·근무지 선택 항목: 전체 읽기·추가·이름/순서 수정·사용 종료/다시 사용) + 항목별 공고 수 |
 | `src/db/applications.ts` | applications · application_events · consents(cross_border): 지원 여부, 기업 담당자 수(본사/그 밖)·알림 주소(활성 계정), 공개 조건·중복을 다시 확인하는 조건부 추가(+ 동의), 내 지원 한 건·목록, 취소(이벤트 + 상태 + 내용 삭제 + 동의 철회), 파일 키 목록. 구직자 쪽 문장은 모두 `seeker_id` 조건 |
 | `src/db/application-views.ts` | applications + jobs + companies (지원 현황 화면: 내가 지원한 공고 중 지금 공개 중인 공고 id, `publicJobWhere` 재사용, 읽기만) |
+| `src/db/applicants.ts` | applications + jobs + access_log + users (기업·관리자 쪽, T-09): 공고의 지원 목록(내용 없음), 기업의 공고별 지원 수, 지원 한 건 + 공고 소속(권한 판단용, 암호문 포함 — `lib/applicants.openApplication` 만 쓴다), `viewed` 이벤트 + 상태, 열람 기록 목록(관리자)·지원서별 열람 기록(구직자, 역할·시각만) |
 
 - 스키마는 `migrations/` (SQLite 문법). 판단 규칙(`rules.ts`·`authz.ts`)·TTL·횟수 제한은 DB 와 무관하므로 옮길 때 고치지 않는다.
 
@@ -72,6 +73,10 @@
 | `applications.withdrawApplication` | batch 세 문장(이벤트 추가 → 상태·내용 지우기 → 동의 철회). 앞 두 문장이 같은 `status IN (…)` 가드를 쓰고, 세 번째는 바뀐 상태를 확인한다. 판단은 두 번째 문장의 영향 행 수 | `BEGIN … COMMIT`, 순서 그대로 (순서를 바꾸면 이벤트 가드가 바뀐 상태를 본다) |
 | `applications.memberCounts` | `SUM(CASE …)` 가 숫자로 옴, `is_hq` INTEGER 0/1 | `SUM` 은 bigint/numeric → 숫자 변환(확인 필요). boolean 이면 `CASE WHEN is_hq` |
 | `applications.listOwnApplications`, `application-views.listVisibleAppliedJobIds` | `CASE WHEN j.company_name_public = 1`, `LIMIT 200` | integer 로 두면 그대로 |
+| `applicants.listJobApplications` | `CASE WHEN file_r2_key IS NOT NULL THEN 1 ELSE 0 END AS has_file` (0/1), `LIMIT 500` | 그대로 되지만 PostgreSQL 에서 `file_r2_key IS NOT NULL` 만 쓰면 boolean 이 오므로 호출부 비교(`has_file === 1`)를 같이 고친다 |
+| `applicants.countApplicationsByJob` | `SUM(CASE …)` 가 숫자로 옴 | bigint/numeric → 숫자 변환(확인 필요). 호출부가 `Number()` 로 감싼다 |
+| `applicants.markViewed` | batch 두 문장(이벤트 `INSERT … SELECT … WHERE status = 이전 상태` → `UPDATE … WHERE status = 이전 상태`). 판단은 두 번째 문장의 영향 행 수 | `BEGIN … COMMIT`, 순서 그대로 (바꾸면 이벤트 가드가 바뀐 상태를 본다). 두 사람이 동시에 처음 열면 PostgreSQL READ COMMITTED 에서 둘 다 INSERT 가 통과할 수 있다(4장) — `viewed` 가 두 줄 남지 않게 잠금 또는 UPDATE 를 먼저 하고 RETURNING 으로 확인 |
+| `applicants.listAccessLog` | `(? IS NULL OR l.at < ?)` — 같은 값을 두 번 바인딩하는 선택 조건 | PostgreSQL 은 `$1 IS NULL` 의 형을 정하지 못할 수 있다 → `$1::bigint IS NULL OR l.at < $1` / `$2::text` (확인 필요) |
 | `migrations/0007_job_options.sql` | 기본 행의 시각 `strftime('%s','now')` | `extract(epoch from now())::bigint` |
 | `companies.listPublicCompanies` | `ORDER BY name_ko` = 바이트 순서 | DB 콜레이션에 따라 한글 정렬이 달라질 수 있음 (`COLLATE "C"` 로 맞춤) |
 

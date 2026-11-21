@@ -1,9 +1,9 @@
 // 구직자 지원 화면 (/jobs/:id/apply, /my/applications...). 모든 값은 JSX 로 출력한다 (자동 이스케이프).
-// 이 화면들은 구직자 본인만 본다. 기업 쪽 지원자 목록·열람은 T-09 이다.
+// 이 화면들은 구직자 본인만 본다. SnapshotFields 는 기업·관리자 열람 화면(views/applicants.tsx)도 같이 쓴다.
 // 문구 원칙: 운영자는 지원서를 검토·추천·전달하지 않는다. 지원은 구직자가 직접 "지원하기" 를 눌러서만 생긴다.
 import type { Locale } from '../env';
 import type { ConsentNeed } from '../lib/application';
-import { fmtDate } from '../lib/company';
+import { fmtDate, fmtDateTime } from '../lib/company';
 import { t } from '../lib/i18n';
 import type { ResumeBody, ResumeFieldError, ResumeFileMeta, ResumeInput } from '../lib/resume';
 import type { ApplicationRow, OwnApplicationListRow } from '../db/applications';
@@ -205,13 +205,66 @@ export const ApplicationList = (p: { locale: Locale; rows: OwnApplicationListRow
 
 export type SnapshotState = { kind: 'ok'; body: ResumeBody } | { kind: 'deleted' } | { kind: 'unavailable' };
 
+/**
+ * 지원서(복사본) 항목. 구직자 본인 화면과 기업·관리자 열람 화면이 같은 조각을 쓴다 — 기업이 보는 것 = 구직자가 보낸 것.
+ * 첨부파일: fileHref 가 있으면 이름을 링크로, fileForm 이 있으면 POST 버튼으로(관리자: 사유를 함께 보냄). 둘 다 없으면(파일 키 없음) "첨부파일 없음".
+ */
+export const SnapshotFields = (p: {
+  locale: Locale; body: ResumeBody; fileHref?: string | null; fileForm?: { action: string; reason: string } | null;
+}) => {
+  const l = p.locale;
+  const b = p.body;
+  const none = <span class="muted">{t(l, 'job.none')}</span>;
+  return (
+    <dl class="kv">
+      <dt>{t(l, 'resume.f.name')}</dt><dd>{b.name}</dd>
+      <dt>{t(l, 'resume.f.contact_email')}</dt><dd>{b.contact_email}</dd>
+      <dt>{t(l, 'resume.f.phone')}</dt><dd>{b.phone ?? none}</dd>
+      <dt>{t(l, 'resume.f.chinese_level')}</dt><dd>{levelText(l, b.chinese_level)}</dd>
+      <dt>{t(l, 'resume.f.years')}</dt><dd>{yearsText(l, b.years)}</dd>
+      <dt>{t(l, 'resume.f.headline')}</dt><dd>{b.headline}</dd>
+      <dt>{t(l, 'resume.f.desired_role')}</dt><dd>{b.desired_role ?? none}</dd>
+      <dt>{t(l, 'resume.f.experience_text')}</dt><dd>{b.experience_text ? <div class="pre">{b.experience_text}</div> : none}</dd>
+      <dt>{t(l, 'resume.f.attachment')}</dt>
+      <dd>
+        {b.file && p.fileHref ? <a href={p.fileHref}>{b.file.name}</a>
+          : b.file && p.fileForm ? (
+            <form method="post" action={p.fileForm.action} class="inline">
+              <input type="hidden" name="reason" value={p.fileForm.reason} />
+              {b.file.name} <button type="submit" class="link">{t(l, 'adm.app.download')}</button>
+            </form>
+          )
+          : t(l, 'resume.no_file')}
+      </dd>
+    </dl>
+  );
+};
+
+/** 내 지원서를 연 기록 (역할·시각만, 최근 순). 이름·이메일·사유는 보이지 않는다. */
+export const ViewHistory = ({ locale, views }: { locale: Locale; views: Array<{ actor_role: string; at: number }> }) => (
+  <div class="box">
+    <h2>{t(locale, 'app.views.title')}</h2>
+    <p class="hint">{t(locale, 'app.views.note')}</p>
+    {views.length === 0 ? <p class="muted">{t(locale, 'app.views.empty')}</p> : (
+      <table>
+        <thead><tr><th>{t(locale, 'app.views.at')}</th><th>{t(locale, 'app.views.who')}</th></tr></thead>
+        <tbody>
+          {views.map((v) => (
+            <tr><td>{fmtDateTime(v.at)}</td><td>{t(locale, `app.views.role.${v.actor_role === 'admin' ? 'admin' : v.actor_role === 'headhunter' ? 'headhunter' : 'company'}`)}</td></tr>
+          ))}
+        </tbody>
+      </table>
+    )}
+  </div>
+);
+
 export const ApplicationPage = (p: {
   locale: Locale; row: ApplicationRow; job: ApplyJob; snapshot: SnapshotState; canWithdraw: boolean; ok?: string; error?: string;
+  views?: Array<{ actor_role: string; at: number }>;
 }) => {
   const l = p.locale;
   const r = p.row;
   const s = p.snapshot;
-  const none = <span class="muted">{t(l, 'job.none')}</span>;
   return (
     <section class="wide">
       <Crumbs locale={l} />
@@ -240,20 +293,11 @@ export const ApplicationPage = (p: {
         <div class="box">
           <h2>{t(l, 'app.content')}</h2>
           <p class="hint">{t(l, 'app.content_note')}</p>
-          <dl class="kv">
-            <dt>{t(l, 'resume.f.name')}</dt><dd>{s.body.name}</dd>
-            <dt>{t(l, 'resume.f.contact_email')}</dt><dd>{s.body.contact_email}</dd>
-            <dt>{t(l, 'resume.f.phone')}</dt><dd>{s.body.phone ?? none}</dd>
-            <dt>{t(l, 'resume.f.chinese_level')}</dt><dd>{levelText(l, s.body.chinese_level)}</dd>
-            <dt>{t(l, 'resume.f.years')}</dt><dd>{yearsText(l, s.body.years)}</dd>
-            <dt>{t(l, 'resume.f.headline')}</dt><dd>{s.body.headline}</dd>
-            <dt>{t(l, 'resume.f.desired_role')}</dt><dd>{s.body.desired_role ?? none}</dd>
-            <dt>{t(l, 'resume.f.experience_text')}</dt><dd>{s.body.experience_text ? <div class="pre">{s.body.experience_text}</div> : none}</dd>
-            <dt>{t(l, 'resume.f.attachment')}</dt>
-            <dd>{s.body.file && r.file_r2_key ? <a href={`/my/applications/${r.id}/file`}>{s.body.file.name}</a> : t(l, 'resume.no_file')}</dd>
-          </dl>
+          <SnapshotFields locale={l} body={s.body} fileHref={s.body.file && r.file_r2_key ? `/my/applications/${r.id}/file` : null} />
         </div>
       )}
+
+      {r.status !== 'withdrawn' && p.views && <ViewHistory locale={l} views={p.views} />}
 
       {p.canWithdraw && (
         <div class="actions">

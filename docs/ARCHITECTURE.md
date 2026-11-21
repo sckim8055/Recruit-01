@@ -40,10 +40,11 @@ src/
     page-cache.ts    공개 화면 캐시 (비로그인만, 60초) (9절)
     resume.ts · resume-files.ts  이력서 항목 검사·암호화, 첨부파일 검사·암호화·R2 (4절)
     application.ts · application-files.ts  지원 가능 여부·국외 이전 동의·복사본·취소, 지원서 첨부 내려받기 (11절)
+    applicants.ts    본인 아닌 사람이 지원서·첨부를 여는 유일한 길 openApplication · downloadApplicationFile (12절)
     localize/        현지화 엔진 층 (7절)
   db/                SQL 과 D1 호출은 여기에만 (T-05d). users · sessions(인증코드·세션·TOTP 대기) · companies(기업·담당자·초대·서류 행)
                      · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수) · settings(site_settings) · options(job_options) · resumes(이력서)
-                     · applications(지원·동의·취소) · application-views(지원 현황 화면용 읽기). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
+                     · applications(지원·동의·취소) · application-views(지원 현황 화면용 읽기) · applicants(기업·관리자 쪽: 내용 없는 지원자 목록·개수·지원 한 건·viewed·열람 기록 읽기). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
                      PostgreSQL 로 옮길 때 고칠 곳과 SQLite 전용 문법 목록은 docs/DB-PORTING.md
   locales/ko.ts zh.ts  화면 문구
   routes/            화면·API 라우트 (기능별 파일)
@@ -68,7 +69,7 @@ docs/                이 문서, API.md, TASKS.md
 
 - 한 기업에 담당자를 여럿 둘 수 있다 (`company_members`). 중국 본사 소속은 `is_hq = 1`.
 - 본사 소속 담당자는 **국외 이전 동의가 있는 지원서만** 볼 수 있다 (`authz.canViewApplication`).
-- 관리자는 공고 내용을 고칠 수 없고 차단만 한다. 이력서는 사유를 입력해야 열리고 `access_log` 에 남는다.
+- 관리자는 공고 내용을 고칠 수 없고 차단만 한다. 지원서는 사유를 입력해야 열리고 `access_log` 에 사유와 함께 남는다 (12절). 이력서 원본의 관리자 열람 화면은 아직 없다.
 
 ## 4. 데이터
 
@@ -215,7 +216,7 @@ docs/                이 문서, API.md, TASKS.md
 ## 11. 지원 (T-08)
 
 - **누가:** 구직자 본인만. 지원은 구직자가 2단계 화면에서 "지원하기" 를 눌렀을 때만 생긴다. 운영자·시스템이 이력서를 고르거나, 대신 내거나, 기업에 보내는 길은 없다 (CLAUDE.md 규칙 1).
-  기업 쪽 지원자 목록·열람은 T-09 이다. 화면 문구에는 "운영자는 지원서를 검토·추천·전달하지 않는다" 를 적는다.
+  기업 쪽 지원자 목록·열람은 12절(T-09a). 화면 문구에는 "운영자는 지원서를 검토·추천·전달하지 않는다" 를 적는다.
 - **흐름 (`routes/applications.tsx`):** 공고 상세의 "지원하기" → `/jobs/:id/apply` 1단계 이력서 고르기(대표 기본 선택, `resumeReadyToApply` 가 아니면 고를 수 없음)
   → 2단계(같은 주소 `?resume=`) 이번 지원에만 쓸 항목 수정 + 첨부 "함께 보내기" + 확인 상자 + 국외 이전 동의 칸 → POST.
   고친 내용은 지원서(복사본)에만 들어가고 저장된 이력서는 바뀌지 않는다. 이 화면에서는 새 파일을 올리지 않는다.
@@ -237,4 +238,26 @@ docs/                이 문서, API.md, TASKS.md
 - **취소:** 확인 화면 → POST. `canWithdraw`(진행 중인 상태만) → `withdrawApplication`(`application_events` 에 `withdrawn` + 상태 `nextStatus(…, 'withdrawn')` + `resume_snapshot = ''`·`file_r2_key = NULL`·`purge_after` + 동의 `withdrawn_at`, 한 트랜잭션)
   → 그 뒤 R2 객체 삭제(실패하면 고아 객체 → T-12). 취소된 지원은 본인 말고 아무도 볼 수 없다(authz). 이 작업에서 상태를 바꾸는 길은 취소 하나뿐이다 (CLAUDE.md 규칙 3).
 - **캐시:** `/jobs/:id/apply` 와 `/my/applications*` 는 모두 `private, no-store` 이고 page-cache 를 거치지 않는다.
+
+## 12. 지원서 열람 (T-09a)
+
+- **여는 길은 하나:** 본인 아닌 사람(기업 담당자·헤드헌터·관리자)이 지원서 내용을 얻는 길은 `lib/applicants.openApplication`, 첨부는 `lib/applicants.downloadApplicationFile` 뿐이다.
+  라우트는 `db/applicants.getApplicationWithJob` 으로 읽은 행을 넘기고 돌려받은 내용만 그린다. 라우트에서 `resume_snapshot` 을 풀거나 권한을 다시 판단하지 않는다.
+  `openApplication` 순서: 권한(`authz.canViewApplication`) → 관리자는 사유(`cleanReason`, 1~300자) → 복호화 → `access_log` 기록 → 기업·헤드헌터가 처음 열었으면 `viewed` 이벤트 + 상태(`rules.nextStatus`, `db/applicants.markViewed`).
+  열 수 없는(손상된) 지원서·막힌 시도(남의 것·취소됨·국외 이전 동의 없음·사유 없음)는 기록하지 않는다. 기록에 실패하면 내용을 돌려주지 않는다.
+- **무엇이 기록되나:** 지원서를 열 때마다, 첨부를 내려받을 때마다 `access_log` 한 줄(`target_type = 'application'`, 연 사람 id·역할·시각, 관리자는 사유).
+  지원자 목록을 보는 것, 관리자 지원서 화면(개인정보 없는 정보 + 사유 폼)을 GET 하는 것은 기록하지 않는다 (내용이 나가지 않으므로).
+  `viewed` 이벤트는 지원서마다 기업·헤드헌터가 처음 열 때 한 번뿐이다. 관리자 열람과 첨부 내려받기는 상태를 바꾸지 않는다. 이 작업에서 다른 상태 변경은 없다 (면접 요청·불합격 통보는 T-09b).
+- **기업 화면:** 지원자 목록에는 개인정보가 없다(지원 순서 번호·지원일·상태·첨부 여부). 정렬·점수·추천 표시·메모·내보내기·전달·상태 변경 버튼이 없다 — 운영자·시스템은 지원자를 평가·추천·전달하지 않는다 (CLAUDE.md 규칙 1).
+  기업 id 는 로그인 사용자의 소속에서만 정하고, 이 기업 공고의 지원서가 아니면 있는지 알리지 않고 404. 이 기업의 지원서이면 취소됨(삭제 안내)·국외 이전 동의 없음(본사 소속 담당자, 403 안내)·열 수 없음을 구분해 알린다.
+- **우연한 열람 막기:** 지원서·첨부 화면은 요청 한 번에 `openApplication`(또는 `downloadApplicationFile`) 한 번만 부르고 캐시·미리 읽기를 하지 않는다.
+  Hono 는 HEAD 를 GET 처리기로 돌리므로 HEAD 는 권한 검사보다 먼저 405, 브라우저의 미리 가져오기·미리 그리기(`Sec-Purpose`/`Purpose` 머리글)는 503 으로 거절한다 (`routes/guards.humanGetOnly`).
+  모든 응답(로그인 리다이렉트·403 포함)이 `private, no-store`. 지원서 id 말고는 주소에 내용이 없고, 새 지원자 알림 메일에는 `/biz` 주소만 있다.
+  메신저 링크 미리보기는 로그인 쿠키가 없어 로그인 화면으로 간다.
+- **관리자:** 지원서 화면에는 개인정보 없는 정보와 사유 폼만 있고, 내용은 사유를 보낸 POST 의 응답에만 그린다(다시 GET 할 수 있는 주소에 내용이 없음). 첨부도 사유와 함께 POST.
+  관리자 지원자 목록·사람 검색·수정·전달·일괄 내려받기는 없다. 관리자는 열람 기록(`/admin/access-log`)이나 신고에서 받은 지원 id 로만 닿는다.
+- **구직자가 보는 것:** 자기 지원서 화면의 "열람 기록" — 본인 아닌 사람이 지원서·첨부를 연 시각과 역할(기업 채용 담당자·운영자)만. 이름·이메일·사유는 보이지 않는다 (`listViewsOfApplication`).
+  상태는 처음 열람 때 "기업이 열람함" 으로 바뀐다. 취소한 지원에는 열람 기록 칸이 없다.
+- **열람 기록 화면:** 최근 순 50건, 커서는 시각(`at < before`)뿐이다. 페이지 끝과 같은 초의 줄은 다음 페이지로 넘겨 빠지지 않게 하지만, 한 초에 51줄 이상이면 그 초의 일부가 빠질 수 있다(알려진 한계 — (at, id) 커서가 필요하면 `listAccessLog` 를 고친다).
+- **알려진 점:** 지원 순서는 `created_at`(초) 다음 id 순이라, 같은 초에 들어온 지원끼리는 순서가 지원 순서와 다를 수 있다. 목록은 공고당 500건까지(`listJobApplications`).
 
