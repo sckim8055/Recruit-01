@@ -229,3 +229,60 @@ describe('어댑터', () => {
     expect(claudeText({ content: [{ type: 'tool_use' }] })).toBeNull();
   });
 });
+
+describe('gemini: 혼잡하면 다음 모델', () => {
+  const ok = { candidates: [{ content: { parts: [{ text: 'OUT' }] } }] };
+  const seq = (...steps: Array<[number, unknown]>) => {
+    let i = 0;
+    const f = vi.fn(async (_url: unknown, _init?: RequestInit) => {
+      const [status, body] = steps[Math.min(i++, steps.length - 1)]!;
+      return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', f);
+    return f;
+  };
+  const sig = () => new AbortController().signal;
+  const rq = { system: 'SYS', user: 'USER', maxTokens: 100 };
+  const modelOf = (call: unknown[]) => String(call[0]).match(/models\/([^:]+):/)![1];
+
+  it('모델 목록: 기본값, 쉼표로 여러 개, 중복 제거', async () => {
+    const { geminiModels, GEMINI_FALLBACK_MODELS } = await import('../src/lib/localize/engines/gemini');
+    expect(geminiModels(undefined)).toEqual([DEFAULT_GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS]);
+    expect(geminiModels('  ')).toEqual([DEFAULT_GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS]);
+    expect(geminiModels('a, b ,a,,c')).toEqual(['a', 'b', 'c']);
+    expect(geminiModels('only-one')).toEqual(['only-one']);
+  });
+  it('503(혼잡)·429(한도)·404(모델 없음)면 다음 모델로 넘어가 성공한다', async () => {
+    const f = seq([503, { error: { status: 'UNAVAILABLE', message: 'high demand' } }], [429, { error: { message: 'quota' } }], [200, ok]);
+    expect(await gemini.complete({ GEMINI_API_KEY: 'k', LOCALIZE_GEMINI_MODEL: 'm1,m2,m3' }, rq, sig())).toBe('OUT');
+    expect(f.mock.calls.map(modelOf)).toEqual(['m1', 'm2', 'm3']);
+    vi.unstubAllGlobals();
+  });
+  it('모두 실패하면 마지막 오류를 돌려준다', async () => {
+    const f = seq([503, { error: { message: 'busy' } }]);
+    await expect(gemini.complete({ GEMINI_API_KEY: 'k', LOCALIZE_GEMINI_MODEL: 'm1,m2' }, rq, sig())).rejects.toThrow('http_503');
+    expect(f.mock.calls).toHaveLength(2);
+    vi.unstubAllGlobals();
+  });
+  it('키 오류(401·403)·요청 오류(400)는 다른 모델을 시도하지 않는다', async () => {
+    for (const status of [400, 401, 403]) {
+      const f = seq([status, { error: { message: 'no' } }], [200, ok]);
+      await expect(gemini.complete({ GEMINI_API_KEY: 'k', LOCALIZE_GEMINI_MODEL: 'm1,m2' }, rq, sig())).rejects.toThrow(`http_${status}`);
+      expect(f.mock.calls).toHaveLength(1);
+      vi.unstubAllGlobals();
+    }
+  });
+  it('응답 모양이 다르면(차단 등) 다른 모델을 시도하지 않는다', async () => {
+    const f = seq([200, { promptFeedback: { blockReason: 'SAFETY' } }], [200, ok]);
+    await expect(gemini.complete({ GEMINI_API_KEY: 'k', LOCALIZE_GEMINI_MODEL: 'm1,m2' }, rq, sig())).rejects.toThrow('bad_response');
+    expect(f.mock.calls).toHaveLength(1);
+    vi.unstubAllGlobals();
+  });
+  it('바깥 제한 시간이 끝났으면 더 시도하지 않는다', async () => {
+    const f = seq([200, ok]);
+    const ac = new AbortController(); ac.abort();
+    await expect(gemini.complete({ GEMINI_API_KEY: 'k', LOCALIZE_GEMINI_MODEL: 'm1,m2' }, rq, ac.signal)).rejects.toThrow();
+    expect(f.mock.calls).toHaveLength(0);
+    vi.unstubAllGlobals();
+  });
+});

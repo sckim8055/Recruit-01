@@ -48,10 +48,12 @@ const body = (withThinking) => JSON.stringify({
 const post = (b) => ({ method: 'POST', headers: { 'x-goog-api-key': key, 'content-type': 'application/json' }, body: b });
 const show = (r) => { if (r) console.log('   ' + r.text.slice(0, 500).replace(/\s+/g, ' ')); };
 
-const a = await timed(`2 생성 (${model}, thinkingLevel=low)`, `${BASE}/models/${model}:generateContent`, post(body(true)), 90000);
-show(a);
-if (!a || a.status !== 200) {
-  const b = await timed(`3 생성 (${model}, thinking 설정 없이)`, `${BASE}/models/${model}:generateContent`, post(body(false)), 90000);
-  show(b);
+// 서버가 차례로 써 보는 모델들을 하나씩 시험한다 (서버는 모델당 11초까지 기다린다).
+const models = vars.LOCALIZE_GEMINI_MODEL ? vars.LOCALIZE_GEMINI_MODEL.split(',').map((x) => x.trim()).filter(Boolean) : [model, 'gemini-3.7-flash', 'gemini-3.5-flash'];
+let n = 2;
+for (const m of models) {
+  const r = await timed(`${n++} 생성 (${m})`, `${BASE}/models/${m}:generateContent`, post(body(true)), 40000);
+  show(r);
+  if (r && r.status === 400) show(await timed(`${n++} 생성 (${m}, thinking 설정 없이)`, `${BASE}/models/${m}:generateContent`, post(body(false)), 40000));
 }
 console.log('\n이 창에 나온 내용을 그대로 보내 주세요 (키는 들어 있지 않습니다).');
