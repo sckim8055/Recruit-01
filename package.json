@@ -4,11 +4,17 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
     "db:local": "wrangler d1 migrations apply DB --local",
-    "db:remote": "wrangler d1 migrations apply DB --remote",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "predeploy:test": "node scripts/predeploy.mjs test",
+    "predeploy:prod": "node scripts/predeploy.mjs production",
+    "deploy:test": "node scripts/deploy.mjs test",
+    "deploy:prod": "node scripts/deploy.mjs production",
+    "db:test:migrate": "node scripts/db-migrate.mjs test",
+    "db:prod:migrate": "node scripts/db-migrate.mjs production",
+    "backup:test": "node scripts/backup.mjs test",
+    "backup:prod": "node scripts/backup.mjs production"
   },
   "dependencies": {
     "hono": "^4.13.19"

@@ -17,7 +17,8 @@
 | GET /lang/:l | 언어 전환 (ko/zh) | 누구나 | ✅ |
 | GET /my | 역할별 첫 화면 (구직자: 이력서·지원 현황 링크, 기업·헤드헌터 → /biz, 관리자 → /admin) | 로그인 | ✅ |
 | GET /biz | 기업 첫 화면 (소속 없음: 받은 초대 + 기업 등록 폼 / 소속 있음: 검증 상태·남은 할 일·새 지원 요약 "새 지원 M건 · 전체 N건"(새 지원자 알림 메일이 이 주소로 연결)). 헤드헌터는 임시 화면 | company, headhunter | ✅ |
-| GET /api/health | 상태 확인 | 누구나 | ✅ |
+| GET /api/health | 상태 확인 `{ ok: true, env }` 만 (설정 점검 결과는 내지 않는다 — `/admin/system`) | 누구나 | ✅ |
+| (모든 경로) 점검 모드 | `MAINTENANCE = "on"` 이면 관리자 세션·`/api/health`·`/login*`·`/logout`·`/lang/*`·`/admin*`·정적 파일 말고 모두 503 점검 안내(한·중, `Retry-After`, `private, no-store`). 라우트·공개 화면 캐시보다 먼저 (ARCHITECTURE 6-2) | — | ✅ T-13 |
 | (없는 경로) · 권한 없음 | 404 · 403 화면 (공통 레이아웃, 한국어·중국어) | 누구나 | ✅ |
 | GET /terms · /privacy | 이용약관·개인정보처리방침 (`src/legal/`, 현재 언어). 비로그인은 60초 캐시. 동의 없이도 열림. `/privacy` 의 보관 기간 숫자는 지금 보관 기간 설정으로 채운다(`legal/render.renderLegal`, 캐시에 없을 때 설정 한 행 읽기 — 저장 뒤 비로그인 화면은 최대 60초 예전 숫자, T-12c) | 누구나 | ✅ T-11·T-12c |
 | (모든 경로) 동의 확인 | 로그인한 회원(관리자 제외)이 지금 판의 약관·개인정보 동의가 없으면 GET·HEAD → `/consent?next=<경로>`, 그 밖은 403. 개인정보 판은 보관 기간 설정의 rev 로 정해진다(`PRIVACY_VERSION` 또는 `PRIVACY_VERSION+r<n>`, 요청마다 설정 한 행 읽기, T-12c). 비로그인·예외 주소(`/consent` `/terms` `/privacy` `/logout` `/login*` `/lang/*` `/my/account*` `/api/health`)·정적 파일은 확인하지 않음. `private, no-store` (ARCHITECTURE 13절) | — | ✅ T-11 |
@@ -99,6 +100,7 @@
 | GET /admin/applications/:id | 지원서 정보(공고 제목·기업 id·지원일·상태·동의/첨부 여부 — 개인정보 없음) + "열람 사유" 폼(필수, 300자). 기록하지 않음. 취소된 지원은 안내만 | ✅ T-09a |
 | POST /admin/applications/:id/open | 사유(`reason`) → `openApplication` → 내용은 이 POST 응답에만 그린다(리다이렉트 없음). access_log 에 사유, 상태 변경 없음. 사유 없음·300자 초과는 400 + 오류, 취소됨·열 수 없음은 안내 | ✅ T-09a |
 | POST /admin/applications/:id/file | 사유와 함께 첨부 내려받기 (`downloadApplicationFile`, access_log 에 사유). 안 되면 400 + 지원서 화면 | ✅ T-09a |
+| GET /admin/system | 시스템 점검 (T-13, `private, no-store`, 로그인 리다이렉트·403 포함): 실행 환경, 설정 점검 표(`lib/config-check.configChecks` — ok·확인·문제 + 고치는 법), 비밀값 표(설정됨/없음 + 길이 구간, **값은 없음**), 오늘 사용량, 보관 기간(읽기만), 예약 작업 시간표(UTC·한국 시간), 마이그레이션 확인 방법 안내. 읽기: 사용량 2 + 보관 기간 설정 1. 요청을 막지 않는다. 관리자 첫 화면에서 링크 | ✅ T-13 |
 | GET /admin/access-log | 열람 기록: 최근 순 50건씩, `?type=application\|resume\|verification_doc`(그 밖의 값은 무시), `?before=<시각>` 커서. 시각·연 사람(이메일·역할)·대상·사유. 지원서 대상은 관리자 지원서 화면으로 연결 | ✅ T-09a |
 
 관리자에게 **없는** 기능: 개인정보 "영구 보관"·"지우지 않기" 설정(T-12c — 범위 안의 기간만), 공고 내용 수정, 이력서 전달, 구직자·기업에게 추천 발송, 지원자에게 메일 보내기(면접 요청·불합격 통보는 기업 담당자만, T-09b), 지원자 목록·사람 검색, 지원서 수정·일괄 내려받기.

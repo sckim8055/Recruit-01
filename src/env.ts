@@ -15,6 +15,8 @@ export interface Env {
   FLAG_HEADHUNTER_POSTING: string;
   FLAG_RESUME_ZH_SUMMARY: string;
   FLAG_PAID_LABEL: string;
+  // 점검 모드(T-13): "on" 이면 관리자·로그인·/api/health 말고 모든 요청에 503 점검 안내 (src/lib/pause.ts). 그 밖의 값·없음 = 꺼짐.
+  MAINTENANCE?: string;
   // 공고 현지화 엔진 (src/lib/localize/). 비어 있으면 기본 순서(claude → gemini → workers_ai) 중 쓸 수 있는 것을 쓴다.
   LOCALIZE_ENGINE?: string;
   LOCALIZE_WORKERS_AI_MODEL?: string;

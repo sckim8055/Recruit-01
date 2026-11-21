@@ -1,10 +1,15 @@
-# 복사해서 .dev.vars 로 저장한다. .dev.vars 는 git 에 올리지 않는다.
-# ENC_KEY: 32바이트 무작위 값(base64).  node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+# 로컬 개발용. 복사해서 .dev.vars 로 저장한다. .dev.vars 는 git 에 올리지 않는다.
+# 여기 값은 내 PC 에서만 쓴다. 테스트·운영 서버에는 새로 만든 다른 값을 넣는다 (docs/DEPLOY.md 2-4). 로컬 값을 서버에 다시 쓰지 않는다.
+#
+# ENC_KEY: 32바이트 무작위 값(base64). 아래 명령의 출력을 붙인다.
+#   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ENC_KEY=
-# SESSION_PEPPER: 임의의 긴 문자열. 인증코드·세션 해시에 섞는다.
-SESSION_PEPPER=
-# 비워 두면 dev/test 에서는 메일을 보내지 않고 콘솔에 출력한다.
+# SESSION_PEPPER: 인증코드·세션 해시에 섞는 긴 문자열. 로컬에서는 아래 예시 값을 그대로 써도 된다 (가짜 데이터뿐).
+# 서버의 /admin/system 은 이 예시 값을 "문제" 로 표시한다.
+SESSION_PEPPER=dev-pepper-local-only-1234
+# 메일 발송 키. 로컬(APP_ENV=dev)에서 비워 두면 메일을 보내지 않고 받는 주소와 본문(로그인 인증코드 포함)을 터미널에 출력한다.
+# 테스트·운영 서버에서는 출력하지 않으므로 키가 없으면 메일이 나가지 않는다(로그인 불가).
 RESEND_API_KEY=
-# 공고 현지화 엔진 키 (하나 이상, 비우면 수동 입력). README "현지화 엔진" 참고.
+# 공고 현지화 엔진 키 (선택, 하나 이상, 비우면 기업이 한국어를 직접 입력). README "현지화 엔진" 참고.
 ANTHROPIC_API_KEY=
 GEMINI_API_KEY=

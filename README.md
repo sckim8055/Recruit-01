@@ -6,6 +6,7 @@
 - 경로·API: [docs/API.md](docs/API.md)
 - 할 일 목록: [docs/TASKS.md](docs/TASKS.md)
 - 개발 규칙: [CLAUDE.md](CLAUDE.md)
+- **서버에 올리기·백업·문제 대처 (운영자용): [docs/DEPLOY.md](docs/DEPLOY.md)**
 
 ## 로컬에서 실행하기 (Windows)
 
@@ -22,7 +23,7 @@ copy .dev.vars.example .dev.vars
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
-위 명령의 출력값을 `ENC_KEY=` 뒤에 붙이고, `SESSION_PEPPER=` 뒤에는 임의의 긴 문자열을 적는다. (이 값들은 README 나 대화창에 적지 않는다.)
+위 명령의 출력값을 `ENC_KEY=` 뒤에 붙인다. `SESSION_PEPPER` 는 예시 파일의 로컬 전용 값을 그대로 써도 된다. (이 값들은 README 나 대화창에 적지 않는다. 서버에는 새로 만든 다른 값을 넣는다 — docs/DEPLOY.md 2-4.)
 
 ```
 npm run db:local
@@ -31,7 +32,9 @@ npx wrangler dev --var APP_ENV:dev
 
 Windows 에서는 위 두 줄 대신 폴더의 **`start.bat` 을 더블클릭**해도 된다 (패키지 설치 확인 → 로컬 DB 갱신 → 서버 시작을 한 번에 한다. 끝낼 때는 창에서 Ctrl+C).
 
-브라우저에서 http://localhost:8787 을 연다. 로그인 인증코드는 메일로 가지 않고 **터미널 창**에 출력된다.
+브라우저에서 http://localhost:8787 을 연다. 로그인 인증코드는 메일로 가지 않고 **터미널 창**에 출력된다
+(`RESEND_API_KEY` 가 없고 `APP_ENV` 가 `dev` 일 때만. 테스트·운영 서버는 출력하지 않으므로 Resend 키가 있어야 로그인할 수 있다).
+로컬 실행에는 Cloudflare 로그인이 필요 없다.
 
 ## 현지화 엔진 (공고 한국어 초안)
 
@@ -40,7 +43,7 @@ Windows 에서는 위 두 줄 대신 폴더의 **`start.bat` 을 더블클릭**�
 
 1. **Claude**: https://platform.claude.com 에서 API 키를 만든다.
 2. **Gemini**: https://aistudio.google.com 에서 API 키를 만든다.
-3. **Workers AI**: 키가 필요 없다. `npx wrangler login` 으로 Cloudflare 에 로그인한 뒤, `wrangler.jsonc` 맨 아래 `"ai"` 줄의 설명대로 켠다.
+3. **Workers AI**: 키가 필요 없다. 운영 서버(`env.production`)에는 켜져 있다. 테스트 서버·로컬에는 켜지 않았다 — 켜면 로그인하지 않은 PC 에서 `wrangler dev` 가 시작되지 않는다 (docs/DEPLOY.md 6-5).
 
 로컬에서는 `.dev.vars` 에 키를 한 줄씩 적는다 (이 파일은 git 에 올라가지 않는다).
 
@@ -49,7 +52,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 GEMINI_API_KEY=AIza...
 ```
 
-테스트·운영 서버에는 `npx wrangler secret put ANTHROPIC_API_KEY` (또는 `GEMINI_API_KEY`) 를 실행하고 키를 붙여 넣는다.
+테스트 서버에는 `npx wrangler secret put ANTHROPIC_API_KEY` (또는 `GEMINI_API_KEY`), 운영 서버에는 같은 명령 뒤에 `--env production` 을 붙여 실행하고 키를 붙여 넣는다.
 
 어느 엔진을 먼저 쓸지는 `wrangler.jsonc` 의 `"LOCALIZE_ENGINE"` 에 `claude`, `gemini`, `workers_ai` 중 하나를 적어 정한다.
 비워 두면 claude → gemini → workers_ai 순서로 키가 있는 것을 쓰고, 실패하면 다음 엔진으로 넘어간다.
@@ -72,7 +75,8 @@ GEMINI_API_KEY=AIza...
 
 - 로그인 인증코드 메일, 새 지원자 알림 메일, 자동 정리 작업의 메일은 세지 않는다.
 - 번역 엔진이 없거나(키 없음) 메일을 보내지 않는 경우(검증 전 기업의 초대)는 한도를 쓰지 않는다. 엔진·메일이 **실패해도 한 번 쓴 것으로 센다**(되돌리지 않는다).
-- **한도 바꾸기:** `wrangler.jsonc` 의 `"vars"` 에서 해당 줄의 `""` 안에 숫자를 적고 `npm run deploy` 한다 (예: `"MAIL_PER_COMPANY_DAY": "200"`).
+- **한도 바꾸기:** `wrangler.jsonc` 의 `"vars"`(테스트는 맨 위, 운영은 `env.production` 안 — 따로 적혀 있다)에서 해당 줄의 `""` 안에 숫자를 적고 다시 배포한다 (예: `"MAIL_PER_COMPANY_DAY": "200"`, 배포는 docs/DEPLOY.md 4장).
+  Resend 무료 플랜은 하루 100통이므로 무료 플랜 동안은 `MAIL_SITE_DAY` 를 60 정도로 낮추기를 권한다 (docs/DEPLOY.md 1장).
   비워 두거나 숫자가 아니면 기본값을 쓴다. `0` 을 적으면 그 기능을 쓰지 않는다(예: 자동 번역 끄기).
   로컬에서 시험할 때는 `npx wrangler dev --var MAIL_PER_COMPANY_DAY:2` 처럼 붙인다.
 - **오늘 사용량 보기:** 관리자 첫 화면(`/admin`)의 "오늘 사용량" 상자에 사이트 전체 자동 번역 호출 수와 기업 메일 수가 `쓴 수 / 한도` 로 나온다.
@@ -85,9 +89,19 @@ npm run typecheck
 npm test
 ```
 
-## 테스트 서버(recruit.kimbbob.xyz)에 올리기
+## 서버에 올리기 (테스트 recruit.kimbbob.xyz · 운영)
 
-docs/TASKS.md 의 "운영자 설정" 항목을 먼저 끝낸 뒤 `npm run db:remote`, `npm run deploy` 를 실행한다.
+**docs/DEPLOY.md** 를 따른다. 자주 쓰는 명령 (Windows 는 `deploy-test.bat`·`backup-prod.bat` 더블클릭으로도 된다):
+
+| 명령 | 하는 일 |
+|---|---|
+| `npm run deploy:test` | 형식 검사·테스트·설정 점검 → 테스트 서버 배포 |
+| `npm run deploy:prod` | 위 + 약관 표시·신고번호·git 점검 → 도메인 입력 확인 → 운영 서버 배포 |
+| `npm run db:test:migrate` · `db:prod:migrate` | 서버 DB 에 마이그레이션 적용 (운영은 백업 확인) |
+| `npm run backup:test` · `backup:prod` | 서버 DB 를 내려받아 비밀문구로 암호화한 백업 (`backups/`) |
+| `npm run predeploy:test` · `predeploy:prod` | 배포 전 점검만 |
+
+배포한 뒤 관리자 화면 **시스템 점검**(`/admin/system`)에서 빨간 항목이 없는지 본다. 사이트를 잠시 멈추는 점검 모드(`MAINTENANCE`)는 docs/DEPLOY.md 6-2.
 
 ## 채용정보 검색 조건 고르기
 
@@ -115,7 +129,7 @@ docs/TASKS.md 의 "운영자 설정" 항목을 먼저 끝낸 뒤 `npm run db:rem
 npx wrangler d1 execute DB --local --command "UPDATE users SET role='admin' WHERE email='내이메일@example.com'"
 ```
 
-(테스트·운영 서버는 `--local` 대신 `--remote`.) 로그아웃한 뒤 다시 로그인하면 2단계 인증 등록 화면이 나온다.
+(테스트 서버는 `--local` 대신 `--remote`, 운영 서버는 `--remote --env production`.) 로그아웃한 뒤 다시 로그인하면 2단계 인증 등록 화면이 나온다.
 휴대폰의 인증 앱(Google Authenticator, Microsoft Authenticator 등)에서 "설정 키 입력"을 골라 화면의 키를 입력하고,
 앱에 나오는 6자리 번호를 입력하면 `/admin` 으로 들어간다. 다음 로그인부터는 이메일 인증코드 + 앱의 6자리 번호가 필요하다.
 
@@ -186,10 +200,10 @@ npx wrangler d1 execute DB --remote --command "UPDATE users SET role='seeker', t
 - 공고 자동 마감을 끄면 마감일이 없는 공고는 기업이 직접 마감할 때까지 게재된다. 마감일이 지난 공고는 그대로 자동 마감된다.
 
 **잘 돌았는지 보는 법**
-1. Cloudflare 대시보드 → Workers & Pages → `recruit-test` → **Logs**(또는 `npx wrangler tail`)에서 매시 한 줄 `maint: step=<단계> ok counts={…}` 를 본다. `failed` 가 보이면 개발자에게 알린다.
+1. Cloudflare 대시보드 → Workers & Pages → `recruit-test`(운영은 `recruit`) → **Logs**(또는 `npx wrangler tail`, 운영은 뒤에 `--env production`)에서 매시 한 줄 `maint: step=<단계> ok counts={…}` 를 본다. `failed` 가 보이면 개발자에게 알린다.
    이 줄에는 숫자만 있다(이메일·파일 이름·id 없음).
 2. (선택) 매일 아침 9시(한국 시간)에 전날 처리 수를 메일로 받으려면 `wrangler.jsonc` 의 `"OPS_EMAIL": ""` 에 받을 주소를 적고 다시 배포한다. 비워 두면 보내지 않는다.
-   메일에는 개수만 들어 있다. (메일 발송에는 Resend 키가 필요하다 — O-6.)
+   메일에는 개수만 들어 있다. (메일 발송에는 Resend 키가 필요하다 — docs/DEPLOY.md 2-6.)
 
 **로컬에서 직접 실행해 보기 (개발자용)**
 

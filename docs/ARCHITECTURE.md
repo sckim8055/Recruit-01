@@ -8,7 +8,7 @@
 - **무엇:** 한국에 진출한 중국기업의 채용 공고와 기업 정보를 보여주는 사이트. 기업은 중국어로 공고를 쓰고, 구직자는 한국어로 본다.
 - **법적 형태:** 직업정보제공사업. 직업소개(알선)는 하지 않는다. 구직자와 기업은 직접 연결된다.
 - **구성:** Cloudflare Worker 하나(Hono). 화면은 서버 렌더링, DB 는 D1, 파일은 R2, 메일은 Resend, 번역은 현지화 엔진 층(Claude · Gemini · Workers AI 중 설정으로 선택, 7절).
-- **환경:** dev(로컬) → test(recruit.kimbbob.xyz, 가짜 데이터) → production(kimbbob.com, 신고 후).
+- **환경:** dev(로컬) → test(recruit.kimbbob.xyz, 가짜 데이터) → production(운영 도메인 미정, 신고 후). 6절, 배포는 docs/DEPLOY.md.
 
 ```
 브라우저(한국·중국) ──▶ Cloudflare Worker (src/index.tsx)
@@ -32,7 +32,9 @@ src/
     authz.ts         ★ 열람·수정 권한 — 순수 함수
     auth.ts          이메일 인증코드 로그인, 세션, 역할 검사, CSRF
     crypto.ts        AES-GCM 암호화, 해시, 인증코드·토큰 생성
-    email.ts         Resend 발송 + email_log
+    email.ts         Resend 발송 + email_log (키가 없으면 dev 에서만 콘솔 출력 — 6절)
+    config-check.ts  설정 점검 — 순수 함수, 화면은 /admin/system 뿐 (6절, T-13)
+    pause.ts         점검 모드 MAINTENANCE 판단 — 순수 함수 (6절, T-13)
     i18n.ts          언어 판별, 문구 조회
     jobs.ts          공고 폼 검사, 저장 시 상태 계산(planJobSave), 숫자 대조 — 순수 함수
     public-jobs.ts   공개 공고 조건(isPubliclyVisible)·필터·페이지 — 순수 함수 (9절)
@@ -129,18 +131,41 @@ docs/                이 문서, API.md, TASKS.md
 | `FLAG_PRODUCTION_JOBS` | 생산직 공고 등록·노출 | 운영자 결정 |
 | `FLAG_PAID_LABEL` | "유료 제작" 표시 | 유료 제작물을 처음 게재하는 시점에 반드시 켠다 |
 
-## 6. 환경
+## 6. 환경 (T-13)
 
-| 환경 | 주소 | 데이터 | 메일 |
-|---|---|---|---|
-| dev | localhost:8787 | 로컬 D1(가짜) | 콘솔 출력 |
-| test | recruit.kimbbob.xyz (Cloudflare Access 로 운영자만) | 가짜만 | Resend 또는 콘솔 |
-| production | kimbbob.com | 실제 | Resend (kimbbob.com SPF/DKIM/DMARC) |
+| 환경 | wrangler.jsonc | Worker 이름 | 주소 | D1 · R2 | 데이터 | 키 없을 때 메일 |
+|---|---|---|---|---|---|---|
+| dev | 맨 위 + `--var APP_ENV:dev` (start.bat) | (로컬) | localhost:8787 | 로컬 D1·R2 | 가짜 | 콘솔 출력 (dev 만) |
+| test | 맨 위 | `recruit-test` | recruit.kimbbob.xyz (Custom Domain, Cloudflare Access 권장) | `recruit-test` · `recruit-test-files` | 가짜만 | 보내지 않음(`no_api_key`, 출력 없음) → 로그인 불가 |
+| production | `env.production` | `recruit` | 운영 도메인 (미정, `REPLACE_WITH_PRODUCTION_DOMAIN`) | `recruit-prod` · `recruit-prod-files` | 실제 | 보내지 않음 (배포도 `secrets.required` 로 막힘) |
 
-- production 은 `wrangler.jsonc` 에 `env.production` 으로 별도 D1·R2 를 둔다 (T-13). test 와 DB·버킷을 공유하지 않는다.
-- 비밀값(`ENC_KEY`, `SESSION_PEPPER`, `RESEND_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`)은 `wrangler secret put` 으로 환경마다 따로 넣는다.
-- `ENC_KEY` 를 잃으면 이력서와 백업을 복구할 수 없다. 운영자는 오프라인 사본을 보관한다.
-- 무료 플랜 한도: Workers 요청 10만/일·CPU 10ms/요청, D1 읽기 500만 행/일·쓰기 10만 행/일. 실제 이력서를 받는 시점부터는 유료 플랜(월 5달러)을 권장한다.
+- **물려지지 않는 키:** Cloudflare 문서(https://developers.cloudflare.com/workers/wrangler/configuration/ "Non-inheritable keys")와 wrangler 4.166 설정 스키마에 따르면 `vars`·`d1_databases`·`r2_buckets`·`ai`·`secrets` 는
+  named environment 로 물려지지 않는다 → `env.production` 에 모두 다시 적었다(`test/deploy-checks.test.ts` 가 vars 이름이 같은지 확인). `triggers`·`observability`·`routes`·`workers_dev` 는 물려지지만 같은 값으로 다시 적었다.
+  맨 위 vars 에 줄을 더하면 production 에도 더한다.
+- `workers_dev`·`preview_urls` 는 두 환경 모두 끔 (Access 를 거치지 않는 두 번째 주소가 생기지 않게).
+- **Workers Logs:** `observability.logs.enabled = true`, `invocation_logs = false`(요청마다의 자동 기록을 남기지 않고 코드가 찍은 줄 — `maint:`·`error:` 등, 개인정보 없음 — 만 남긴다).
+- **Workers AI:** 운영에만 (7절).
+- **비밀값**(`ENC_KEY`, `SESSION_PEPPER`, `RESEND_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`)은 `wrangler secret put <이름> [--env production]` 으로 환경마다 **새 값**을 넣는다. 운영은 앞의 셋이 `secrets.required`.
+- `ENC_KEY` 를 잃으면 이력서와 (백업 안의) 이력서를 복구할 수 없다. 운영자는 오프라인 사본을 보관한다.
+- 무료 플랜 한도: Workers 요청 10만/일·CPU 10ms/요청, D1 읽기 500만 행/일·쓰기 10만 행/일, D1 Time Travel 7일(유료 30일). 실제 이력서를 받는 시점부터는 유료 플랜(월 5달러)을 권장한다.
+- **배포·백업 절차는 docs/DEPLOY.md** (npm 스크립트 `deploy:*`·`predeploy:*`·`db:*:migrate`·`backup:*`, `scripts/`). 백업 = D1 export 를 비밀문구(scrypt) + AES-256-GCM 으로 암호화한 파일. R2 파일은 백업하지 않는다.
+
+### 6-1. 설정 점검 (`lib/config-check.ts`, `GET /admin/system`)
+
+- 순수 함수 `configChecks(env)` 가 항목마다 `ok | warning | problem` 과 결과 코드를 돌려준다: ENC_KEY(32바이트 base64), SESSION_PEPPER(16자 이상, 서버에서 `.dev.vars.example` 의 로컬 값이면 문제),
+  APP_ORIGIN(https, 자리표시자 없음), MAIL_FROM, RESEND_API_KEY(운영 = 문제, 테스트 = 경고), 신고번호(운영에서 경고 — 게재는 `publishBlocks` 가 막는다), 약관·방침의 【확인 필요】/【待确认】 개수(운영 = 문제),
+  OPERATOR_DOMAINS, 켜진 `FLAG_*`(경고), D1·R2 바인딩, 점검 모드, 현지화 엔진.
+- **비밀값의 값은 돌려주지 않는다** — `secretSummary` 는 이름·설정됨/없음·길이 구간(16자 미만/16~31/32 이상)뿐. 테스트가 결과 전체에 비밀값의 앞뒤 6자도 없는지 확인한다.
+- 화면은 관리자(TOTP 세션)만, `private, no-store`. 점검 표 + 비밀값 표 + 오늘 사용량 + 보관 기간(읽기만) + cron 시간표. 적용된 마이그레이션 수는 Worker 안에서 알 수 없어 보이지 않고 `wrangler d1 migrations list` 를 안내한다.
+- 점검 결과로 요청을 막지 않는다(사이트는 항상 뜬다). `/api/health` 는 `{ ok, env }` 그대로 (공개 주소에 점검 결과를 내지 않는다).
+- 배포 전에는 `scripts/predeploy.mjs` 가 같은 종류의 점검을 설정 파일·소스로 한다(자리표시자·신고번호·약관 표시(주석 제외)·git).
+
+### 6-2. 점검 모드 (`MAINTENANCE`, `lib/pause.ts`)
+
+- `MAINTENANCE = "on"`(대소문자·공백 무시) 이면 `src/index.tsx` 의 미들웨어(세션·언어 다음, 동의 확인·라우트 앞)가 503 점검 안내(한·중, `Retry-After: 1800`, `private, no-store`)를 보낸다.
+- 통과: 관리자 세션(TOTP 통과 세션만 관리자 — `loadUser`), `/api/health`, `/login*`·`/logout`·`/lang/*`(관리자가 로그인하는 길), `/admin*`(로그인하지 않았으면 원래대로 로그인·403), `public/` 정적 파일.
+- 라우트보다 먼저 돌므로 page-cache(9절)를 읽지도 쓰지도 않는다 — 캐시된 공개 화면도 나가지 않는다(테스트로 확인). 예약 작업(`scheduled`)은 멈추지 않는다.
+- 켜고 끄기: `wrangler.jsonc` 의 `"MAINTENANCE"` 또는 비상용 `npx wrangler deploy [--env production] --var MAINTENANCE:on` (docs/DEPLOY.md 6-2).
 
 ## 7. 공고 현지화 (T-05)
 
@@ -158,7 +183,8 @@ docs/                이 문서, API.md, TASKS.md
 - **기록:** 콘솔에는 엔진 id 와 오류 종류(HTTP 상태)만. 기업 화면에는 엔진 이름을 보여주지 않는다(관리자 화면에만).
 - **캐시:** `translations` 테이블은 쓰지 않는다 (결과는 공고 행에 저장되고, "다시 만들기" 는 새 결과가 필요하다).
 - **변수:** `LOCALIZE_ENGINE`, `LOCALIZE_CLAUDE_MODEL`, `LOCALIZE_GEMINI_MODEL`, `LOCALIZE_WORKERS_AI_MODEL`(비우면 코드 기본값). 비밀값 `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`.
-  Workers AI 는 `wrangler.jsonc` 의 `"ai"` 바인딩을 켜야 한다(로그인 필요, 로컬 `wrangler dev` 에서도 원격 호출).
+  Workers AI 는 `wrangler.jsonc` 의 `"ai"` 바인딩이 있어야 한다 — **운영(`env.production`)에만** 켰다. 로컬 `wrangler dev` 에서도 원격 호출이라 맨 위(테스트 = 로컬 개발)에 두면
+  로그인하지 않은 PC 에서 `wrangler dev` 가 시작되지 않는다(T-13 에서 확인, docs/DEPLOY.md 6-5).
 - **상태:** 원문·한국어가 바뀌면 `localize_status = review`, 게재 중이면 미게재로(`jobs.planJobSave`). 기업이 한국어를 직접 고치면 대조본을 지운다.
   숫자 대조(`jobs.digitDiff`)는 경고만 하고 게재 조건이 아니다. 모든 쓰기는 `jobs.rev`(내용 버전)가 화면을 연 때와 같을 때만 반영한다.
 
@@ -432,7 +458,7 @@ D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다)
 
 - **DB 를 먼저, R2 를 나중에.** 반대로 하다 끊기면 DB 가 없는 파일을 가리키게 되고(지원서·이력서 화면 오류), 이 순서로 하다 끊기면 아무도 가리키지 않는 **암호문** 객체가 남을 뿐이다(rfiles/ 는 고아 정리가 24시간 뒤 치운다).
 - 실행기(`runMaintenance`)는 단계를 try/catch 로 감싸고 예외를 밖으로 내보내지 않는다. 로그는 실행마다 한 줄 `maint: step=<이름> ok|failed counts=<숫자 JSON>` — 오류 내용·키·이메일·id 는 남기지 않는다.
-  (dev·test 에서 Resend 키가 없으면 `lib/email.sendMail` 이 받는 주소와 본문을 콘솔에 출력한다 — 기존 동작, 운영에서는 출력하지 않는다.)
+  (Resend 키가 없으면 `lib/email.sendMail` 은 **`APP_ENV === 'dev'` 에서만** 받는 주소와 본문을 콘솔에 출력한다. 테스트·운영 서버에서는 출력하지 않고 `no_api_key` 로 실패한다 — T-13.)
 - 정리 작업을 실행하는 **HTTP 경로는 없다.** `scheduled` 만 실행한다. 개발용으로 cron 문자열 `maint:<단계>` 로 단계를 고르는 것은 `APP_ENV === 'dev'` 일 때만 받는다(배포 환경의 cron 문자열은 `wrangler.jsonc` 에 적은 `"0 * * * *"` 뿐이라 닿지 않는다. test 환경에서 같은 문자열을 보내도 시간표대로 실행됨을 확인).
 - `users` 행은 이 작업에서 지우지 않는다: `jobs.created_by`·`access_log.actor_id`·`application_events.actor_id`·`consents.user_id` 등이 외래키로 가리킨다(D1 은 외래키를 검사한다). 탈퇴 계정은 이메일이 익명화된 상태로 남는다 → 남은 일.
 

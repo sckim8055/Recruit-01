@@ -222,14 +222,34 @@
       자동 마감 끔 + closeJobs(무수정 공고 그대로, 마감일 지난 공고 마감) → keep_days 가 다른 지원의 markApplications·purgeApplications(MIN 규칙·당기기·늦추지 않음) → 초안 삭제·게재 공고 거절 확인.
       남은 일: 사업자 서류·열람 기록은 자료마다 기간을 남기지 않아 늘린 기간이 이미 있는 자료에도 적용됨(운영자·전문가 판단 — 필요하면 지원서처럼 행마다 기간 저장),
       늘린 뒤 다시 동의를 거부한 회원의 처리(지금은 탈퇴 외에 쓸 수 없음 — 설계대로), 자동 마감을 끄기 전에 보낸 무수정 마감 안내 메일은 그대로 나간 상태(마감은 되지 않음)
-## 운영자 설정 (사람이 하는 일 — 안내 문서를 먼저 써서 건넨다)
-- [ ] O-1 GitHub 저장소에 이 폴더 올리기
-- [ ] O-2 Cloudflare: D1 `recruit-test` 생성 → `wrangler.jsonc` 의 `database_id` 교체, R2 `recruit-test-files` 생성
-- [ ] O-3 비밀값 넣기: `wrangler secret put ENC_KEY` · `SESSION_PEPPER` (ENC_KEY 는 오프라인 사본 보관)
-- [ ] O-4 `npm run db:remote` → `npm run deploy` → 사용자 지정 도메인 recruit.kimbbob.xyz 연결
-- [ ] O-5 Cloudflare Access 로 recruit.kimbbob.xyz 를 운영자만 접속하게 잠그기
-- [ ] O-6 (나중) Resend 키, 현지화 엔진 키(Anthropic 또는 Gemini, 또는 Workers AI 바인딩 켜기 — README "현지화 엔진"), 공공데이터포털 국세청 사업자 상태조회 키 발급
-- [ ] O-7 (나중) 고용노동부 1350 문의 → 답에 따라 기능 플래그 결정
+- [x] T-13 운영 환경 분리·배포 절차·백업. `wrangler.jsonc`: 맨 위 = 테스트(`recruit-test`, Custom Domain `recruit.kimbbob.xyz`, `workers_dev`·`preview_urls` 끔),
+      `env.production` = 운영(`recruit`, D1 `recruit-prod`, R2 `recruit-prod-files`, 도메인·D1 id 는 `REPLACE_WITH_…` 자리표시자, 물려지지 않는 vars·d1·r2·ai·secrets 를 모두 다시 적음,
+      triggers·observability 도 같은 값으로 다시 적음, Workers AI 바인딩, `secrets.required` = ENC_KEY·SESSION_PEPPER·RESEND_API_KEY). Workers Logs 켬(`invocation_logs: false` — 코드가 찍은 줄만).
+      Workers AI 는 운영에만: 맨 위에 두면 로그인하지 않은 PC 의 `wrangler dev` 가 "Failed to start the remote proxy session" 으로 시작되지 않음을 이 저장소에서 직접 확인.
+      안전장치: `lib/email.ts` 는 키가 없을 때 **`APP_ENV === 'dev'` 에서만** 콘솔 출력(테스트·운영은 `no_api_key`, 출력 없음 → 테스트 서버도 Resend 키가 있어야 로그인 가능),
+      `lib/config-check.ts`(순수 함수: ENC_KEY 32바이트·SESSION_PEPPER 길이/로컬 예시 값·APP_ORIGIN https/자리표시자·MAIL_FROM·Resend 키·신고번호·【확인 필요】 개수·운영자 도메인·플래그·D1/R2·점검 모드·엔진,
+      비밀값은 설정됨/없음 + 길이 구간만) → 관리자 `GET /admin/system`(no-store, 점검 표·비밀값 유무·오늘 사용량·보관 기간(읽기만)·cron 시간표, 마이그레이션 수는 런타임에 알 수 없어 안내만, 관리자 첫 화면에 링크),
+      점검 모드 `MAINTENANCE=on`(`lib/pause.ts` + `src/index.tsx` 미들웨어: 관리자·`/login*`·`/logout`·`/lang/*`·`/admin*`·`/api/health`·정적 파일 말고 503 한·중 + Retry-After + no-store,
+      라우트보다 먼저라 page-cache 를 읽지 않음). `/api/health` 는 그대로 `{ok, env}`. 스크립트(새 의존성 없음): `scripts/predeploy.mjs`(test: typecheck·테스트·자리표시자 / prod: + 약관 표시(주석 제외)·신고번호·주소 일치·workers_dev·git main·깨끗한 작업 트리),
+      `deploy.mjs`(npm 이 `predeploy:*` 를 먼저 돌리고 15분 안 같은 코드면 다시 하지 않음, 운영은 도메인 입력 확인), `db-migrate.mjs`(운영은 백업 확인 + 도메인 입력), `backup.mjs`(`wrangler d1 export --remote` → AES-256-GCM + scrypt(N=2^17) 비밀문구 → `backups/<env>-<yyyymmdd-hhmm>.sql.enc`, 평문 임시 파일 삭제),
+      `restore-decrypt.mjs`, Windows `deploy-test.bat`·`backup-prod.bat`. 운영자 안내 `docs/DEPLOY.md`. 테스트 47개 추가(config-check 15·email 5·pause/system 10·deploy-checks 11·backup-crypto 6).
+      **확인한 것:** typecheck·테스트 604, `wrangler deploy --dry-run`(테스트·운영 둘 다 설정 해석 — 자리표시자는 dry-run 이 잡지 않음 → predeploy 가 잡음), `predeploy:test`·`predeploy:prod` 가 지금 상태에서 막힘,
+      로컬 `wrangler dev`(로그인 안 함): `/`·`/login`·관리자 TOTP 로그인·`/admin/system`, `APP_ENV:test` 에서 인증코드 미출력 + "메일을 보내지 못했습니다" + `email_log` `no_api_key`, `MAINTENANCE:on` 503(한·중), 로컬 D1 export → 암호화 → 복호화 바이트 동일.
+      **확인하지 못한 것 (Cloudflare 계정 없음):** 실제 배포·Custom Domain 자동 연결·인증서, `secrets.required` 로 배포가 막히는지와 아직 없는 Worker 에 `secret put`, `wrangler d1 export --remote` 와 백업 파일을 새 D1 에 넣는 복구,
+      Time Travel 명령, 롤백, Workers Logs 에 cron 의 console 줄이 보이는지, `--var MAINTENANCE:on` 배포, Resend 도메인 인증·발송, Cloudflare Access, Workers AI 운영 호출.
+      남은 일: 복구 연습(O-7) 뒤 DEPLOY.md 5-3 표시 지우기, R2 파일 백업 여부 결정(지금은 하지 않음 — DEPLOY.md 5-4), 운영 전 약관 표시를 채우면 `test/config-check.test.ts`·`test/deploy-checks.test.ts` 의 "> 0" 줄도 0 기준으로
+## 운영자 설정 (사람이 하는 일 — 순서와 방법은 docs/DEPLOY.md)
+- [ ] O-1 GitHub 저장소에 이 폴더 올리기 (`predeploy:prod` 는 main 브랜치·저장하지 않은 변경 없음을 확인한다)
+- [ ] O-2 테스트 서버 준비: `wrangler login`, D1 `recruit-test` 생성 → `database_id` 교체, R2 `recruit-test-files` 생성 — DEPLOY.md 2-2 · 2-3
+- [ ] O-3 테스트 서버 비밀값: 새 `ENC_KEY`·`SESSION_PEPPER` 를 만들어 비밀번호 관리 프로그램 + 종이 사본에 보관 → `wrangler secret put` — DEPLOY.md 2-4 (선택: Claude 키 2-5)
+- [ ] O-4 Resend 가입·`kimbbob.xyz` 도메인 인증·`RESEND_API_KEY` (없으면 테스트 서버에서 아무도 로그인할 수 없다) — DEPLOY.md 2-6
+- [ ] O-5 첫 배포: `npm run db:test:migrate` → `deploy-test.bat` → recruit.kimbbob.xyz 자동 연결 확인 → 관리자 계정 + TOTP → `/admin/system` 빨강 0 → 확인 목록 10줄 — DEPLOY.md 2-7 ~ 2-11
+- [ ] O-6 Cloudflare Access 로 recruit.kimbbob.xyz 를 운영자만 접속하게 잠그기 — DEPLOY.md 2-12 (문서 미확인 단계)
+- [ ] O-7 복구 연습 한 번 (테스트 서버: 백업 → Time Travel → 백업 파일을 새 DB 에) — DEPLOY.md 5-5. 하면 DEPLOY.md 5-3 의 "해 보지 않은 절차" 표시를 지운다
+- [ ] O-8 (나중) 운영 서버: 도메인 구매·Cloudflare 추가, 직업정보제공사업 신고번호, 약관·방침 【확인 필요】 채움 + 전문가 검토, Resend 운영 도메인, 운영용 새 ENC_KEY, 유료 플랜, `predeploy:prod` 통과 — DEPLOY.md 3장
+- [ ] O-9 (나중) 공공데이터포털 국세청 사업자 상태조회 키 발급 (T-04c), Gemini 키(선택)
+- [ ] O-10 (나중) 고용노동부 1350 문의 → 답에 따라 기능 플래그 결정 (켜기 전 조건: ARCHITECTURE 5장)
+- [ ] O-11 (운영 시작 뒤 매주) 운영 DB 암호화 백업 `backup-prod.bat` + PC 밖 사본 — DEPLOY.md 5-1
 
 ## 개발
 - [ ] T-05b 현지화 엔진 실호출 확인 (운영자가 키를 넣은 뒤): `/admin/localize-test` 로 claude·gemini·workers_ai 각각 호출해
@@ -247,7 +267,6 @@
 - [ ] T-12b 정리 작업 남은 일: 탈퇴 계정(`users.status = 'deleted'`) 행 삭제 — jobs.created_by·access_log.actor_id·application_events.actor_id·consents.user_id 가 외래키로 가리켜 지금은 지우지 않는다
       (가리키는 행이 모두 기간이 지나 지워진 뒤에 지우거나, 가리키는 컬럼을 NULL 로 바꾸는 마이그레이션이 필요). R2 삭제에 실패한 `vdocs/` 객체 정리(지금은 `rfiles/` 만 고아 정리).
       CPU 10ms 한도 실측(배포 뒤 대시보드). 처리량이 상한(하루 내용 삭제 50건 등)을 넘으면 상한 조정
-- [ ] T-13 운영 환경: `wrangler.jsonc` 에 `env.production`(별도 D1·R2·도메인), 주 1회 암호화 백업, 배포 절차 문서
 - [ ] T-14 (플래그 뒤) 이력서 중국어 요약: 경력·기술 항목만 번역 → 구직자 승인(`summary_approved_at`) → 기업 화면에 원문과 나란히 표시,
       본사 공유(받는 사람은 이메일 인증코드로 확인, 7일 만료) → `summary_shared`
 - [ ] T-15 (플래그 뒤) 헤드헌터: 업체 등록·검증, 공고 등록 시 실제 구인 기업 지정, 지원 화면에 받는 곳 표시

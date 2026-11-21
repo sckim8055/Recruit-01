@@ -10,7 +10,7 @@ import { ErrorPage } from './views/pages';
  * 페이지를 공통 레이아웃에 넣어 응답한다. titleKey 는 locales 의 키.
  * 공고 제목처럼 문구 키가 아닌 글을 탭 제목으로 쓰려면 { text } 로 넘긴다 (JSX 로 출력되므로 이스케이프된다).
  */
-export function render(c: Context<AppEnv>, body: Child, titleKey?: string | { text: string }, status: 200 | 400 | 403 | 404 | 413 = 200) {
+export function render(c: Context<AppEnv>, body: Child, titleKey?: string | { text: string }, status: 200 | 400 | 403 | 404 | 413 | 503 = 200) {
   const page = (
     <Layout
       locale={c.var.locale}

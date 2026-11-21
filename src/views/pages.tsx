@@ -102,6 +102,15 @@ export const ErrorPage = ({ locale, code }: { locale: Locale; code: 403 | 404 })
   );
 };
 
+/** 점검 모드 안내 (T-13, 503). 개인정보·링크 없이 한 줄 안내만 — 다른 화면으로 가도 같은 안내가 나온다. */
+export const MaintenancePage = ({ locale }: { locale: Locale }) => (
+  <section class="card">
+    <h1>{t(locale, 'maint.title')}</h1>
+    <p>{t(locale, 'maint.body')}</p>
+    <p class="muted">{t(locale, 'maint.later')}</p>
+  </section>
+);
+
 /** 관리자 2단계 인증. setup 이 있으면 최초 등록 화면(비밀키 표시)이다. */
 export const LoginTotp = ({ locale, setup, error }: { locale: Locale; setup?: { secret: string; uri: string }; error?: string }) => (
   <section class="card">
@@ -148,7 +157,7 @@ export const AdminHome = ({ locale, counts, usage }: {
       </table>
       <p class="hint">{t(locale, 'admin.usage.note')}</p>
     </div>}
-    <p><a href="/admin/settings">{t(locale, 'adm.set.title')}</a> · <a href="/admin/options">{t(locale, 'adm.opt.title')}</a> · <a href="/admin/access-log">{t(locale, 'adm.log.title')}</a></p>
+    <p><a href="/admin/settings">{t(locale, 'adm.set.title')}</a> · <a href="/admin/options">{t(locale, 'adm.opt.title')}</a> · <a href="/admin/access-log">{t(locale, 'adm.log.title')}</a> · <a href="/admin/system">{t(locale, 'sys.title')}</a></p>
     <p class="muted">{t(locale, 'admin.note')}</p>
   </section>
 );

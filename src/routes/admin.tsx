@@ -8,6 +8,10 @@ import { identitySnapshot, parseRevokeAction, parseVerifyAction } from '../lib/c
 import { serveVerificationDoc } from '../lib/files';
 import { verifyBlocks } from '../lib/rules';
 import { todayUsage } from '../lib/quota';
+import { configChecks, secretSummary, worstLevel } from '../lib/config-check';
+import { SCHEDULE } from '../lib/maintenance';
+import { loadRetention } from '../lib/retention-setting';
+import { SystemPage } from '../views/admin-system';
 import { render, renderError } from '../render';
 import { AdminCompanyDetail, AdminCompanyList } from '../views/admin-company';
 import { AdminHome } from '../views/pages';
@@ -26,6 +30,8 @@ export const admin = new Hono<AppEnv>();
 // 지원서 열람·열람 기록(T-09a): 권한 검사보다 먼저 no-store·HEAD/미리 가져오기 거절 (로그인 리다이렉트·403 에도 붙게).
 admin.use('/applications/*', noStore, humanGetOnly);
 admin.use('/access-log', noStore, humanGetOnly);
+// 시스템 점검(T-13): 로그인 리다이렉트·403 에도 no-store.
+admin.use('/system', noStore);
 
 // /admin 아래 모든 경로는 관리자만.
 admin.use('*', requireRole('admin'));
@@ -34,6 +40,17 @@ admin.use('*', requireRole('admin'));
 admin.get('/', async (c) => {
   const [counts, usage] = await Promise.all([adminCounts(c.env.DB), todayUsage(c.env, now())]);
   return render(c, <AdminHome locale={c.var.locale} counts={counts} usage={usage} />, 'admin.title');
+});
+
+// ── 시스템 점검 (T-13): 설정 점검 결과·비밀값 유무(값은 보이지 않음)·예약 작업 시간표·오늘 사용량·보관 기간(읽기만).
+// 요청을 막지 않고 보여 주기만 한다. 읽기: 사용량 두 번 + 보관 기간 설정 한 번. 공개 주소(/api/health)에는 점검 결과를 내지 않는다.
+admin.get('/system', async (c) => {
+  const checks = configChecks(c.env);
+  const [usage, retention] = await Promise.all([todayUsage(c.env, now()), loadRetention(c.env.DB)]);
+  return render(c, (
+    <SystemPage locale={c.var.locale} appEnv={c.env.APP_ENV} worst={worstLevel(checks)} checks={checks}
+      secrets={secretSummary(c.env)} schedule={SCHEDULE} usage={usage} retention={retention} />
+  ), 'sys.title');
 });
 
 // ── 기업 검증

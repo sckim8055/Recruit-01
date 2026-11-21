@@ -23,6 +23,8 @@ import { NO_STORE } from './routes/guards';
 import { ConsentRequired } from './views/account';
 import { homeCache } from './routes/jobs';
 import { devForcedStep, runMaintenance } from './lib/maintenance';
+import { MAINTENANCE_RETRY_AFTER, maintenanceBlocks } from './lib/pause';
+import { MaintenancePage } from './views/pages';
 
 const app = new Hono<AppEnv>();
 
@@ -34,6 +36,15 @@ app.use('*', loadUser);
 app.use('*', async (c, next) => {
   c.set('locale', detectLocale(c));
   await next();
+});
+
+// 점검 모드 (T-13, lib/pause.ts): MAINTENANCE = "on" 이면 관리자·로그인·/api/health 말고 모두 503 점검 안내.
+// 동의 확인·라우트(공개 화면 캐시 포함)보다 먼저 돌아서 캐시된 화면도 나가지 않고 D1 도 읽지 않는다 (세션 읽기는 위 loadUser 에서 이미 함).
+app.use('*', async (c, next) => {
+  if (!maintenanceBlocks(c.env.MAINTENANCE, c.var.user?.role ?? null, c.req.path)) return next();
+  c.header('Cache-Control', NO_STORE);
+  c.header('Retry-After', String(MAINTENANCE_RETRY_AFTER));
+  return render(c, <MaintenancePage locale={c.var.locale} />, 'maint.title', 503);
 });
 
 // 이용약관·개인정보 동의 확인 (T-11). 로그인한 회원(관리자 제외)이 지금 판에 동의하지 않았으면 서비스 화면을 열 수 없다.
