@@ -7,6 +7,11 @@ import { randomCode, randomToken, safeEqual, sha256Hex } from './crypto';
 import { sendMail } from './email';
 import { t } from './i18n';
 import { renderError } from '../render';
+import {
+  deleteAuthCode, deleteSession, deleteTotpPendingForUser, findSessionUser, getAuthCode, getAuthCodeSentAt, incAuthCodeAttempts,
+  insertSession, insertTotpPending, upsertAuthCode,
+} from '../db/sessions';
+import { findUserByEmail, insertUser, touchUserLogin } from '../db/users';
 import type { Locale } from '../env';
 
 const CODE_TTL = 10 * 60;
@@ -28,13 +33,10 @@ export async function requestCode(env: Env, rawEmail: string, locale: Locale): P
   const email = normalizeEmail(rawEmail);
   if (!EMAIL_RE.test(email) || email.length > 254) return 'invalid_email';
   const ts = now();
-  const prev = await env.DB.prepare('SELECT last_sent_at FROM auth_codes WHERE email = ?').bind(email).first<{ last_sent_at: number }>();
+  const prev = await getAuthCodeSentAt(env.DB, email);
   if (prev && ts - prev.last_sent_at < RESEND_GAP) return 'too_soon';
   const code = randomCode();
-  await env.DB.prepare(
-    `INSERT INTO auth_codes (email, code_hash, expires_at, attempts, last_sent_at) VALUES (?,?,?,0,?)
-     ON CONFLICT(email) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0, last_sent_at = excluded.last_sent_at`,
-  ).bind(email, await codeHash(env, email, code), ts + CODE_TTL, ts).run();
+  await upsertAuthCode(env.DB, email, await codeHash(env, email, code), ts + CODE_TTL, ts);
   const ok = await sendMail(env, {
     to: email,
     template: 'auth_code',
@@ -59,35 +61,31 @@ export async function verifyCode(
 ): Promise<VerifyResult> {
   const email = normalizeEmail(rawEmail);
   const ts = now();
-  const row = await env.DB.prepare('SELECT code_hash, expires_at, attempts FROM auth_codes WHERE email = ?')
-    .bind(email).first<{ code_hash: string; expires_at: number; attempts: number }>();
+  const row = await getAuthCode(env.DB, email);
   if (!row) return { ok: false, why: 'invalid' };
   if (row.expires_at < ts) return { ok: false, why: 'expired' };
   if (row.attempts >= MAX_ATTEMPTS) return { ok: false, why: 'locked' };
   if (!/^\d{6}$/.test(code) || !safeEqual(row.code_hash, await codeHash(env, email, code))) {
-    await env.DB.prepare('UPDATE auth_codes SET attempts = attempts + 1 WHERE email = ?').bind(email).run();
+    await incAuthCodeAttempts(env.DB, email);
     return { ok: false, why: 'invalid' };
   }
-  await env.DB.prepare('DELETE FROM auth_codes WHERE email = ?').bind(email).run();
+  await deleteAuthCode(env.DB, email);
 
-  let user = await env.DB.prepare('SELECT id, email, role, locale, status FROM users WHERE email = ?')
-    .bind(email).first<SessionUser & { status: string }>();
+  let user = await findUserByEmail(env.DB, email);
   if (!user) {
     const id = crypto.randomUUID();
-    await env.DB.prepare('INSERT INTO users (id, email, role, locale, status, created_at, last_login_at) VALUES (?,?,?,?,?,?,?)')
-      .bind(id, email, signupRole, locale, 'active', ts, ts).run();
+    await insertUser(env.DB, id, email, signupRole, locale, 'active', ts, ts);
     user = { id, email, role: signupRole, locale, status: 'active' };
   } else {
     if (user.status !== 'active') return { ok: false, why: 'suspended' };
-    await env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').bind(ts, user.id).run();
+    await touchUserLogin(env.DB, ts, user.id);
   }
   const su: SessionUser = { id: user.id, email: user.email, role: user.role, locale: user.locale };
   if (su.role === 'admin') {
     // 관리자는 이메일 인증코드만으로 로그인할 수 없다. 2단계(TOTP) 대기 상태만 만든다.
     const pendingToken = randomToken();
-    await env.DB.prepare('DELETE FROM admin_totp_pending WHERE user_id = ? OR expires_at < ?').bind(su.id, ts).run();
-    await env.DB.prepare('INSERT INTO admin_totp_pending (id, user_id, attempts, expires_at) VALUES (?,?,0,?)')
-      .bind(await tokenHash(env, pendingToken), su.id, ts + TOTP_PENDING_TTL).run();
+    await deleteTotpPendingForUser(env.DB, su.id, ts);
+    await insertTotpPending(env.DB, await tokenHash(env, pendingToken), su.id, ts + TOTP_PENDING_TTL);
     return { ok: true, kind: 'totp', pendingToken };
   }
   const { token, maxAge } = await createSession(env, su, false);
@@ -99,8 +97,7 @@ export async function createSession(env: Env, user: SessionUser, mfa: boolean): 
   const ts = now();
   const maxAge = user.role === 'admin' ? ADMIN_SESSION_TTL : SESSION_TTL;
   const token = randomToken();
-  await env.DB.prepare('INSERT INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?)')
-    .bind(await tokenHash(env, token), user.id, ts, ts + maxAge, mfa ? 1 : 0).run();
+  await insertSession(env.DB, await tokenHash(env, token), user.id, ts, ts + maxAge, mfa ? 1 : 0);
   return { token, maxAge };
 }
 
@@ -112,7 +109,7 @@ export function setSessionCookie(c: Context<AppEnv>, token: string, maxAge: numb
 
 export async function logout(c: Context<AppEnv>): Promise<void> {
   const token = getCookie(c, COOKIE);
-  if (token) await c.env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(await tokenHash(c.env, token)).run();
+  if (token) await deleteSession(c.env.DB, await tokenHash(c.env, token));
   deleteCookie(c, COOKIE, { path: '/' });
 }
 
@@ -126,10 +123,7 @@ export const loadUser: MiddlewareHandler<AppEnv> = async (c, next) => {
   c.set('user', null);
   const token = getCookie(c, COOKIE);
   if (token) {
-    const row = await c.env.DB.prepare(
-      `SELECT u.id, u.email, u.role, u.locale, s.mfa FROM sessions s JOIN users u ON u.id = s.user_id
-       WHERE s.id = ? AND s.expires_at > ? AND u.status = 'active'`,
-    ).bind(await tokenHash(c.env, token), now()).first<SessionUser & { mfa: number }>();
+    const row = await findSessionUser(c.env.DB, await tokenHash(c.env, token), now());
     // 관리자는 TOTP 를 통과한 세션만 인정한다. 그렇지 않은 세션은 로그인하지 않은 것으로 본다.
     if (row && sessionUsable(row.role, row.mfa)) c.set('user', { id: row.id, email: row.email, role: row.role, locale: row.locale });
   }

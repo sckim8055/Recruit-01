@@ -4,6 +4,8 @@ import { now, type Env, type SessionUser } from '../env';
 import { createSession, tokenHash } from './auth';
 import { decryptText, encryptText, importEncKey } from './crypto';
 import { base32Decode, newTotpSecret, otpauthUri, verifyTotp } from './totp';
+import { deleteTotpPending, findTotpPending, incTotpPendingAttempts, setTotpPendingSecret } from '../db/sessions';
+import { confirmTotp } from '../db/users';
 
 const MAX_ATTEMPTS = 5;
 export const PENDING_COOKIE = 'atp';
@@ -15,15 +17,11 @@ interface PendingRow {
 
 async function loadPending(env: Env, token: string | undefined): Promise<PendingRow | null> {
   if (!token) return null;
-  const row = await env.DB.prepare(
-    `SELECT p.id, p.user_id, p.secret_new, p.attempts, p.expires_at,
-            u.email, u.locale, u.role, u.status, u.totp_secret, u.totp_last_step
-     FROM admin_totp_pending p JOIN users u ON u.id = p.user_id WHERE p.id = ?`,
-  ).bind(await tokenHash(env, token)).first<PendingRow>();
+  const row: PendingRow | null = await findTotpPending(env.DB, await tokenHash(env, token));
   if (!row) return null;
   // 만료·횟수 초과·권한 변경이면 대기 상태를 지운다.
   if (row.expires_at < now() || row.attempts >= MAX_ATTEMPTS || row.role !== 'admin' || row.status !== 'active') {
-    await env.DB.prepare('DELETE FROM admin_totp_pending WHERE id = ?').bind(row.id).run();
+    await deleteTotpPending(env.DB, row.id);
     return null;
   }
   return row;
@@ -44,8 +42,7 @@ export async function totpStep(env: Env, token: string | undefined): Promise<Tot
   if (p.secret_new) secret = await decryptText(key, p.secret_new);
   else {
     secret = newTotpSecret();
-    await env.DB.prepare('UPDATE admin_totp_pending SET secret_new = ? WHERE id = ?')
-      .bind(await encryptText(key, secret), p.id).run();
+    await setTotpPendingSecret(env.DB, await encryptText(key, secret), p.id);
   }
   return { state: 'setup', secret, uri: otpauthUri('Recruit', p.email, secret) };
 }
@@ -62,14 +59,11 @@ export async function completeTotp(env: Env, token: string | undefined, code: st
   const secret = await decryptText(await importEncKey(env.ENC_KEY), enc);
   const step = await verifyTotp(base32Decode(secret), code.trim(), now(), p.totp_last_step);
   if (step === null) {
-    await env.DB.prepare('UPDATE admin_totp_pending SET attempts = attempts + 1 WHERE id = ?').bind(p.id).run();
+    await incTotpPendingAttempts(env.DB, p.id);
     return { ok: false, why: 'invalid' };
   }
   // 통과: 최초 등록이면 비밀키를 확정하고, 쓴 시간 단계를 기록한 뒤 대기 상태를 지운다.
-  await env.DB.batch([
-    env.DB.prepare('UPDATE users SET totp_secret = ?, totp_last_step = ? WHERE id = ?').bind(enc, step, p.user_id),
-    env.DB.prepare('DELETE FROM admin_totp_pending WHERE user_id = ?').bind(p.user_id),
-  ]);
+  await confirmTotp(env.DB, enc, step, p.user_id);
   const user: SessionUser = { id: p.user_id, email: p.email, role: 'admin', locale: p.locale };
   const s = await createSession(env, user, true);
   return { ok: true, user, token: s.token, maxAge: s.maxAge };

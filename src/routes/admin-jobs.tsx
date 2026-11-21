@@ -9,8 +9,9 @@ import { availableEngines, runEngine } from '../lib/localize';
 import { ENGINES } from '../lib/localize/registry';
 import type { EngineRun } from '../lib/localize/types';
 import { render, renderError } from '../render';
-import { AdminJobDetail, AdminJobList, LocalizeTestPage, type AdminJobListRow } from '../views/admin-jobs';
-import { loadJob, type JobRow } from './job-db';
+import { AdminJobDetail, AdminJobList, LocalizeTestPage } from '../views/admin-jobs';
+import { findCompanyBrief } from '../db/companies';
+import { blockJob, clearJobReview, listJobsForAdmin, loadJob, unblockJob, type JobRow } from '../db/jobs';
 
 export const adminJobs = new Hono<AppEnv>();
 
@@ -21,20 +22,14 @@ async function requireBlocker(c: Context<AppEnv>): Promise<Response | null> {
 }
 
 adminJobs.get('/jobs', async (c) => {
-  const r = await c.env.DB.prepare(
-    `SELECT j.id, j.title_ko, j.title_zh, j.status, j.review_flag, j.review_cleared_by, j.updated_at, c.name_ko AS company_name
-     FROM jobs j JOIN companies c ON c.id = j.company_id
-     WHERE (j.review_flag IS NOT NULL AND j.review_cleared_by IS NULL AND j.status IN ('draft','published')) OR j.status = 'blocked'
-     ORDER BY j.status = 'blocked', j.updated_at DESC LIMIT 500`,
-  ).all<AdminJobListRow>();
-  return render(c, <AdminJobList locale={c.var.locale} rows={r.results} />, 'adm.job.title');
+  const rows = await listJobsForAdmin(c.env.DB);
+  return render(c, <AdminJobList locale={c.var.locale} rows={rows} />, 'adm.job.title');
 });
 
 const OK: Record<string, string> = { cleared: 'adm.job.ok.cleared', blocked: 'adm.job.ok.blocked', unblocked: 'adm.job.ok.unblocked' };
 
 async function detailPage(c: Context<AppEnv>, job: JobRow, msg: { ok?: string; error?: string }, status: 200 | 400 = 200) {
-  const co = await c.env.DB.prepare('SELECT name_ko, verify_status FROM companies WHERE id = ?').bind(job.company_id)
-    .first<{ name_ko: string; verify_status: string }>();
+  const co = await findCompanyBrief(c.env.DB, job.company_id);
   return render(c, <AdminJobDetail locale={c.var.locale} job={job} company={co} ok={msg.ok} error={msg.error} />, 'adm.job.title', status);
 }
 
@@ -53,10 +48,8 @@ adminJobs.post('/jobs/:id/clear-review', async (c) => {
   const f = await c.req.parseBody();
   if (!job.review_flag || job.review_cleared_by) return detailPage(c, job, { error: 'adm.job.err.not_flagged' }, 400);
   if (readRev(f) !== job.rev) return detailPage(c, job, { error: 'adm.job.err.changed' }, 400);
-  const res = await c.env.DB.prepare(
-    'UPDATE jobs SET review_cleared_by = ? WHERE id = ? AND rev = ? AND review_flag IS NOT NULL AND review_cleared_by IS NULL',
-  ).bind(c.var.user!.id, job.id, job.rev).run();
-  if (res.meta.changes !== 1) return detailPage(c, job, { error: 'adm.job.err.changed' }, 400);
+  const cleared = await clearJobReview(c.env.DB, { adminId: c.var.user!.id, id: job.id, rev: job.rev });
+  if (!cleared) return detailPage(c, job, { error: 'adm.job.err.changed' }, 400);
   return c.redirect(`/admin/jobs/${job.id}?ok=cleared`);
 });
 
@@ -68,9 +61,8 @@ adminJobs.post('/jobs/:id/block', async (c) => {
   if (!job) return renderError(c, 404);
   const r = readBlockReason(await c.req.parseBody());
   if (!r.ok) return detailPage(c, job, { error: `adm.job.err.${r.why}` }, 400);
-  const res = await c.env.DB.prepare("UPDATE jobs SET status = 'blocked', block_reason = ? WHERE id = ? AND status != 'blocked'")
-    .bind(r.reason, job.id).run();
-  if (res.meta.changes !== 1) return detailPage(c, job, { error: 'adm.job.err.already_blocked' }, 400);
+  const blocked = await blockJob(c.env.DB, { reason: r.reason, id: job.id });
+  if (!blocked) return detailPage(c, job, { error: 'adm.job.err.already_blocked' }, 400);
   return c.redirect(`/admin/jobs/${job.id}?ok=blocked`);
 });
 
@@ -80,9 +72,8 @@ adminJobs.post('/jobs/:id/unblock', async (c) => {
   if (deny) return deny;
   const job = await loadJob(c.env.DB, c.req.param('id'));
   if (!job) return renderError(c, 404);
-  const res = await c.env.DB.prepare("UPDATE jobs SET status = 'draft', block_reason = NULL WHERE id = ? AND status = 'blocked'")
-    .bind(job.id).run();
-  if (res.meta.changes !== 1) return detailPage(c, job, { error: 'adm.job.err.not_blocked' }, 400);
+  const unblocked = await unblockJob(c.env.DB, job.id);
+  if (!unblocked) return detailPage(c, job, { error: 'adm.job.err.not_blocked' }, 400);
   return c.redirect(`/admin/jobs/${job.id}?ok=unblocked`);
 });
 

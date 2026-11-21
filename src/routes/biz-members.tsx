@@ -7,7 +7,10 @@ import { canManageMembers } from '../lib/authz';
 import { MAX_COMPANY_SEATS, hasSeatLeft, inviteIsHq, inviteMail, parseInvite, removeCheck } from '../lib/company';
 import { sendMail } from '../lib/email';
 import { render, renderError } from '../render';
-import { MembersPage, type MemberView, type PendingInviteView } from '../views/company';
+import { MembersPage } from '../views/company';
+import {
+  cancelInvite, findCompanyMember, insertInviteWithinLimit, inviteConflicts, listMembersAndInvites, removeMember,
+} from '../db/companies';
 import type { CompanyCtx } from './biz-ctx';
 import { requireCompany } from './biz-company';
 
@@ -16,17 +19,7 @@ export const bizMembers = new Hono<AppEnv>();
 const OK: Record<string, string> = { invited: 'inv.ok.invited', removed: 'mem.ok.removed', cancelled: 'inv.ok.cancelled' };
 
 async function membersPage(c: Context<AppEnv>, ctx: CompanyCtx, msg: { ok?: string; error?: string }, status: 200 | 400 = 200) {
-  const db = c.env.DB;
-  const [m, i] = await db.batch([
-    db.prepare(
-      `SELECT m.user_id, u.email, m.member_role, m.is_hq, m.created_at FROM company_members m JOIN users u ON u.id = m.user_id
-       WHERE m.company_id = ? ORDER BY m.member_role = 'owner' DESC, m.created_at`,
-    ).bind(ctx.company.id),
-    db.prepare('SELECT id, email, is_hq, created_at FROM company_invites WHERE company_id = ? AND accepted_at IS NULL ORDER BY created_at')
-      .bind(ctx.company.id),
-  ]);
-  const members = (m?.results ?? []) as MemberView[];
-  const invites = (i?.results ?? []) as PendingInviteView[];
+  const { members, invites } = await listMembersAndInvites(c.env.DB, ctx.company.id);
   return render(
     c,
     <MembersPage
@@ -59,27 +52,17 @@ bizMembers.post('/members/invite', async (c) => {
   if (!canManageMembers(ctx.actor, ctx.company.id, ctx.member.member_role)) return renderError(c, 403);
   const inv = parseInvite(await c.req.parseBody());
   if (!inv.ok) return membersPage(c, ctx, { error: 'inv.err.email_invalid' }, 400);
-  const db = c.env.DB;
   const coId = ctx.company.id;
-  const [already, dup] = await db.batch([
-    db.prepare('SELECT 1 AS x FROM company_members m JOIN users u ON u.id = m.user_id WHERE m.company_id = ? AND u.email = ?').bind(coId, inv.email),
-    db.prepare('SELECT 1 AS x FROM company_invites WHERE company_id = ? AND email = ?').bind(coId, inv.email),
-  ]);
-  if (already?.results.length) return membersPage(c, ctx, { error: 'inv.err.already_member' }, 400);
-  if (dup?.results.length) return membersPage(c, ctx, { error: 'inv.err.duplicate' }, 400);
+  const conflict = await inviteConflicts(c.env.DB, coId, inv.email);
+  if (conflict.alreadyMember) return membersPage(c, ctx, { error: 'inv.err.already_member' }, 400);
+  if (conflict.duplicate) return membersPage(c, ctx, { error: 'inv.err.duplicate' }, 400);
   let changes = 0;
   try {
-    // 한도 검사와 추가를 한 문장으로 (동시에 여러 번 눌러도 한도를 넘지 않게).
-    const r = await db.prepare(
-      `INSERT INTO company_invites (id, company_id, email, is_hq, invited_by, created_at)
-       SELECT ?, ?, ?, ?, ?, ?
-       WHERE (SELECT COUNT(*) FROM company_members WHERE company_id = ?)
-           + (SELECT COUNT(*) FROM company_invites WHERE company_id = ? AND accepted_at IS NULL) < ?`,
-    ).bind(
-      crypto.randomUUID(), coId, inv.email, inviteIsHq(ctx.company.entity_type, inv.checkedHq), ctx.user.id, now(),
-      coId, coId, MAX_COMPANY_SEATS,
-    ).run();
-    changes = r.meta.changes;
+    // 한도 검사와 추가를 한 문장으로 (동시에 여러 번 눌러도 한도를 넘지 않게) — src/db/companies.ts insertInviteWithinLimit.
+    changes = await insertInviteWithinLimit(c.env.DB, {
+      id: crypto.randomUUID(), companyId: coId, email: inv.email, isHq: inviteIsHq(ctx.company.entity_type, inv.checkedHq),
+      invitedBy: ctx.user.id, ts: now(), maxSeats: MAX_COMPANY_SEATS,
+    });
   } catch {
     // (company_id, email) 중복: 같은 순간에 같은 주소를 두 번 초대한 경우
     return membersPage(c, ctx, { error: 'inv.err.duplicate' }, 400);
@@ -103,18 +86,13 @@ bizMembers.post('/members/:userId/remove', async (c) => {
   if (ctx instanceof Response) return ctx;
   if (!canManageMembers(ctx.actor, ctx.company.id, ctx.member.member_role)) return renderError(c, 403);
   const target = c.req.param('userId');
-  const db = c.env.DB;
   const coId = ctx.company.id;
-  const row = await db.prepare('SELECT user_id, member_role FROM company_members WHERE company_id = ? AND user_id = ?')
-    .bind(coId, target).first<{ user_id: string; member_role: 'owner' | 'member' }>();
+  const row = await findCompanyMember(c.env.DB, coId, target);
   const chk = removeCheck(ctx.user.id, row);
   if (chk === 'not_member') return renderError(c, 404);
   if (chk !== 'ok') return membersPage(c, ctx, { error: `mem.err.${chk}` }, 400);
   // 같은 사람을 다시 초대할 수 있도록 그 사람의 (수락된) 초대 기록도 지운다.
-  await db.batch([
-    db.prepare("DELETE FROM company_members WHERE company_id = ? AND user_id = ? AND member_role = 'member'").bind(coId, target),
-    db.prepare('DELETE FROM company_invites WHERE company_id = ? AND email = (SELECT email FROM users WHERE id = ?)').bind(coId, target),
-  ]);
+  await removeMember(c.env.DB, coId, target);
   return c.redirect('/biz/members?ok=removed');
 });
 
@@ -123,8 +101,7 @@ bizMembers.post('/invites/:id/cancel', async (c) => {
   const ctx = await requireCompany(c);
   if (ctx instanceof Response) return ctx;
   if (!canManageMembers(ctx.actor, ctx.company.id, ctx.member.member_role)) return renderError(c, 403);
-  const r = await c.env.DB.prepare('DELETE FROM company_invites WHERE id = ? AND company_id = ? AND accepted_at IS NULL')
-    .bind(c.req.param('id'), ctx.company.id).run();
-  if (r.meta.changes !== 1) return renderError(c, 404);
+  const cancelled = await cancelInvite(c.env.DB, c.req.param('id'), ctx.company.id);
+  if (!cancelled) return renderError(c, 404);
   return c.redirect('/biz/members?ok=cancelled');
 });

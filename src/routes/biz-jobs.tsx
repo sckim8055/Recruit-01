@@ -13,10 +13,13 @@ import {
 import { availableEngines, localizeJob } from '../lib/localize';
 import { parseOperatorDomains, publishBlocks } from '../lib/rules';
 import { render, renderError } from '../render';
-import { JobFormPage, JobList, JobReview, type JobListRow } from '../views/jobs';
+import { JobFormPage, JobList, JobReview } from '../views/jobs';
 import type { CompanyCtx } from './biz-ctx';
 import { requireCompany } from './biz-company';
-import { jobFieldsOf, loadJob, type JobRow } from './job-db';
+import {
+  approveJob, claimLocalize, closeJob, insertJob, jobFieldsOf, listCompanyJobs, loadJob, publishJob, saveKorean, saveLocalized,
+  updateJobSource, type JobRow,
+} from '../db/jobs';
 
 export const bizJobs = new Hono<AppEnv>();
 
@@ -71,11 +74,8 @@ function reviewPage(
 bizJobs.get('/jobs', async (c) => {
   const ctx = await requireCompany(c);
   if (ctx instanceof Response) return ctx;
-  const r = await c.env.DB.prepare(
-    `SELECT id, title_zh, title_ko, status, localize_status, review_flag, review_cleared_by, updated_at
-     FROM jobs WHERE company_id = ? AND agency_id IS NULL ORDER BY updated_at DESC LIMIT 200`,
-  ).bind(ctx.company.id).all<JobListRow>();
-  return render(c, <JobList locale={c.var.locale} rows={r.results} verified={ctx.company.verify_status === 'verified'} />, 'job.list.title');
+  const rows = await listCompanyJobs(c.env.DB, ctx.company.id);
+  return render(c, <JobList locale={c.var.locale} rows={rows} verified={ctx.company.verify_status === 'verified'} />, 'job.list.title');
 });
 
 // ── 새 공고
@@ -104,16 +104,7 @@ bizJobs.post('/jobs/new', async (c) => {
   const review = reviewAfterSave({ ...empty, review_cleared_by: null }, { ...empty, title_zh: v.title_zh, source_zh: v.source_zh });
   const id = crypto.randomUUID();
   const ts = now();
-  await c.env.DB.prepare(
-    `INSERT INTO jobs (id, company_id, agency_id, created_by, job_family, title_zh, source_zh, localize_status, role_category, industry,
-       location, salary_min, salary_max, salary_basis, work_hours, report_line, chinese_level, contact_email, review_flag,
-       status, closes_at, created_at, updated_at, rev)
-     VALUES (?,?,NULL,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,0)`,
-  ).bind(
-    id, ctx.company.id, ctx.user.id, v.job_family, v.title_zh, v.source_zh, v.role_category, v.industry, v.location,
-    v.salary_min, v.salary_max, v.salary_basis, v.work_hours, v.report_line, v.chinese_level, v.contact_email, review.review_flag,
-    v.closes_at, ts, ts,
-  ).run();
+  await insertJob(c.env.DB, { id, companyId: ctx.company.id, createdBy: ctx.user.id, v, reviewFlag: review.review_flag, ts });
   return c.redirect(`/biz/jobs/${id}?ok=created`);
 });
 
@@ -150,19 +141,8 @@ bizJobs.post('/jobs/:id/edit', async (c) => {
   // 글은 그대로이고 조건만 바뀐 게재 중 공고: 바뀐 값으로도 publishBlocks 가 비어 있어야 게재를 유지한다.
   const plan = planJobSave(job, next, (review) =>
     publishBlocks(publishInputOf({ ...job, ...v, ...review }, publishCtx(c, ctx))).length === 0);
-  const res = await c.env.DB.prepare(
-    `UPDATE jobs SET title_zh = ?, source_zh = ?, job_family = ?, role_category = ?, industry = ?, location = ?, salary_min = ?,
-       salary_max = ?, salary_basis = ?, work_hours = ?, report_line = ?, chinese_level = ?, contact_email = ?, closes_at = ?,
-       status = ?, localize_status = ?, review_flag = ?, review_cleared_by = ?, rev = rev + 1, updated_at = ?
-     WHERE id = ? AND rev = ? AND status = ?
-       AND (? != 'published' OR EXISTS (SELECT 1 FROM companies WHERE id = jobs.company_id AND verify_status = 'verified'))`,
-  ).bind(
-    v.title_zh, v.source_zh, v.job_family, v.role_category, v.industry, v.location, v.salary_min, v.salary_max, v.salary_basis,
-    v.work_hours, v.report_line, v.chinese_level, v.contact_email, v.closes_at,
-    plan.status, plan.localize_status, plan.review_flag, plan.review_cleared_by, now(),
-    job.id, job.rev, job.status, plan.status,
-  ).run();
-  if (res.meta.changes !== 1) return formPage(c, { input, errors: [], action, jobId: job.id, rev: job.rev, error: 'job.err.stale' }, 400);
+  const saved = await updateJobSource(c.env.DB, { v, plan, ts: now(), id: job.id, rev: job.rev, readStatus: job.status });
+  if (!saved) return formPage(c, { input, errors: [], action, jobId: job.id, rev: job.rev, error: 'job.err.stale' }, 400);
   return c.redirect(`/biz/jobs/${job.id}?ok=${plan.unpublished ? 'unpublished' : 'saved'}`);
 });
 
@@ -173,17 +153,14 @@ bizJobs.post('/jobs/:id/localize', async (c) => {
   if (x instanceof Response) return x;
   const { ctx, job } = x;
   const f = await c.req.parseBody();
-  const db = c.env.DB;
   if (job.status === 'closed') return reviewPage(c, ctx, job, { error: 'job.err.closed' }, 400);
   if (readRev(f) !== job.rev) return reviewPage(c, ctx, job, { error: 'job.err.stale' }, 400);
   if (!job.title_zh || !job.source_zh) return reviewPage(c, ctx, job, { error: 'job.err.no_source' }, 400);
   if (availableEngines(c.env).length === 0) return reviewPage(c, ctx, job, { error: 'job.err.no_engine' }, 400);
   // 짧은 간격으로 반복 호출하지 못하게 먼저 시각을 기록한다 (한 문장으로 확인과 기록을 같이).
   const ts = now();
-  const claim = await db.prepare(
-    `UPDATE jobs SET localize_requested_at = ? WHERE id = ? AND rev = ? AND (localize_requested_at IS NULL OR localize_requested_at <= ?)`,
-  ).bind(ts, job.id, job.rev, ts - LOCALIZE_GAP).run();
-  if (claim.meta.changes !== 1) return reviewPage(c, ctx, job, { error: 'job.err.too_soon' }, 400);
+  const claimed = await claimLocalize(c.env.DB, { ts, id: job.id, rev: job.rev, notAfter: ts - LOCALIZE_GAP });
+  if (!claimed) return reviewPage(c, ctx, job, { error: 'job.err.too_soon' }, 400);
 
   // 엔진에는 중국어 제목·본문만 보낸다. 연락처·연봉 같은 항목은 보내지 않는다.
   const again = f.again === '1';
@@ -195,17 +172,12 @@ bizJobs.post('/jobs/:id/localize', async (c) => {
   const next: JobText = { title_zh: job.title_zh, source_zh: job.source_zh, title_ko: out.title_ko, body_ko: out.body_ko };
   const plan = planJobSave(job, next, (review) =>
     publishBlocks(publishInputOf({ ...job, ...next, ...review }, publishCtx(c, ctx))).length === 0);
-  const res = await db.prepare(
-    `UPDATE jobs SET title_ko = ?, body_ko = ?, back_zh = ?, localize_engine = ?, status = ?, localize_status = ?,
-       review_flag = ?, review_cleared_by = ?, rev = rev + 1, updated_at = ?
-     WHERE id = ? AND rev = ? AND status = ?
-       AND (? != 'published' OR EXISTS (SELECT 1 FROM companies WHERE id = jobs.company_id AND verify_status = 'verified'))`,
-  ).bind(
-    out.title_ko, out.body_ko, out.back_zh, out.engine, plan.status, plan.localize_status, plan.review_flag, plan.review_cleared_by, now(),
-    job.id, job.rev, job.status, plan.status,
-  ).run();
+  const saved = await saveLocalized(c.env.DB, {
+    title_ko: out.title_ko, body_ko: out.body_ko, back_zh: out.back_zh, engine: out.engine, plan, ts: now(),
+    id: job.id, rev: job.rev, readStatus: job.status,
+  });
   // 엔진을 부르는 동안 다른 담당자가 원문을 고쳤으면 이 결과는 버린다 (옛 원문으로 만든 초안이므로).
-  if (res.meta.changes !== 1) return reviewPage(c, ctx, (await loadJob(db, job.id)) ?? job, { error: 'job.err.stale' }, 400);
+  if (!saved) return reviewPage(c, ctx, (await loadJob(c.env.DB, job.id)) ?? job, { error: 'job.err.stale' }, 400);
   return c.redirect(`/biz/jobs/${job.id}?ok=${plan.unpublished ? 'unpublished' : 'localized'}`);
 });
 
@@ -225,16 +197,11 @@ bizJobs.post('/jobs/:id/korean', async (c) => {
   const plan = planJobSave(job, next, (review) =>
     publishBlocks(publishInputOf({ ...job, ...next, ...review }, publishCtx(c, ctx))).length === 0);
   const koChanged = k.title_ko !== job.title_ko || k.body_ko !== job.body_ko;
-  const res = await c.env.DB.prepare(
-    `UPDATE jobs SET title_ko = ?, body_ko = ?, back_zh = ?, status = ?, localize_status = ?, review_flag = ?, review_cleared_by = ?,
-       rev = rev + 1, updated_at = ?
-     WHERE id = ? AND rev = ? AND status = ?
-       AND (? != 'published' OR EXISTS (SELECT 1 FROM companies WHERE id = jobs.company_id AND verify_status = 'verified'))`,
-  ).bind(
-    k.title_ko, k.body_ko, koChanged ? null : job.back_zh, plan.status, plan.localize_status, plan.review_flag, plan.review_cleared_by, now(),
-    job.id, job.rev, job.status, plan.status,
-  ).run();
-  if (res.meta.changes !== 1) return reviewPage(c, ctx, job, { error: 'job.err.stale', koInput }, 400);
+  const saved = await saveKorean(c.env.DB, {
+    title_ko: k.title_ko, body_ko: k.body_ko, back_zh: koChanged ? null : job.back_zh, plan, ts: now(),
+    id: job.id, rev: job.rev, readStatus: job.status,
+  });
+  if (!saved) return reviewPage(c, ctx, job, { error: 'job.err.stale', koInput }, 400);
   return c.redirect(`/biz/jobs/${job.id}?ok=${plan.unpublished ? 'unpublished' : 'korean'}`);
 });
 
@@ -250,10 +217,8 @@ bizJobs.post('/jobs/:id/approve', async (c) => {
   if (job.localize_status !== 'review' || !job.title_ko?.trim() || !job.body_ko?.trim()) {
     return reviewPage(c, ctx, job, { error: 'job.err.not_review' }, 400);
   }
-  const res = await c.env.DB.prepare(
-    "UPDATE jobs SET localize_status = 'approved' WHERE id = ? AND rev = ? AND localize_status = 'review'",
-  ).bind(job.id, job.rev).run();
-  if (res.meta.changes !== 1) return reviewPage(c, ctx, job, { error: 'job.err.stale' }, 400);
+  const approved = await approveJob(c.env.DB, { id: job.id, rev: job.rev });
+  if (!approved) return reviewPage(c, ctx, job, { error: 'job.err.stale' }, 400);
   return c.redirect(`/biz/jobs/${job.id}?ok=approved`);
 });
 
@@ -269,15 +234,9 @@ bizJobs.post('/jobs/:id/publish', async (c) => {
   const blocks = publishBlocks(publishInputOf(job, publishCtx(c, ctx)));
   if (blocks.length) return reviewPage(c, ctx, job, { error: 'job.err.blocked', showBlocks: true }, 400);
   const ts = now();
-  // WHERE 는 publishBlocks 가 본 사실 중 그사이 바뀔 수 있는 것만 다시 확인한다:
-  // 상태·내용 버전(rev: 글·연락처·연봉 등 모든 항목)·승인·관리자 검토·기업 검증.
-  const res = await c.env.DB.prepare(
-    `UPDATE jobs SET status = 'published', published_at = ?
-     WHERE id = ? AND rev = ? AND status = 'draft' AND localize_status = 'approved'
-       AND (review_flag IS NULL OR review_cleared_by IS NOT NULL)
-       AND EXISTS (SELECT 1 FROM companies WHERE id = jobs.company_id AND verify_status = 'verified')`,
-  ).bind(ts, job.id, job.rev).run();
-  if (res.meta.changes !== 1) return reviewPage(c, ctx, (await loadJob(c.env.DB, job.id)) ?? job, { error: 'job.err.stale' }, 400);
+  // publishJob 의 WHERE 는 publishBlocks 가 본 사실 중 그사이 바뀔 수 있는 것만 다시 확인한다 (src/db/jobs.ts).
+  const published = await publishJob(c.env.DB, { ts, id: job.id, rev: job.rev });
+  if (!published) return reviewPage(c, ctx, (await loadJob(c.env.DB, job.id)) ?? job, { error: 'job.err.stale' }, 400);
   return c.redirect(`/biz/jobs/${job.id}?ok=published`);
 });
 
@@ -288,7 +247,7 @@ bizJobs.post('/jobs/:id/close', async (c) => {
   if (x instanceof Response) return x;
   const { ctx, job } = x;
   if (job.status !== 'published') return reviewPage(c, ctx, job, { error: 'job.err.not_published' }, 400);
-  const res = await c.env.DB.prepare("UPDATE jobs SET status = 'closed' WHERE id = ? AND status = 'published'").bind(job.id).run();
-  if (res.meta.changes !== 1) return reviewPage(c, ctx, job, { error: 'job.err.stale' }, 400);
+  const closed = await closeJob(c.env.DB, job.id);
+  if (!closed) return reviewPage(c, ctx, job, { error: 'job.err.stale' }, 400);
   return c.redirect(`/biz/jobs/${job.id}?ok=closed`);
 });

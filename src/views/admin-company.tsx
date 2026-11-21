@@ -3,7 +3,7 @@ import type { Locale } from '../env';
 import { REJECT_REASON_MAX, fmtBizNo, fmtDate, type EntityType, type VerifyStatus } from '../lib/company';
 import { t } from '../lib/i18n';
 import type { VerifyBlock } from '../lib/rules';
-import type { CompanyRow } from '../routes/biz-ctx';
+import type { CompanyRow } from '../db/companies';
 import { Flash, StatusBadge, blockText, type DocView, type MemberView } from './company';
 
 export interface AdminCompanyListRow {

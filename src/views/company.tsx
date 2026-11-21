@@ -6,7 +6,7 @@ import {
 } from '../lib/company';
 import { t } from '../lib/i18n';
 import type { VerifyBlock } from '../lib/rules';
-import type { CompanyRow } from '../routes/biz-ctx';
+import type { CompanyRow } from '../db/companies';
 
 // ── 공통 조각
 

@@ -29,6 +29,10 @@
       저장할 때마다 `techLeakFlag()` → `review_flag`, 걸린 글이 바뀌면 `review_cleared_by` 해제. 관리자: 검토 대기·차단 공고 목록·상세(`/admin/jobs`),
       검토 통과(본 rev 일 때만)·차단(사유 필수, `block_reason`)·차단 해제(→ 미게재), 엔진 비교 화면(`/admin/localize-test`, 저장 안 함).
       `translations` 캐시는 쓰지 않음(결과는 공고 행에 저장되고 "다시 만들기" 는 새 결과가 필요). 세 엔진 어댑터는 실제 API 로 호출해 보지 않았다(키 없음) — T-05b
+- [x] T-05d DB 접근 계층 정리(동작 변경 없음): 라우트·lib 에 흩어져 있던 SQL 78개 문장과 D1 호출(`prepare`·`batch`·`meta.changes`)을
+      `src/db/`(users · sessions · companies · jobs · logs · admin)의 이름 붙은 함수로 옮겼다(SQL 문자열·바인딩 순서·batch 안 문장 순서·가드 그대로,
+      `src/routes/job-db.ts` 는 `src/db/jobs.ts` 로 흡수). SQLite 전용 부분에 `[sqlite]` 주석, PostgreSQL 이전 안내 `docs/DB-PORTING.md`,
+      경계 검사 테스트 `test/db-layer.test.ts`(src/db 밖에서 `.prepare(`·`.batch(`·`meta.changes`·SQL 문자열·`env.DB` 직접 사용 금지)
 
 ## 운영자 설정 (사람이 하는 일 — 안내 문서를 먼저 써서 건넨다)
 - [ ] O-1 GitHub 저장소에 이 폴더 올리기

@@ -1,6 +1,7 @@
 // 메일 발송 (Resend). 원칙: 메일 본문에 이력서·연락처 같은 개인정보를 넣지 않는다. 링크만 보낸다.
 import { now, type Env } from '../env';
 import { sha256Hex } from './crypto';
+import { insertEmailLog } from '../db/logs';
 
 export interface Mail {
   to: string;
@@ -32,8 +33,6 @@ export async function sendMail(env: Env, mail: Mail): Promise<boolean> {
     });
     result = res.ok ? 'sent' : `error_${res.status}`;
   }
-  await env.DB.prepare('INSERT INTO email_log (id, to_hash, template, result, sent_at) VALUES (?,?,?,?,?)')
-    .bind(crypto.randomUUID(), await sha256Hex(mail.to.toLowerCase()), mail.template, result, now())
-    .run();
+  await insertEmailLog(env.DB, crypto.randomUUID(), await sha256Hex(mail.to.toLowerCase()), mail.template, result, now());
   return result === 'sent' || result === 'console';
 }

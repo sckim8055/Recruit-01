@@ -8,7 +8,7 @@ import {
   type JobFieldError, type JobFormField, type JobInput, type JobStatus, type LocalizeStatus,
 } from '../lib/jobs';
 import type { PublishBlock } from '../lib/rules';
-import type { JobRow } from '../routes/job-db';
+import type { JobRow } from '../db/jobs';
 import { Flash } from './company';
 
 // ── 공통 조각

@@ -5,7 +5,7 @@ import { fmtDate } from '../lib/company';
 import { t } from '../lib/i18n';
 import { JOB_LIMITS, type JobStatus } from '../lib/jobs';
 import type { CompareResult } from '../routes/admin-jobs';
-import type { JobRow } from '../routes/job-db';
+import type { JobRow } from '../db/jobs';
 import { Flash } from './company';
 import { JobConditions, JobStatusBadge, LocalizeBadge } from './jobs';
 

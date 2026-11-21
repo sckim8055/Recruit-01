@@ -4,6 +4,8 @@
 // (기술설계서는 "5분 서명 URL"이었지만, 서명 URL 은 주소가 새면 권한 없이 열린다. Worker 가 권한을 확인한 뒤 직접 전송한다.)
 import { now, type Env } from '../env';
 import { canViewVerificationDoc, type Actor } from './authz';
+import { findVerificationDoc, insertVerificationDoc } from '../db/companies';
+import { insertAccessLog } from '../db/logs';
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 export const DOC_TYPES = ['biz_cert', 'cn_license', 'agency_license'] as const;
@@ -43,17 +45,14 @@ export async function putVerificationDoc(
   const id = crypto.randomUUID();
   const key = `vdocs/${ownerType}/${ownerId}/${id}.${up.type.ext}`;
   await env.FILES.put(key, up.bytes, { httpMetadata: { contentType: up.type.mime } });
-  await env.DB.prepare(
-    'INSERT INTO verification_docs (id, owner_type, owner_id, doc_type, r2_key, review_status, created_at) VALUES (?,?,?,?,?,?,?)',
-  ).bind(id, ownerType, ownerId, docType, key, 'pending', now()).run();
+  await insertVerificationDoc(env.DB, id, ownerType, ownerId, docType, key, 'pending', now());
   return id;
 }
 
 export async function logAccess(
   env: Env, actor: Actor, targetType: 'application' | 'resume' | 'verification_doc', targetId: string, reason: string | null,
 ): Promise<void> {
-  await env.DB.prepare('INSERT INTO access_log (id, actor_id, actor_role, target_type, target_id, reason, at) VALUES (?,?,?,?,?,?,?)')
-    .bind(crypto.randomUUID(), actor.id, actor.role, targetType, targetId, reason, now()).run();
+  await insertAccessLog(env.DB, crypto.randomUUID(), actor.id, actor.role, targetType, targetId, reason, now());
 }
 
 /** 비공개 파일 응답에 붙이는 헤더: 캐시 금지, 종류 추측 금지, 문서 안의 스크립트 실행 금지. */
@@ -69,8 +68,7 @@ export function privateFileHeaders(mime: string, filename: string): Headers {
 
 /** 검증 서류를 내려준다: 권한 확인 → 열람 기록 → 전송. 볼 수 없거나 없으면 null (호출부는 404 로 응답한다). */
 export async function serveVerificationDoc(env: Env, actor: Actor, docId: string): Promise<Response | null> {
-  const doc = await env.DB.prepare('SELECT id, owner_type, owner_id, r2_key FROM verification_docs WHERE id = ?')
-    .bind(docId).first<{ id: string; owner_type: 'company' | 'agency'; owner_id: string; r2_key: string }>();
+  const doc = await findVerificationDoc(env.DB, docId);
   // 없는 것과 권한 없는 것을 구분해 알려주지 않는다.
   if (!doc || !canViewVerificationDoc(actor, doc)) return null;
   const obj = await env.FILES.get(doc.r2_key);

@@ -2,6 +2,7 @@
 // 판단은 하지 않는다 — 권한 판단은 authz.ts 의 함수가 이 Actor 로 한다.
 import type { Env, Role, SessionUser } from '../env';
 import type { Actor } from './authz';
+import { listAgencyMembershipsOfUser, listCompanyMembershipsOfUser } from '../db/companies';
 
 export interface CompanyMemberRow { company_id: string; is_hq: number }
 export interface AgencyMemberRow { agency_id: string }
@@ -32,12 +33,10 @@ export function actorFromRows(
 export async function loadActor(env: Env, user: SessionUser): Promise<Actor> {
   const m = membershipsFor(user.role);
   const companyRows = m.company
-    ? (await env.DB.prepare('SELECT company_id, is_hq FROM company_members WHERE user_id = ?')
-        .bind(user.id).all<CompanyMemberRow>()).results
+    ? await listCompanyMembershipsOfUser(env.DB, user.id)
     : [];
   const agencyRows = m.agency
-    ? (await env.DB.prepare('SELECT agency_id FROM agency_members WHERE user_id = ?')
-        .bind(user.id).all<AgencyMemberRow>()).results
+    ? await listAgencyMembershipsOfUser(env.DB, user.id)
     : [];
   return actorFromRows(user, companyRows, agencyRows);
 }

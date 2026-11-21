@@ -36,6 +36,9 @@ src/
     i18n.ts          언어 판별, 문구 조회
     jobs.ts          공고 폼 검사, 저장 시 상태 계산(planJobSave), 숫자 대조 — 순수 함수
     localize/        현지화 엔진 층 (7절)
+  db/                SQL 과 D1 호출은 여기에만 (T-05d). users · sessions(인증코드·세션·TOTP 대기) · companies(기업·담당자·초대·서류 행)
+                     · jobs · logs(access_log·email_log) · admin(개수). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
+                     PostgreSQL 로 옮길 때 고칠 곳과 SQLite 전용 문법 목록은 docs/DB-PORTING.md
   locales/ko.ts zh.ts  화면 문구
   routes/            화면·API 라우트 (기능별 파일)
   views/             JSX 화면 조각
@@ -46,6 +49,7 @@ docs/                이 문서, API.md, TASKS.md
 ```
 
 ★ 표시 두 파일이 이 서비스의 안전장치다. 라우트는 판단을 직접 하지 않고 이 두 파일의 함수를 호출한다.
+라우트·lib 는 `env.DB` 를 직접 쓰지 않고 `src/db/` 의 함수에 넘기기만 한다 (`test/db-layer.test.ts` 가 검사한다).
 
 ## 3. 회원과 권한
 
