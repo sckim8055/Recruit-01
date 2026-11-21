@@ -26,8 +26,8 @@ describe('engineOrder', () => {
 });
 
 describe('프롬프트', () => {
-  it('지시 사항: 관례, 뜻 유지, 조건 추가 금지, 숫자 그대로, 금지 표현, JSON', () => {
-    for (const s of ['관례', '뜻을 바꾸지', '더하지 마세요', '숫자', '취업상담', '취업추천', '취업지원', '취업알선', 'JSON']) expect(LOCALIZE_SYSTEM).toContain(s);
+  it('지시 사항: 구성 유지, 소제목 추가 금지, 중국 제도 용어 치환 금지, 뜻 유지, 조건 추가 금지, 숫자 그대로, 금지 표현, JSON', () => {
+    for (const s of ['구성을 그대로 유지', '소제목', '五险一金', '뜻을 바꾸지', '더하지 마세요', '숫자', '취업상담', '취업추천', '취업지원', '취업알선', 'JSON']) expect(LOCALIZE_SYSTEM).toContain(s);
     expect(BACK_SYSTEM).toContain('JSON');
   });
   it('사용자 메시지에는 제목·본문만 들어간다', () => {
