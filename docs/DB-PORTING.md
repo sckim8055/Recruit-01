@@ -20,6 +20,8 @@
 | `src/db/settings.ts` | site_settings (사이트 설정 이름 → 값, upsert) |
 | `src/db/resumes.ts` | resumes (내 이력서 목록·한 개·개수, 5개 한도 안에서 추가, 버전 비교 수정, 대표 지정, 삭제 + 대표 승계, 파일 키 목록). 모든 문장에 `user_id` 조건 |
 | `src/db/options.ts` | job_options (직무·업계·근무지 선택 항목: 전체 읽기·추가·이름/순서 수정·사용 종료/다시 사용) + 항목별 공고 수 |
+| `src/db/applications.ts` | applications · application_events · consents(cross_border): 지원 여부, 기업 담당자 수(본사/그 밖)·알림 주소(활성 계정), 공개 조건·중복을 다시 확인하는 조건부 추가(+ 동의), 내 지원 한 건·목록, 취소(이벤트 + 상태 + 내용 삭제 + 동의 철회), 파일 키 목록. 구직자 쪽 문장은 모두 `seeker_id` 조건 |
+| `src/db/application-views.ts` | applications + jobs + companies (지원 현황 화면: 내가 지원한 공고 중 지금 공개 중인 공고 id, `publicJobWhere` 재사용, 읽기만) |
 
 - 스키마는 `migrations/` (SQLite 문법). 판단 규칙(`rules.ts`·`authz.ts`)·TTL·횟수 제한은 DB 와 무관하므로 옮길 때 고치지 않는다.
 
@@ -66,6 +68,10 @@
 | `resumes.insertResume` | `INSERT … SELECT ?,…, CASE WHEN EXISTS … THEN 0 ELSE 1 END … WHERE (SELECT COUNT(*) …) < ?` — 한도·첫 이력서 대표를 한 문장으로 | 문법은 된다. FROM 없는 SELECT 의 매개변수 형 지정이 필요할 수 있다(확인 필요). 동시에 두 번 추가하면 둘 다 통과해 6개가 될 수 있다(4장) |
 | `resumes.setDefaultResume` · `deleteResume` | `batch` = 트랜잭션. 대표 지정은 "기존 대표 내리기 → 대상 올리기" 순서(바꾸면 유일 인덱스 위반), 삭제는 "지우기 → 대표가 없으면 가장 최근 것을 대표로" | `BEGIN … COMMIT`, 순서 그대로 |
 | `resumes.countResumes` | `COUNT(*)` 가 숫자로 옴 | `COUNT(*)::int` 또는 변환 (확인 필요) |
+| `applications.insertApplication` | `INSERT … SELECT … FROM jobs JOIN companies WHERE 공개 조건 AND NOT EXISTS (…)` + 같은 batch 의 `INSERT INTO consents … SELECT … WHERE EXISTS (방금 넣은 지원)`. `UNIQUE (job_id, seeker_id)` 위반 예외는 false 로 바꾼다 | `BEGIN … COMMIT`, 순서 그대로. 유일 제약 위반은 SQLSTATE 23505 (호출부는 예외 종류를 보지 않는다). 동시 두 INSERT 는 4장 — 이 표는 유일 제약이 막는다 |
+| `applications.withdrawApplication` | batch 세 문장(이벤트 추가 → 상태·내용 지우기 → 동의 철회). 앞 두 문장이 같은 `status IN (…)` 가드를 쓰고, 세 번째는 바뀐 상태를 확인한다. 판단은 두 번째 문장의 영향 행 수 | `BEGIN … COMMIT`, 순서 그대로 (순서를 바꾸면 이벤트 가드가 바뀐 상태를 본다) |
+| `applications.memberCounts` | `SUM(CASE …)` 가 숫자로 옴, `is_hq` INTEGER 0/1 | `SUM` 은 bigint/numeric → 숫자 변환(확인 필요). boolean 이면 `CASE WHEN is_hq` |
+| `applications.listOwnApplications`, `application-views.listVisibleAppliedJobIds` | `CASE WHEN j.company_name_public = 1`, `LIMIT 200` | integer 로 두면 그대로 |
 | `migrations/0007_job_options.sql` | 기본 행의 시각 `strftime('%s','now')` | `extract(epoch from now())::bigint` |
 | `companies.listPublicCompanies` | `ORDER BY name_ko` = 바이트 순서 | DB 콜레이션에 따라 한글 정렬이 달라질 수 있음 (`COLLATE "C"` 로 맞춤) |
 

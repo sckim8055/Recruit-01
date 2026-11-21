@@ -91,6 +91,7 @@ export const ResumeList = (p: { locale: Locale; items: ResumeListItem[]; canAdd:
             <span class="muted">{t(l, 'resume.limit_note').replace('{n}', String(RESUME_MAX_PER_USER))}</span></>}
       </div>
       <p class="muted spaced">{t(l, 'resume.apply_note')}</p>
+      <p><a href="/my/applications">{t(l, 'nav.applications')}</a></p>
     </section>
   );
 };
@@ -109,7 +110,7 @@ function errText(locale: Locale, e: ResumeFieldError): string {
   return t(locale, 'resume.err.required');
 }
 
-const FieldErrors = ({ locale, errors, fileError }: { locale: Locale; errors: ResumeFieldError[]; fileError?: string }) => {
+export const FieldErrors = ({ locale, errors, fileError }: { locale: Locale; errors: ResumeFieldError[]; fileError?: string }) => {
   if (!errors.length && !fileError) return null;
   const sorted = [...errors].sort((a, b) => FIELDS_ORDER.indexOf(a.field) - FIELDS_ORDER.indexOf(b.field));
   return (
@@ -117,6 +118,56 @@ const FieldErrors = ({ locale, errors, fileError }: { locale: Locale; errors: Re
       {sorted.map((e) => <li>{t(locale, `resume.f.${e.field}`)}: {errText(locale, e)}</li>)}
       {fileError && <li>{t(locale, 'resume.f.attachment')}: {t(locale, `resume.err.file.${fileError}`)}</li>}
     </ul>
+  );
+};
+
+/**
+ * 이력서 항목 칸 (이력서 이름표·첨부파일 제외). 이력서 폼과 지원 화면(이번 지원에만 쓸 내용)이 같은 칸을 쓴다.
+ */
+export const ResumeFieldInputs = ({ locale, input, errors }: { locale: Locale; input: ResumeInput; errors: ResumeFieldError[] }) => {
+  const l = locale;
+  const i = input;
+  const hasErr = (f: ResumeField) => errors.some((e) => e.field === f);
+  const lab = (f: ResumeField, required = false) => `${t(l, `resume.f.${f}`)}${required ? ' *' : ''}`;
+  return (
+    <>
+      <div class="grid2">
+        <label>{lab('name', true)}
+          <input name="name" required maxlength={RESUME_LIMITS.name} value={i.name} autocomplete="name" aria-invalid={hasErr('name') ? 'true' : undefined} />
+        </label>
+        <label>{lab('contact_email', true)}
+          <input name="contact_email" type="email" required maxlength={RESUME_LIMITS.email} value={i.contact_email} autocomplete="email"
+            aria-invalid={hasErr('contact_email') ? 'true' : undefined} />
+        </label>
+        <label>{lab('chinese_level', true)}
+          <select name="chinese_level" required aria-invalid={hasErr('chinese_level') ? 'true' : undefined}>
+            <option value="">{t(l, 'common.choose')}</option>
+            {RESUME_CHINESE_LEVELS.map((lv) => <option value={lv} selected={i.chinese_level === lv}>{levelText(l, lv)}</option>)}
+          </select>
+        </label>
+        <label>{lab('years', true)}
+          <input name="years" type="number" inputmode="numeric" min={0} max={RESUME_LIMITS.years} step={1} required value={i.years}
+            aria-invalid={hasErr('years') ? 'true' : undefined} />
+          <span class="hint">{t(l, 'resume.hint.years')}</span>
+        </label>
+      </div>
+      <label>{lab('headline', true)}
+        <input name="headline" required maxlength={RESUME_LIMITS.headline} value={i.headline} aria-invalid={hasErr('headline') ? 'true' : undefined} />
+        <span class="hint">{t(l, 'resume.hint.headline')}</span>
+      </label>
+      <div class="grid2">
+        <label>{lab('phone')}
+          <input name="phone" type="tel" maxlength={RESUME_LIMITS.phone} value={i.phone} autocomplete="tel" aria-invalid={hasErr('phone') ? 'true' : undefined} />
+        </label>
+        <label>{lab('desired_role')}
+          <input name="desired_role" maxlength={RESUME_LIMITS.desired_role} value={i.desired_role} />
+        </label>
+      </div>
+      <label>{lab('experience_text')}
+        <textarea name="experience_text" rows={8} maxlength={RESUME_LIMITS.experience_text}>{i.experience_text}</textarea>
+        <span class="hint">{t(l, 'resume.hint.experience_text')}</span>
+      </label>
+    </>
   );
 };
 
@@ -152,42 +203,7 @@ export const ResumeForm = (p: ResumeFormProps) => {
           <input name="title" required maxlength={RESUME_LIMITS.title} value={i.title} aria-invalid={hasErr('title') ? 'true' : undefined} />
           <span class="hint">{t(l, 'resume.hint.title')}</span>
         </label>
-        <div class="grid2">
-          <label>{lab('name', true)}
-            <input name="name" required maxlength={RESUME_LIMITS.name} value={i.name} autocomplete="name" aria-invalid={hasErr('name') ? 'true' : undefined} />
-          </label>
-          <label>{lab('contact_email', true)}
-            <input name="contact_email" type="email" required maxlength={RESUME_LIMITS.email} value={i.contact_email} autocomplete="email"
-              aria-invalid={hasErr('contact_email') ? 'true' : undefined} />
-          </label>
-          <label>{lab('chinese_level', true)}
-            <select name="chinese_level" required aria-invalid={hasErr('chinese_level') ? 'true' : undefined}>
-              <option value="">{t(l, 'common.choose')}</option>
-              {RESUME_CHINESE_LEVELS.map((lv) => <option value={lv} selected={i.chinese_level === lv}>{levelText(l, lv)}</option>)}
-            </select>
-          </label>
-          <label>{lab('years', true)}
-            <input name="years" type="number" inputmode="numeric" min={0} max={RESUME_LIMITS.years} step={1} required value={i.years}
-              aria-invalid={hasErr('years') ? 'true' : undefined} />
-            <span class="hint">{t(l, 'resume.hint.years')}</span>
-          </label>
-        </div>
-        <label>{lab('headline', true)}
-          <input name="headline" required maxlength={RESUME_LIMITS.headline} value={i.headline} aria-invalid={hasErr('headline') ? 'true' : undefined} />
-          <span class="hint">{t(l, 'resume.hint.headline')}</span>
-        </label>
-        <div class="grid2">
-          <label>{lab('phone')}
-            <input name="phone" type="tel" maxlength={RESUME_LIMITS.phone} value={i.phone} autocomplete="tel" aria-invalid={hasErr('phone') ? 'true' : undefined} />
-          </label>
-          <label>{lab('desired_role')}
-            <input name="desired_role" maxlength={RESUME_LIMITS.desired_role} value={i.desired_role} />
-          </label>
-        </div>
-        <label>{lab('experience_text')}
-          <textarea name="experience_text" rows={8} maxlength={RESUME_LIMITS.experience_text}>{i.experience_text}</textarea>
-          <span class="hint">{t(l, 'resume.hint.experience_text')}</span>
-        </label>
+        <ResumeFieldInputs locale={l} input={i} errors={p.errors} />
         <fieldset>
           <legend>{lab('attachment')}</legend>
           {edit && p.current && (

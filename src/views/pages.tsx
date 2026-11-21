@@ -67,13 +67,14 @@ export const LoginCode = ({ locale, email, role, error }: { locale: Locale; emai
   </section>
 );
 
-// 구직자 첫 화면. 지원 현황은 T-08 에서 채운다.
+// 구직자 첫 화면: 이력서·지원 현황 링크.
 export const MySeeker = ({ locale, email }: { locale: Locale; email: string }) => (
   <section class="card">
     <h1>{t(locale, 'nav.my')}</h1>
     <p><a href="/my/resumes">{t(locale, 'my.seeker.resumes')}</a></p>
     <p class="muted">{t(locale, 'my.seeker.resumes_note')}</p>
-    <p>{t(locale, 'my.seeker.applications_soon')}</p>
+    <p><a href="/my/applications">{t(locale, 'my.seeker.applications')}</a></p>
+    <p class="muted">{t(locale, 'my.seeker.applications_note')}</p>
     <p class="muted">{email}</p>
   </section>
 );

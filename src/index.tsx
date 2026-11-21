@@ -11,6 +11,7 @@ import { biz } from './routes/biz';
 import { companies } from './routes/companies';
 import { homePage, jobs } from './routes/jobs';
 import { resumes } from './routes/resumes';
+import { applications, apply } from './routes/applications';
 import { pageCache } from './lib/page-cache';
 
 const app = new Hono<AppEnv>();
@@ -29,14 +30,15 @@ app.use('*', async (c, next) => {
 app.get('/', pageCache, homePage);
 app.get('/api/health', (c) => c.json({ ok: true, env: c.env.APP_ENV }));
 app.route('/my/resumes', resumes);
+app.route('/my/applications', applications);
 app.route('/', auth);
 app.route('/biz', biz);
 app.route('/admin', admin);
 app.route('/companies', companies);
+// 지원(/jobs/:id/apply)은 공개 공고 화면보다 먼저 붙인다. page-cache 를 거치지 않는다 (routes/applications.tsx).
+app.route('/jobs', apply);
 app.route('/jobs', jobs);
 
-// 이후 라우트는 docs/TASKS.md 순서대로 src/routes/ 에 추가한다:
-//   apply.tsx (지원)
 
 app.notFound((c) => renderError(c, 404));
 app.onError((err, c) => {

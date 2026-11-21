@@ -2,7 +2,8 @@
 // resume_snapshot 에는 암호문만 넘어온다. 구직자 쪽 문장은 모두 seeker_id 를 조건에 넣는다.
 //
 // [sqlite] batch = 한 트랜잭션, changes = rowCount. INSERT … SELECT … WHERE 로 조건부 추가.
-// [sqlite] UNIQUE (job_id, seeker_id) 위반은 예외로 온다 — insertApplication 이 false 로 바꾼다 (PostgreSQL 은 SQLSTATE 23505).
+// [sqlite] UNIQUE (job_id, seeker_id) 위반은 메시지에 "UNIQUE" 가 든 예외로 온다 — insertApplication 이 그것만 false 로 바꾼다
+//          (PostgreSQL 은 SQLSTATE 23505 로 판별해야 한다).
 import { publicJobWhere } from './public-jobs';
 import type { Flags } from '../env';
 
@@ -33,13 +34,22 @@ export async function hasApplied(db: D1Database, jobId: string, seekerId: string
   return (await db.prepare('SELECT 1 AS x FROM applications WHERE job_id = ? AND seeker_id = ?').bind(jobId, seekerId).first()) !== null;
 }
 
-/** 그 기업의 담당자 수: 중국 본사 소속 / 그 밖. 국외 이전 동의가 필요한지 정하는 데 쓴다 (lib/application.consentNeed). */
+/**
+ * 그 기업의 **활동 중인** 담당자 수: 중국 본사 소속 / 그 밖. 국외 이전 동의가 필요한지 정하는 데 쓴다 (lib/application.consentNeed).
+ * 정지된 계정은 세지 않는다 — 세면 "한국 담당자가 있다" 고 보고 동의를 선택으로 물었는데 실제로는 볼 수 있는 한국 담당자가 없는 일이 생긴다.
+ */
 export async function memberCounts(db: D1Database, companyId: string): Promise<{ hqMembers: number; localMembers: number }> {
   const r = await db.prepare(
-    `SELECT COALESCE(SUM(CASE WHEN is_hq = 1 THEN 1 ELSE 0 END), 0) AS hq, COALESCE(SUM(CASE WHEN is_hq = 1 THEN 0 ELSE 1 END), 0) AS local
-     FROM company_members WHERE company_id = ?`,
+    `SELECT COALESCE(SUM(CASE WHEN m.is_hq = 1 THEN 1 ELSE 0 END), 0) AS hq, COALESCE(SUM(CASE WHEN m.is_hq = 1 THEN 0 ELSE 1 END), 0) AS local
+     FROM company_members m JOIN users u ON u.id = m.user_id WHERE m.company_id = ? AND u.status = 'active'`,
   ).bind(companyId).first<{ hq: number; local: number }>();
   return { hqMembers: Number(r?.hq ?? 0), localMembers: Number(r?.local ?? 0) };
+}
+
+/** 이 공고에 낸 내 지원의 id (없으면 null). 이미 지원한 공고에서 지원 상세로 보낼 때 쓴다. */
+export async function findOwnApplicationId(db: D1Database, jobId: string, seekerId: string): Promise<string | null> {
+  const r = await db.prepare('SELECT id FROM applications WHERE job_id = ? AND seeker_id = ?').bind(jobId, seekerId).first<{ id: string }>();
+  return r?.id ?? null;
 }
 
 /** 새 지원자 알림을 받을 기업 담당자 주소. 메일에는 개인정보를 넣지 않는다 (lib/application.newApplicantMail). */
@@ -81,8 +91,11 @@ export async function insertApplication(
   try {
     const res = await db.batch(stmts);
     return res[0]?.meta.changes === 1;
-  } catch {
-    return false; // 같은 순간에 두 번 누른 경우 (UNIQUE 위반)
+  } catch (e) {
+    // 같은 순간에 두 번 누른 경우(UNIQUE 위반)만 "들어가지 않음" 으로 본다. 그 밖의 오류(DB 장애 등)는 그대로 올린다 —
+    // 호출부가 "방금 마감됐다" 고 잘못 안내하지 않게.
+    if (/UNIQUE/i.test(e instanceof Error ? e.message : String(e))) return false;
+    throw e;
   }
 }
 

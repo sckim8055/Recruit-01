@@ -38,9 +38,12 @@ src/
     public-jobs.ts   공개 공고 조건(isPubliclyVisible)·필터·페이지 — 순수 함수 (9절)
     options.ts       직무·업계·근무지 선택 항목(이름 표시·고를 수 있는 값·관리자 입력 검사) — 순수 함수 (10절)
     page-cache.ts    공개 화면 캐시 (비로그인만, 60초) (9절)
+    resume.ts · resume-files.ts  이력서 항목 검사·암호화, 첨부파일 검사·암호화·R2 (4절)
+    application.ts · application-files.ts  지원 가능 여부·국외 이전 동의·복사본·취소, 지원서 첨부 내려받기 (11절)
     localize/        현지화 엔진 층 (7절)
   db/                SQL 과 D1 호출은 여기에만 (T-05d). users · sessions(인증코드·세션·TOTP 대기) · companies(기업·담당자·초대·서류 행)
-                     · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수) · settings(site_settings) · options(job_options) · resumes(이력서). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
+                     · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수) · settings(site_settings) · options(job_options) · resumes(이력서)
+                     · applications(지원·동의·취소) · application-views(지원 현황 화면용 읽기). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
                      PostgreSQL 로 옮길 때 고칠 곳과 SQLite 전용 문법 목록은 docs/DB-PORTING.md
   locales/ko.ts zh.ts  화면 문구
   routes/            화면·API 라우트 (기능별 파일)
@@ -164,7 +167,7 @@ docs/                이 문서, API.md, TASKS.md
 - **공개 컬럼만:** 공개 질의는 한국어 제목·본문, 구조 항목, 연락처, 기업명·진출 단계만 읽는다. 원문(`title_zh`·`source_zh`)·대조본·검토·차단 사유·엔진은 읽지 않는다.
   `company_name_public = 0` 이면 기업 이름·id 를 SQL 에서부터 NULL 로 받아 "기업명 비공개" 로 표시하고 기업 페이지로 연결하지 않는다.
 - **언어:** 공고 글은 한국어로만 게재된다. 중국어 화면도 제목·본문은 한국어 그대로이고 화면 문구만 중국어다.
-- **연락:** 상세에는 기업이 입력한 연락처(mailto)와 "사이트 지원 기능은 준비 중, 기업에 직접 연락할 수 있음" 안내만 둔다. 지원 버튼은 T-08.
+- **연락·지원:** 상세에는 기업이 입력한 연락처(mailto)와 지원 칸(11절)을 둔다. 비로그인(캐시되는 화면)의 지원 칸은 누구에게나 같은 "지원하기" 링크뿐이다 — 캐시된 HTML 에 사용자별 내용이 들어가지 않게.
 - **캐시 (`lib/page-cache.ts`):** `/`, `/jobs`, `/jobs/:id` 의 **로그인 쿠키(sid)가 없는** GET 만 Workers Cache API(`caches.default`)에 **60초** 저장한다.
   - 키 = 경로 + 이름순으로 정렬한 검색 조건 + 판별된 언어(`?lang=` → `lang` 쿠키 → Accept-Language). 같은 주소도 언어마다 따로 저장된다.
   - 응답 머리글 `Cache-Control: public, max-age=60`, `Vary: Cookie, Accept-Language` (브라우저가 언어 쿠키·로그인 쿠키가 바뀐 뒤 저장해 둔 화면을 다시 쓰지 않게).
@@ -208,3 +211,30 @@ docs/                이 문서, API.md, TASKS.md
   → 항목을 바꾸면 비로그인 방문자에게는 **최대 60초** 예전 화면이 보일 수 있다 (9절과 같은 TTL). 로그인한 사용자는 바로 바뀐다.
 - **사용 공고 수:** 관리자 화면의 숫자는 상태와 관계없이 그 code 를 가진 모든 공고 수다(`countOptionUsage`, 세 컬럼에 인덱스가 없어 jobs 전체를 읽는다. 관리자 화면에서만).
 - 고정 목록은 그대로 코드에 있다: 중국어 수준·진출 단계·퇴직금 기준·보고 라인 (값이 규칙·CHECK 제약과 묶여 있다).
+
+## 11. 지원 (T-08)
+
+- **누가:** 구직자 본인만. 지원은 구직자가 2단계 화면에서 "지원하기" 를 눌렀을 때만 생긴다. 운영자·시스템이 이력서를 고르거나, 대신 내거나, 기업에 보내는 길은 없다 (CLAUDE.md 규칙 1).
+  기업 쪽 지원자 목록·열람은 T-09 이다. 화면 문구에는 "운영자는 지원서를 검토·추천·전달하지 않는다" 를 적는다.
+- **흐름 (`routes/applications.tsx`):** 공고 상세의 "지원하기" → `/jobs/:id/apply` 1단계 이력서 고르기(대표 기본 선택, `resumeReadyToApply` 가 아니면 고를 수 없음)
+  → 2단계(같은 주소 `?resume=`) 이번 지원에만 쓸 항목 수정 + 첨부 "함께 보내기" + 확인 상자 + 국외 이전 동의 칸 → POST.
+  고친 내용은 지원서(복사본)에만 들어가고 저장된 이력서는 바뀌지 않는다. 이 화면에서는 새 파일을 올리지 않는다.
+- **제출 순서:** 공고(공개 여부, `isPubliclyVisible`) · 내 이력서 → 항목 검사(`validateResume`, 이름표는 이력서의 것을 넣어 검사만) → 동의 필요 여부
+  → 미리 `applyBlocks`(복사가 된다고 보고, 막히면 R2 에 쓰지 않음) → 첨부 복사(`copyResumeFile`: 풀어서 새 키로 다시 암호화한 지원서 전용 객체)
+  → 실제 복사 결과로 `buildSnapshot` · `applyBlocks` 다시 → `sealResume` → `insertApplication`(한 문장 안에서 공개 조건 `publicJobWhere`·중복을 다시 확인, 동의가 있으면 같은 트랜잭션에서 `consents`)
+  → 성공한 뒤에만 기업 알림. 막히거나 저장이 거절·실패하면 방금 복사한 객체를 지운다.
+  첨부 복사가 실패하면 첨부 없이 내고(결과 화면에 알림), 첨부가 빠져서 지원할 수 없게 되면(경력 요약 없음) 내지 않고 알린다.
+- **한 공고에 한 번:** `UNIQUE (job_id, seeker_id)` + `insertApplication` 의 `NOT EXISTS`. 취소한 지원도 행이 남으므로 **같은 공고에 다시 지원할 수 없다** (`applyBlocks` → `already_applied`, 화면은 기존 지원으로 보낸다).
+- **국외 이전 동의 (`lib/application.consentNeed`, 지원할 때의 담당자 구성으로 정한다):**
+  본사 소속(`is_hq = 1`) 담당자가 없으면 칸이 없고 체크값이 와도 저장하지 않는다. 본사 + 한국 담당자가 있으면 **선택**(기본 해제, 해제하면 한국 담당자만 열람 — `authz.canViewApplication`).
+  본사 담당자만 있으면 **필수**(없으면 아무도 볼 수 없으므로 제출 불가). 동의하면 `applications.cross_border_consent_at` 과 `consents(type='cross_border', version=CROSS_BORDER_VERSION, ref_id=지원 id)`.
+  문구는 locales `apply.consent.*` 의 초안이고 판(版)은 화면에 보이지 않는다. 확정은 T-11.
+  알려진 점: 지원한 뒤 기업이 본사 담당자를 추가해도 예전 지원에는 동의가 없으므로 그 담당자는 볼 수 없다(설계대로).
+- **기업 알림:** 그 기업의 활성 담당자(`users.status = 'active'`) 최대 10명에게 `new_applicant` 메일(`newApplicantMail`: 공고 제목과 `/biz` 주소, 한국어+중국어). 구직자 정보는 넣지 않는다.
+  실패해도 지원은 그대로이고 구직자에게 오류로 보이지 않는다. 콘솔에는 `apply: notify failed` 같은 일반 문구만.
+- **지원 현황:** `/my/applications` 목록, `/my/applications/:id` 한 건(기업이 보는 복사본 그대로, 동의 여부, 첨부 내려받기 = `serveApplicationFile` → access_log).
+  구직자가 자기 지원서 화면을 보는 것은 access_log 에 남기지 않는다(이력서 화면과 같다). 상태 이름은 구직자용 문구(`app.status.*`).
+- **취소:** 확인 화면 → POST. `canWithdraw`(진행 중인 상태만) → `withdrawApplication`(`application_events` 에 `withdrawn` + 상태 `nextStatus(…, 'withdrawn')` + `resume_snapshot = ''`·`file_r2_key = NULL`·`purge_after` + 동의 `withdrawn_at`, 한 트랜잭션)
+  → 그 뒤 R2 객체 삭제(실패하면 고아 객체 → T-12). 취소된 지원은 본인 말고 아무도 볼 수 없다(authz). 이 작업에서 상태를 바꾸는 길은 취소 하나뿐이다 (CLAUDE.md 규칙 3).
+- **캐시:** `/jobs/:id/apply` 와 `/my/applications*` 는 모두 `private, no-store` 이고 page-cache 를 거치지 않는다.
+

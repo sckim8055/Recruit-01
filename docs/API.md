@@ -1,7 +1,7 @@
 # 경로 목록
 
 화면은 서버 렌더링 + HTML 폼이다. `✅` 는 구현됨, 나머지는 docs/TASKS.md 의 해당 작업에서 만든다.
-모든 POST 는 같은 출처에서 온 요청만 받는다(`sameOrigin`). `/my/resumes*` 는 구직자만(기업·헤드헌터·관리자 403, 남의 이력서 id 는 404), 모든 응답이 `Cache-Control: private, no-store`. "권한" 칸의 판단은 `authz.ts`·`requireRole` 을 쓴다.
+모든 POST 는 같은 출처에서 온 요청만 받는다(`sameOrigin`). `/my/resumes*`·`/my/applications*`·`/jobs/:id/apply` 는 구직자만(비로그인 → /login, 기업·헤드헌터·관리자 403, 남의 이력서·지원 id 는 404), 모든 응답이 `Cache-Control: private, no-store`. "권한" 칸의 판단은 `authz.ts`·`requireRole` 을 쓴다.
 
 ## 공통
 | 경로 | 설명 | 권한 | 상태 |
@@ -11,7 +11,7 @@
 | POST /logout | 로그아웃 | 로그인 | ✅ |
 | GET·POST /login/totp | 관리자 2단계 인증 (최초에는 인증 앱 등록) | 인증코드를 통과한 관리자 | ✅ |
 | GET /lang/:l | 언어 전환 (ko/zh) | 누구나 | ✅ |
-| GET /my | 역할별 첫 화면 (구직자: 이력서 링크 + 지원 현황 자리, 기업·헤드헌터 → /biz, 관리자 → /admin) | 로그인 | ✅ |
+| GET /my | 역할별 첫 화면 (구직자: 이력서·지원 현황 링크, 기업·헤드헌터 → /biz, 관리자 → /admin) | 로그인 | ✅ |
 | GET /biz | 기업 첫 화면 (소속 없음: 받은 초대 + 기업 등록 폼 / 소속 있음: 검증 상태·남은 할 일). 헤드헌터는 임시 화면 | company, headhunter | ✅ |
 | GET /api/health | 상태 확인 | 누구나 | ✅ |
 | (없는 경로) · 권한 없음 | 404 · 403 화면 (공통 레이아웃, 한국어·중국어) | 누구나 | ✅ |
@@ -21,7 +21,7 @@
 | 경로 | 설명 | 권한 | 작업 |
 |---|---|---|---|
 | GET /jobs | 공고 목록 (공개 조건: ARCHITECTURE 9장). 필터 `chinese_level` `role_category` `industry` `entry_stage` `salary_basis` `report_line` `location` 중 관리자가 보이게 한 것만(기본: `chinese_level` `report_line` `location`, `/admin/settings`), `page`(20건씩, 최대 100). 직무·업계·근무지 값은 사용 중인 항목(`job_options`, `/admin/options`)만 받는다. 빈 칸·모르는 조건·숨긴 조건·사용 종료된 항목 값이 붙은 주소는 정규화 주소로 302. 비로그인은 60초 캐시 | 누구나 | ✅ |
-| GET /jobs/:id | 공고 상세 (구조 항목·기업·기업 연락처. 지원 버튼은 T-08). 보이지 않는 공고는 404. 비로그인은 60초 캐시 | 누구나 | ✅ |
+| GET /jobs/:id | 공고 상세 (구조 항목·기업·지원 칸·기업 연락처). 지원 칸: 비로그인은 누구에게나 같은 "지원하기" 링크(캐시되는 화면에 사용자별 내용 없음), 로그인한 구직자는 지원했으면 "이미 지원했습니다", 기업·헤드헌터·관리자는 안내만(버튼 없음). 보이지 않는 공고는 404. 비로그인은 60초 캐시 | 누구나 | ✅ |
 | GET /companies · /companies/:id | 기업 목록·기업 페이지 (검증된 기업만, "기업 제공 정보" 표시. 사업자번호·담당자·서류는 공개하지 않음) | 누구나 | ✅ |
 | GET /my/resumes | 내 이력서 목록 (대표 먼저, 최대 5개). 줄마다 제목·한 줄 소개·수정일·첨부파일 이름·지원 가능 여부, 수정·복사·대표로 지정·삭제. 열 수 없는 이력서(복호화 실패)는 "열 수 없는 이력서" + 삭제만. 결과 표시는 `?ok=created\|saved\|copied\|copied_nofile\|default\|deleted`, `?err=limit` 뿐 | seeker 본인 | ✅ |
 | GET·POST /my/resumes/new | 새 이력서 (multipart: 항목 + 첨부파일 `attachment` 1개, PDF·DOCX 5MB). 연락 이메일 기본값 = 계정 이메일. 첫 이력서는 대표. 5개면 `?err=limit` 로 302. 본문이 6MB 를 넘으면(`content-length`) 읽지 않고 413. 항목·파일 오류는 400 + 입력값 유지(파일은 다시 골라야 함) | seeker 본인 | ✅ |
@@ -30,9 +30,12 @@
 | POST /my/resumes/:id/copy | 복사 ("제목 (복사)", 중국어 화면은 "(副本)"). 첨부파일은 새 R2 객체로 다시 암호화해 복사. 원본 파일이 없으면 첨부 없이 복사(`ok=copied_nofile`). 5개면 `?err=limit` | seeker 본인 | ✅ |
 | POST /my/resumes/:id/default | 대표 이력서 지정 | seeker 본인 | ✅ |
 | GET·POST /my/resumes/:id/delete | 삭제 확인 화면(제목, 낸 지원서는 영향 없음 안내) → 삭제. 대표를 지우면 가장 최근에 고친 것이 대표. 행을 지운 뒤 R2 객체를 지운다 | seeker 본인 | ✅ |
-| GET·POST /jobs/:id/apply | 지원 (국외 이전 동의 포함) | seeker | T-08 |
-| GET /my/applications | 지원 현황 (자동 상태) | seeker | T-08 |
-| POST /my/applications/:id/withdraw | 지원 취소 | seeker 본인 | T-08 |
+| GET /jobs/:id/apply | 지원 1단계: 이력서 고르기 (대표 기본 선택, 지원할 수 없는 이력서는 사유와 함께 고를 수 없음). `?resume=<id>` 이면 2단계: 그 이력서로 채운 폼(이번 지원에만 쓰임, 이름표 없음) + 첨부 "함께 보내기"(기본 체크) + 확인 상자(받는 곳·보내는 내용·운영자는 검토·추천·전달하지 않음·취소 시 삭제) + 국외 이전 동의 칸(`consentNeed`: 없음/선택/필수). 보이지 않는 공고 404, 이미 지원(취소 포함) → 그 지원으로 302, 지원할 수 있는 이력서가 없으면 이력서 안내, 남의 이력서 404, 지원 불가 이력서를 고르면 400. page-cache 없음 | seeker | ✅ |
+| POST /jobs/:id/apply | 지원 제출 (`resume_id`, 이력서 항목, `include_file=1`, `consent=1`). 순서: 공고·내 이력서 → 항목 검사(400 + 입력 유지) → 동의 필요 여부 → 미리 `applyBlocks` → 첨부 복사(새 R2 객체) → `applyBlocks` 다시 → `insertApplication`(거절·예외면 복사한 파일 삭제, 거절은 400 안내) → 기업 활성 담당자 최대 10명에게 `new_applicant` 메일(공고 제목·주소만, 실패해도 지원 유지) → `/my/applications/:id?ok=applied` (첨부를 읽지 못해 빼고 냈으면 `applied_nofile`). 중복은 기존 지원으로 302. 필수 동의 없음·내용 부족(첨부·경력 요약 둘 다 없음)은 400 | seeker | ✅ |
+| GET /my/applications | 지원 현황 (최근 순, 최대 200): 공고 제목(지금 공개 중이면 링크), 기업명 또는 "기업명 비공개", 지원일, 상태(지원 완료·기업이 열람함·검토 중·면접 요청 받음·불합격·채용 종료·지원 취소함). 상태는 이벤트로만 바뀐다 | seeker | ✅ |
+| GET /my/applications/:id | 내 지원 한 건 (`canViewApplication`): 상태·날짜·국외 이전 동의 여부·보낸 내용(기업이 보는 복사본 그대로)·첨부 링크. 취소한 지원·내용을 열 수 없는 지원은 안내 문구. 결과 표시 `?ok=applied\|applied_nofile\|withdrawn` | seeker 본인 | ✅ |
+| GET /my/applications/:id/file | 지원서 첨부 내려받기 (attachment, access_log). `serveApplicationFile` 만 쓴다. 취소한 지원은 404 | seeker 본인 | ✅ |
+| GET·POST /my/applications/:id/withdraw | 지원 취소 확인 화면(내용·첨부 즉시 삭제, 기업이 더 볼 수 없음, 같은 공고 재지원 불가) → 취소(`canWithdraw` → `withdrawApplication`: `withdrawn` 이벤트 + 상태 + 내용·파일 키 삭제 + 동의 철회, 그 뒤 R2 객체 삭제) → `/my/applications/:id?ok=withdrawn`. 끝난 지원·이미 취소한 지원은 400 | seeker 본인 | ✅ |
 | GET·POST /my/alerts | 조건 알림 설정 | seeker | T-10 |
 
 ## 기업

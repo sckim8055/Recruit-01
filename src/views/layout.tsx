@@ -32,7 +32,7 @@ export const Layout = (p: LayoutProps) => {
             <a href="/companies">{t(p.locale, 'nav.companies')}</a>
             {p.user ? (
               <>
-                {p.user.role === 'seeker' && <a href="/my/resumes">{t(p.locale, 'nav.resumes')}</a>}
+                {p.user.role === 'seeker' && <><a href="/my/applications">{t(p.locale, 'nav.applications')}</a><a href="/my/resumes">{t(p.locale, 'nav.resumes')}</a></>}
                 <a href="/my">{t(p.locale, 'nav.my')}</a>
                 <form method="post" action="/logout" class="inline">
                   <button type="submit" class="link">{t(p.locale, 'nav.logout')}</button>

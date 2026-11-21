@@ -241,14 +241,14 @@ describe('공개 화면 응답', () => {
     const html = await res.text();
     expect(html).toContain('/logout');
   });
-  it('상세: 본문은 글로 출력, 연락처 mailto, 지원 버튼 없음', async () => {
+  it('상세: 본문은 글로 출력, 연락처 mailto, 비로그인에게도 같은 지원 링크 (T-08)', async () => {
     const res = await get(`/jobs/${listRow.id}`, fakeDb({ detail: detailRow }));
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).not.toContain('<img src=x');
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
     expect(html).toContain('href="mailto:hr@example-corp.test"');
-    expect(html).not.toMatch(/\/apply/);
+    expect(html).toContain(`href="/jobs/${listRow.id}/apply"`);
     expect(html).toContain('href="/companies/c1"');
   });
   it('기업명 비공개: 이름·링크 없음', async () => {

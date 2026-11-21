@@ -14,7 +14,8 @@ import {
 import { pageCache } from '../lib/page-cache';
 import { render, renderError } from '../render';
 import { Home } from '../views/pages';
-import { PublicJobList, PublicJobPage } from '../views/public-jobs';
+import { PublicJobList, PublicJobPage, type ApplyState } from '../views/public-jobs';
+import { hasApplied } from '../db/applications';
 
 export const jobs = new Hono<AppEnv>();
 
@@ -60,5 +61,11 @@ jobs.get('/:id', pageCache, async (c) => {
   if (differs(c, canonical)) return c.redirect(canonical, 302);
   const [job, optionRows] = await Promise.all([findPublicJob(c.env.DB, { id, flags: flagsOf(c.env), now: now() }), listOptions(c.env.DB)]);
   if (!job) return renderError(c, 404);
-  return render(c, <PublicJobPage locale={c.var.locale} job={job} options={buildOptionSet(optionRows)} />, { text: job.title_ko ?? '' });
+  // 지원 칸: 비로그인(캐시되는 화면)은 누구에게나 같은 "지원하기" 링크. 로그인한 요청은 캐시를 거치지 않으므로(page-cache)
+  // 구직자에게만 "이미 지원함" 을 보이고, 기업·헤드헌터·관리자에게는 지원 버튼 없이 안내만 보인다.
+  const user = c.var.user;
+  const apply: ApplyState = !user ? 'open'
+    : user.role !== 'seeker' ? 'not_seeker'
+    : (await hasApplied(c.env.DB, id, user.id)) ? 'applied' : 'open';
+  return render(c, <PublicJobPage locale={c.var.locale} job={job} options={buildOptionSet(optionRows)} apply={apply} />, { text: job.title_ko ?? '' });
 });

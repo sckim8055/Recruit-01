@@ -191,9 +191,23 @@ describe.skipIf(!hasSqlite)('지원 DB 문장', () => {
     raw.exec("UPDATE jobs SET company_name_public = 0 WHERE id = 'j1'");
     expect((await listOwnApplications(d1, 's1'))[0]!.company_name).toBeNull();
   });
+  it('DB 오류는 "지원 안 됨" 으로 감추지 않고 그대로 올린다 (UNIQUE 위반만 false)', async () => {
+    const broken = { prepare: () => ({ bind: () => ({}) }), batch: async () => { throw new Error('D1_ERROR: no such table'); } } as unknown as D1Database;
+    await expect(apply(broken)).rejects.toThrow('D1_ERROR');
+    const dup = { prepare: () => ({ bind: () => ({}) }), batch: async () => { throw new Error('D1_ERROR: UNIQUE constraint failed: applications.job_id, applications.seeker_id'); } } as unknown as D1Database;
+    expect(await apply(dup)).toBe(false);
+  });
+  it('이 공고에 낸 내 지원 id', async () => {
+    const { d1 } = setup();
+    const { findOwnApplicationId } = await import('../src/db/applications');
+    expect(await findOwnApplicationId(d1, 'j1', 's1')).toBeNull();
+    await apply(d1);
+    expect(await findOwnApplicationId(d1, 'j1', 's1')).toBe('a1');
+    expect(await findOwnApplicationId(d1, 'j1', 's2')).toBeNull();
+  });
   it('담당자 수와 알림 주소 (정지된 계정 제외)', async () => {
     const { d1 } = setup();
-    expect(await memberCounts(d1, 'c1')).toEqual({ hqMembers: 1, localMembers: 2 });
+    expect(await memberCounts(d1, 'c1')).toEqual({ hqMembers: 1, localMembers: 1 }); // m3 은 정지된 계정이라 세지 않는다
     expect(await memberCounts(d1, 'none')).toEqual({ hqMembers: 0, localMembers: 0 });
     expect((await companyMemberEmails(d1, 'c1')).sort()).toEqual(['m1@example.test', 'm2@example.test']);
   });

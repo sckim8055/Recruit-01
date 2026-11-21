@@ -1,7 +1,9 @@
 // 공개 공고 목록·상세 (구직자 화면). 공고 글은 기업이 쓴 원문을 엔진이 옮긴 것이므로 믿을 수 없는 글로 보고
 // JSX 로만 출력한다 (자동 이스케이프, 줄바꿈은 .pre = white-space: pre-wrap). 공고 글은 한국어로만 게재된다 —
 // 중국어 화면에서도 제목·본문은 한국어 그대로 보이고, 화면 문구만 중국어가 된다. 중국어 원문은 보여주지 않는다.
-// 지원 버튼은 아직 없다 (T-08). 기업이 입력한 연락처만 보여준다 (직업정보제공사업: 운영자는 연결하지 않는다).
+// 지원(T-08): 구직자 본인이 "지원하기" 를 눌러 지원 화면(/jobs/:id/apply)으로 간다. 운영자는 연결·추천하지 않는다 (직업정보제공사업).
+// 비로그인 화면은 캐시되므로(page-cache) 지원 칸에 사용자별 내용을 넣지 않는다 — 누구에게나 같은 "지원하기" 링크.
+// 기업이 입력한 연락처도 그대로 보여준다.
 import type { Locale } from '../env';
 import { fmtDate } from '../lib/company';
 import { t } from '../lib/i18n';
@@ -151,7 +153,28 @@ export const PublicJobList = (p: PublicJobListProps) => (
 
 // ── 상세
 
-export const PublicJobPage = ({ locale, job, options }: { locale: Locale; job: PublicJobDetail; options: OptionSet }) => {
+/**
+ * 지원 칸의 모양. 'open' = 누구에게나 같은 "지원하기" 링크 (비로그인 캐시 화면도 이것), 'applied' = 로그인한 구직자가 이미 지원함,
+ * 'not_seeker' = 기업·헤드헌터·관리자 계정 (지원 버튼 없이 안내만).
+ */
+export type ApplyState = 'open' | 'applied' | 'not_seeker';
+
+const ApplyBox = ({ locale, jobId, state }: { locale: Locale; jobId: string; state: ApplyState }) => (
+  <div class="box">
+    <h2>{t(locale, 'pj.apply')}</h2>
+    {state === 'open' && (
+      <>
+        <p>{t(locale, 'pj.apply_note')}</p>
+        <p><a class="button" href={`/jobs/${jobId}/apply`}>{t(locale, 'pj.apply_button')}</a></p>
+      </>
+    )}
+    {state === 'applied' && <p>{t(locale, 'pj.applied')} · <a href="/my/applications">{t(locale, 'pj.applied_link')}</a></p>}
+    {state === 'not_seeker' && <p class="muted">{t(locale, 'pj.apply_seeker_only')}</p>}
+    <p class="hint">{t(locale, 'pj.apply_who')}</p>
+  </div>
+);
+
+export const PublicJobPage = ({ locale, job, options, apply = 'open' }: { locale: Locale; job: PublicJobDetail; options: OptionSet; apply?: ApplyState }) => {
   const conditions: [string, string][] = [
     ['job.f.salary', publicSalaryText(locale, job)],
     ['job.f.work_hours', job.work_hours ?? ''],
@@ -209,6 +232,8 @@ export const PublicJobPage = ({ locale, job, options }: { locale: Locale; job: P
         {job.company_id && <p><a href={`/companies/${job.company_id}`}>{t(locale, 'pj.company_page')}</a></p>}
         <p class="hint">{t(locale, 'pub.provided_note')}</p>
       </div>
+
+      <ApplyBox locale={locale} jobId={job.id} state={apply} />
 
       <div class="box">
         <h2>{t(locale, 'pj.contact')}</h2>
