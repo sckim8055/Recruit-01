@@ -1,0 +1,201 @@
+// 공개 공고 목록·상세 (구직자 화면). 공고 글은 기업이 쓴 원문을 엔진이 옮긴 것이므로 믿을 수 없는 글로 보고
+// JSX 로만 출력한다 (자동 이스케이프, 줄바꿈은 .pre = white-space: pre-wrap). 공고 글은 한국어로만 게재된다 —
+// 중국어 화면에서도 제목·본문은 한국어 그대로 보이고, 화면 문구만 중국어가 된다. 중국어 원문은 보여주지 않는다.
+// 지원 버튼은 아직 없다 (T-08). 기업이 입력한 연락처만 보여준다 (직업정보제공사업: 운영자는 연결하지 않는다).
+import type { Locale } from '../env';
+import { fmtDate } from '../lib/company';
+import { t } from '../lib/i18n';
+import { activeFilterCount, FILTER_CHOICES, FILTER_KEYS, jobsHref, type FilterKey, type JobFilter } from '../lib/public-jobs';
+import type { PublicJobDetail, PublicJobListRow } from '../db/public-jobs';
+import { salaryText } from './jobs';
+
+/** 필터 이름 → [칸 이름 문구 키, 값 문구 키 앞부분]. 공고 작성·기업 정보 화면의 문구를 그대로 쓴다. */
+const FILTER_LABELS: Record<FilterKey, [string, string]> = {
+  chinese_level: ['job.f.chinese_level', 'job.chinese_level'],
+  role_category: ['job.f.role_category', 'job.role'],
+  industry: ['job.f.industry', 'job.industry'],
+  entry_stage: ['co.f.entry_stage', 'co.stage'],
+  salary_basis: ['job.f.salary_basis', 'job.salary_basis'],
+  report_line: ['job.f.report_line', 'job.report_line'],
+  location: ['job.f.location', 'job.location'],
+};
+
+const choice = (locale: Locale, prefix: string, v: string | null): string => (v ? t(locale, `${prefix}.${v}`) : '');
+
+/** 연봉 표시: "5,000 ~ 7,000 만원/년 (퇴직금 별도)". 연봉을 적지 않은 공고는 "협의". */
+export function publicSalaryText(locale: Locale, j: Pick<PublicJobListRow, 'salary_min' | 'salary_max' | 'salary_basis'>): string {
+  return salaryText(locale, j) || t(locale, 'pj.salary.negotiable');
+}
+
+/** 마감일 표시. 마감일이 없으면 "상시". */
+export const closesText = (locale: Locale, closesAt: number | null): string =>
+  closesAt == null ? t(locale, 'pj.closes.none') : fmtDate(closesAt);
+
+const CompanyName = ({ locale, row, link = true }: { locale: Locale; row: Pick<PublicJobListRow, 'company_id' | 'company_name'>; link?: boolean }) =>
+  row.company_name == null ? <span class="muted">{t(locale, 'pj.company_hidden')}</span>
+    : link && row.company_id ? <a href={`/companies/${row.company_id}`}>{row.company_name}</a>
+    : <span>{row.company_name}</span>;
+
+// ── 목록 한 줄 (목록·홈 공통)
+
+export const PublicJobItem = ({ locale, row }: { locale: Locale; row: PublicJobListRow }) => {
+  const meta = [
+    choice(locale, 'job.location', row.location),
+    choice(locale, 'job.role', row.role_category),
+    choice(locale, 'job.industry', row.industry),
+  ].filter(Boolean).join(' · ');
+  return (
+    <li class="job">
+      <a href={`/jobs/${row.id}`} lang="ko">{row.title_ko || t(locale, 'job.untitled')}</a>
+      <div><CompanyName locale={locale} row={row} /></div>
+      {meta && <div class="muted">{meta}</div>}
+      <div class="facts-line">
+        <span>{t(locale, 'job.f.salary')} {publicSalaryText(locale, row)}</span>
+        {row.report_line && <span>{t(locale, 'job.f.report_line')} {choice(locale, 'job.report_line', row.report_line)}</span>}
+        {row.chinese_level && <span>{t(locale, 'pj.chinese')} {choice(locale, 'job.chinese_level', row.chinese_level)}</span>}
+        <span>{t(locale, 'job.f.closes_at')} {closesText(locale, row.closes_at)}</span>
+      </div>
+    </li>
+  );
+};
+
+// ── 목록
+
+const FilterForm = ({ locale, filter }: { locale: Locale; filter: JobFilter }) => {
+  const n = activeFilterCount(filter);
+  return (
+    <form method="get" action="/jobs" class="box">
+      <div class="grid3">
+        {FILTER_KEYS.map((k) => {
+          const [labelKey, prefix] = FILTER_LABELS[k];
+          return (
+            <label>{t(locale, labelKey)}
+              <select name={k}>
+                <option value="">{t(locale, 'pj.filter.any')}</option>
+                {(FILTER_CHOICES[k] as readonly string[]).map((v) => (
+                  <option value={v} selected={filter[k] === v}>{t(locale, `${prefix}.${v}`)}</option>
+                ))}
+              </select>
+            </label>
+          );
+        })}
+      </div>
+      <div class="actions">
+        <button type="submit">{t(locale, 'pj.filter.submit')}</button>
+        {n > 0 && (
+          <>
+            <span class="muted">{t(locale, 'pj.filter.active').replace('{n}', String(n))}</span>
+            <a href="/jobs">{t(locale, 'pj.filter.reset')}</a>
+          </>
+        )}
+      </div>
+    </form>
+  );
+};
+
+export interface PublicJobListProps {
+  locale: Locale;
+  filter: JobFilter;
+  rows: PublicJobListRow[];
+  page: number;
+  hasPrev: boolean;
+  hasNext: boolean;
+}
+
+export const PublicJobList = (p: PublicJobListProps) => (
+  <section class="wide">
+    <h1>{t(p.locale, 'pj.title')}</h1>
+    <p class="muted sub">{t(p.locale, 'pj.lead')}</p>
+    <FilterForm locale={p.locale} filter={p.filter} />
+    {p.rows.length === 0 ? (
+      <div class="box">
+        <p>{t(p.locale, p.page > 1 ? 'pj.empty_page' : 'pj.empty')}</p>
+        {p.page > 1 && <p><a href={jobsHref(p.filter)}>{t(p.locale, 'pj.first_page')}</a></p>}
+      </div>
+    ) : (
+      <ul class="list">{p.rows.map((r) => <PublicJobItem locale={p.locale} row={r} />)}</ul>
+    )}
+    {(p.hasPrev || p.hasNext) && (
+      <nav class="pager" aria-label={t(p.locale, 'pj.pager')}>
+        {p.hasPrev ? <a href={jobsHref(p.filter, p.page - 1)} rel="prev">{t(p.locale, 'pj.prev')}</a> : <span />}
+        <span class="muted">{t(p.locale, 'pj.page').replace('{n}', String(p.page))}</span>
+        {p.hasNext ? <a href={jobsHref(p.filter, p.page + 1)} rel="next">{t(p.locale, 'pj.next')}</a> : <span />}
+      </nav>
+    )}
+  </section>
+);
+
+// ── 상세
+
+export const PublicJobPage = ({ locale, job }: { locale: Locale; job: PublicJobDetail }) => {
+  const conditions: [string, string][] = [
+    ['job.f.salary', publicSalaryText(locale, job)],
+    ['job.f.work_hours', job.work_hours ?? ''],
+    ['job.f.report_line', choice(locale, 'job.report_line', job.report_line)],
+    ['job.f.chinese_level', choice(locale, 'job.chinese_level', job.chinese_level)],
+    ['job.f.location', choice(locale, 'job.location', job.location)],
+    ['job.f.role_category', choice(locale, 'job.role', job.role_category)],
+    ['job.f.industry', choice(locale, 'job.industry', job.industry)],
+    ['job.f.closes_at', closesText(locale, job.closes_at)],
+    ['pj.published', job.published_at ? fmtDate(job.published_at) : ''],
+  ];
+  return (
+    <section class="wide">
+      <p class="crumbs"><a href="/jobs">{t(locale, 'pj.title')}</a></p>
+      <h1 lang="ko">{job.title_ko || t(locale, 'job.untitled')}</h1>
+      <p class="sub"><CompanyName locale={locale} row={job} /></p>
+      {locale !== 'ko' && <p class="hint">{t(locale, 'pj.lang_note')}</p>}
+
+      <ul class="facts">
+        <li>
+          <span>{t(locale, 'job.f.salary')}</span>
+          <b>{publicSalaryText(locale, job)}</b>
+        </li>
+        <li>
+          <span>{t(locale, 'job.f.report_line')}</span>
+          <b>{choice(locale, 'job.report_line', job.report_line) || t(locale, 'job.none')}</b>
+          <small class="muted">{t(locale, 'pj.report_line_hint')}</small>
+        </li>
+        <li>
+          <span>{t(locale, 'job.f.chinese_level')}</span>
+          <b>{choice(locale, 'job.chinese_level', job.chinese_level) || t(locale, 'job.none')}</b>
+        </li>
+      </ul>
+
+      <div class="box">
+        <h2>{t(locale, 'job.form.conditions')}</h2>
+        <dl class="kv">
+          {conditions.map(([k, v]) => (<><dt>{t(locale, k)}</dt><dd>{v || <span class="muted">{t(locale, 'job.none')}</span>}</dd></>))}
+        </dl>
+      </div>
+
+      <div class="box">
+        <h2>{t(locale, 'pj.body')}</h2>
+        {job.body_ko?.trim() ? <div class="pre" lang="ko">{job.body_ko}</div> : <p class="muted">{t(locale, 'job.none')}</p>}
+        <p class="hint">{t(locale, 'pub.provided_note')}</p>
+      </div>
+
+      <div class="box">
+        <h2>{t(locale, 'pj.company')}</h2>
+        <dl class="kv">
+          <dt>{t(locale, 'pj.company_name')}</dt>
+          <dd><CompanyName locale={locale} row={job} />{job.company_name_zh && <span class="muted"> · {job.company_name_zh}</span>}</dd>
+          {job.entry_stage && (<><dt>{t(locale, 'co.f.entry_stage')}</dt><dd>{t(locale, `co.stage.${job.entry_stage}`)}</dd></>)}
+        </dl>
+        {job.company_id && <p><a href={`/companies/${job.company_id}`}>{t(locale, 'pj.company_page')}</a></p>}
+        <p class="hint">{t(locale, 'pub.provided_note')}</p>
+      </div>
+
+      <div class="box">
+        <h2>{t(locale, 'pj.contact')}</h2>
+        <p>{t(locale, 'pj.contact_note')}</p>
+        {job.contact_email
+          ? <p><a href={`mailto:${job.contact_email}`}>{job.contact_email}</a></p>
+          : <p class="muted">{t(locale, 'job.none')}</p>}
+        <p class="hint">{t(locale, 'pj.contact_who')}</p>
+      </div>
+
+      <p><a href="/jobs">{t(locale, 'pj.back')}</a></p>
+    </section>
+  );
+};

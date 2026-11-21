@@ -4,12 +4,13 @@ import { secureHeaders } from 'hono/secure-headers';
 import type { AppEnv, Env } from './env';
 import { loadUser, sameOrigin } from './lib/auth';
 import { detectLocale } from './lib/i18n';
-import { render, renderError } from './render';
+import { renderError } from './render';
 import { admin } from './routes/admin';
 import { auth } from './routes/auth';
 import { biz } from './routes/biz';
 import { companies } from './routes/companies';
-import { Home } from './views/pages';
+import { homePage, jobs } from './routes/jobs';
+import { pageCache } from './lib/page-cache';
 
 const app = new Hono<AppEnv>();
 
@@ -23,15 +24,17 @@ app.use('*', async (c, next) => {
   await next();
 });
 
-app.get('/', (c) => render(c, <Home locale={c.var.locale} />));
+// 홈·공고 화면은 로그인하지 않은 요청을 60초 캐시한다 (lib/page-cache.ts).
+app.get('/', pageCache, homePage);
 app.get('/api/health', (c) => c.json({ ok: true, env: c.env.APP_ENV }));
 app.route('/', auth);
 app.route('/biz', biz);
 app.route('/admin', admin);
 app.route('/companies', companies);
+app.route('/jobs', jobs);
 
 // 이후 라우트는 docs/TASKS.md 순서대로 src/routes/ 에 추가한다:
-//   jobs.tsx (공고) · apply.tsx (지원)
+//   apply.tsx (지원)
 
 app.notFound((c) => renderError(c, 404));
 app.onError((err, c) => {

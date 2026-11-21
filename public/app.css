@@ -81,3 +81,13 @@ fieldset{border:1px solid #e3e6ea;border-radius:8px;padding:4px 14px 10px;margin
 legend{font-size:14px;padding:0 6px}
 main:has(.cols3){max-width:1120px}
 @media (max-width:720px){.cols3,.grid2,.grid3{grid-template-columns:1fr}}
+.list li.job > a{font-size:17px}
+.facts-line{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:14px;margin-top:4px}
+.facts{list-style:none;padding:0;margin:0 0 16px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.facts li{background:#fff;border:1px solid #e3e6ea;border-radius:10px;padding:14px 16px}
+.facts li:first-child{border-color:#1d4ed8}
+.facts span{display:block;color:#5b6472;font-size:13px}
+.facts b{display:block;font-size:17px;line-height:1.4}
+.facts small{display:block;margin-top:2px}
+.pager{display:flex;justify-content:space-between;align-items:center;margin:16px 0}
+@media (max-width:720px){.facts{grid-template-columns:1fr}}

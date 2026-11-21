@@ -14,6 +14,7 @@
 | `src/db/sessions.ts` | auth_codes, sessions, admin_totp_pending |
 | `src/db/companies.ts` | companies, company_members, company_invites, verification_docs(행), agency_members |
 | `src/db/jobs.ts` | jobs |
+| `src/db/public-jobs.ts` | jobs + companies (공개 공고 목록·상세, 읽기만) |
 | `src/db/logs.ts` | access_log, email_log |
 | `src/db/admin.ts` | 관리자 첫 화면 개수 (companies·agencies·jobs·reports) |
 
@@ -54,10 +55,13 @@
 | `companies.registerCompany` · `acceptInvite` · `insertInviteWithinLimit` | `INSERT … SELECT ?,… WHERE …` 조건부 추가 | 문법은 된다. FROM 없는 SELECT 목록의 매개변수는 text 로 정해질 수 있어 숫자 컬럼에 `$n::integer` 가 필요할 수 있다 (확인 필요) |
 | `companies.insertInviteWithinLimit` | 유일 인덱스 위반 시 예외 | PostgreSQL 은 SQLSTATE 23505. 지금 호출부는 예외 종류를 보지 않고 "중복" 으로 안내하므로 그대로 된다 |
 | `companies.listCompaniesForAdmin`, `admin.adminCounts` | `COUNT(*)` 가 숫자로 옴 | bigint → 문자열로 올 수 있음. `COUNT(*)::int` 또는 변환 (확인 필요) |
+| `public-jobs.ts` (`LIST_COLS`) | `CASE WHEN j.company_name_public = 1` — INTEGER 0/1 | integer 로 두면 그대로. boolean 이면 `WHEN j.company_name_public` |
 | `companies.listPublicCompanies` | `ORDER BY name_ko` = 바이트 순서 | DB 콜레이션에 따라 한글 정렬이 달라질 수 있음 (`COLLATE "C"` 로 맞춤) |
 
 PostgreSQL 에서도 그대로 되는 것(표시하지 않음): `ON CONFLICT … DO UPDATE … excluded`, `EXISTS (…)` 가드, `UPDATE … WHERE … AND EXISTS`,
 `ORDER BY 식 = '값' DESC`(참/거짓 정렬), `CASE`, `LIMIT`, `rev = rev + 1`.
+`public-jobs.ts` 의 `LIMIT ? OFFSET ?`, `CASE WHEN … END`(ELSE 없으면 NULL)도 그대로 된다. 목록 정렬 `published_at DESC, id DESC` 의 id 는 TEXT 이므로
+PostgreSQL 콜레이션에 따라 같은 시각 안의 순서만 달라질 수 있다(페이지가 겹치지 않으려면 `COLLATE "C"` 권장, 확인 필요).
 지금 코드는 `datetime()`·`strftime`·`rowid`·`INSERT OR IGNORE/REPLACE`·`LIKE` 를 쓰지 않는다.
 
 ## 4. 이 계층으로 쉬워지지 않는 것

@@ -35,9 +35,11 @@ src/
     email.ts         Resend 발송 + email_log
     i18n.ts          언어 판별, 문구 조회
     jobs.ts          공고 폼 검사, 저장 시 상태 계산(planJobSave), 숫자 대조 — 순수 함수
+    public-jobs.ts   공개 공고 조건(isPubliclyVisible)·필터·페이지 — 순수 함수 (9절)
+    page-cache.ts    공개 화면 캐시 (비로그인만, 60초) (9절)
     localize/        현지화 엔진 층 (7절)
   db/                SQL 과 D1 호출은 여기에만 (T-05d). users · sessions(인증코드·세션·TOTP 대기) · companies(기업·담당자·초대·서류 행)
-                     · jobs · logs(access_log·email_log) · admin(개수). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
+                     · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
                      PostgreSQL 로 옮길 때 고칠 곳과 SQLite 전용 문법 목록은 docs/DB-PORTING.md
   locales/ko.ts zh.ts  화면 문구
   routes/            화면·API 라우트 (기능별 파일)
@@ -141,3 +143,27 @@ docs/                이 문서, API.md, TASKS.md
 - 1350 답변에 따라 바뀌는 것: 헤드헌터 공고, 이력서 중국어 요약, 통역 서비스, 한국법인 없는 본사의 검증 서류(营业执照).
 - 브랜드명: 화면의 `Recruit` 는 임시다 (`src/locales/` 의 `site.name`).
 - Cloudflare Turnstile(봇 방지): 중국 접속 테스트 뒤 결정. 지금은 발송 횟수 제한만 있다.
+
+## 9. 공개 공고 화면 (T-06)
+
+- **공개 조건 (한 곳):** `lib/public-jobs.isPubliclyVisible` 과 같은 뜻의 SQL `db/public-jobs.publicJobWhere` 만 쓴다 (목록·상세·홈 모두).
+  `status = 'published'` · 기업 `verify_status = 'verified'` · `agency_id IS NULL`(헤드헌터 공고는 T-15 전까지 노출 안 함) ·
+  `job_family = 'office'`(생산직은 `FLAG_PRODUCTION_JOBS` 가 켜졌을 때만) · `closes_at` 이 없거나 지금보다 뒤.
+  두 쪽이 어긋나지 않는지 `test/public-jobs.test.ts` 가 SQLite 메모리 DB 에서 모든 조합을 비교한다.
+  조건을 만족하지 않는 공고의 상세는 보통의 404 (있는지 알리지 않는다). 게재 판단 자체는 여전히 `publishBlocks` 만 한다.
+- **공개 컬럼만:** 공개 질의는 한국어 제목·본문, 구조 항목, 연락처, 기업명·진출 단계만 읽는다. 원문(`title_zh`·`source_zh`)·대조본·검토·차단 사유·엔진은 읽지 않는다.
+  `company_name_public = 0` 이면 기업 이름·id 를 SQL 에서부터 NULL 로 받아 "기업명 비공개" 로 표시하고 기업 페이지로 연결하지 않는다.
+- **언어:** 공고 글은 한국어로만 게재된다. 중국어 화면도 제목·본문은 한국어 그대로이고 화면 문구만 중국어다.
+- **연락:** 상세에는 기업이 입력한 연락처(mailto)와 "사이트 지원 기능은 준비 중, 기업에 직접 연락할 수 있음" 안내만 둔다. 지원 버튼은 T-08.
+- **캐시 (`lib/page-cache.ts`):** `/`, `/jobs`, `/jobs/:id` 의 **로그인 쿠키(sid)가 없는** GET 만 Workers Cache API(`caches.default`)에 **60초** 저장한다.
+  - 키 = 경로 + 이름순으로 정렬한 검색 조건 + 판별된 언어(`?lang=` → `lang` 쿠키 → Accept-Language). 같은 주소도 언어마다 따로 저장된다.
+  - 응답 머리글 `Cache-Control: public, max-age=60`, `Vary: Cookie, Accept-Language` (브라우저가 언어 쿠키·로그인 쿠키가 바뀐 뒤 저장해 둔 화면을 다시 쓰지 않게).
+    200 이고 Set-Cookie 가 없는 응답만 저장한다. 404·302 는 `private, no-store`.
+  - 로그인 쿠키가 있으면(만료된 쿠키라도) 캐시를 읽지도 쓰지도 않고 `private, no-store` (머리글에 계정 메뉴가 나오므로).
+  - 필터 폼은 빈 칸도 보내므로 `/jobs` 는 정규화 주소(`jobsHref`)가 아니면 302 로 보내 같은 조건이 한 캐시 항목을 쓰게 한다.
+  - **알려진 한계:** 마감·차단·게재 중단·기업 승인 취소된 공고도 **최대 60초** 캐시에서 보일 수 있다 (마감일이 지난 공고도 마찬가지).
+    그래서 TTL 을 짧게 둔다. 배포 직후에도 이전 화면이 최대 60초 보일 수 있다. Cache API 는 데이터센터별이라 지역마다 따로 채워진다.
+  - `X-Page-Cache: hit | miss | bypass` 머리글로 확인할 수 있다.
+- **페이지:** 20건씩, `published_at DESC, id DESC`. 전체 개수를 세지 않고 21건을 읽어 다음 페이지 여부만 안다. 100페이지(2,000건) 넘게는 줄인다.
+- **인덱스:** 기본 목록(생산직 플래그 꺼짐)은 기존 `idx_jobs_status(status, job_family, published_at)` 를 최신 순으로 읽고 LIMIT 에서 멈춘다
+  (같은 게재 시각 안에서만 id 로 정렬). 필터는 이 순서로 읽으며 조건을 확인한다. 공고가 많아지면 T-06c 에서 다시 본다.

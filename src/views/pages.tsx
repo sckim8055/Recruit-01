@@ -1,12 +1,23 @@
 import type { Locale } from '../env';
 import { t } from '../lib/i18n';
+import type { PublicJobListRow } from '../db/public-jobs';
+import { PublicJobItem } from './public-jobs';
 
-export const Home = ({ locale }: { locale: Locale }) => (
-  <section class="hero">
-    <h1>{t(locale, 'site.tagline')}</h1>
-    <p>{t(locale, 'home.lead')}</p>
-    <p class="muted">{t(locale, 'home.for_company')}</p>
-  </section>
+/** 홈: 짧은 소개 + 최신 공개 공고 몇 건(목록과 같은 줄 모양) + 전체 목록 링크. */
+export const Home = ({ locale, jobs }: { locale: Locale; jobs: PublicJobListRow[] }) => (
+  <>
+    <section class="hero">
+      <h1>{t(locale, 'site.tagline')}</h1>
+      <p>{t(locale, 'home.lead')}</p>
+      <p class="muted">{t(locale, 'home.for_company')}</p>
+    </section>
+    <section class="wide spaced">
+      <h2>{t(locale, 'home.latest')}</h2>
+      {jobs.length === 0 ? <p class="muted">{t(locale, 'home.no_jobs')}</p>
+        : <ul class="list">{jobs.map((r) => <PublicJobItem locale={locale} row={r} />)}</ul>}
+      <p><a href="/jobs">{t(locale, 'home.all_jobs')}</a></p>
+    </section>
+  </>
 );
 
 export const LoginEmail = ({ locale, error }: { locale: Locale; error?: string }) => (

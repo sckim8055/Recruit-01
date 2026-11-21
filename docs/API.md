@@ -6,7 +6,7 @@
 ## 공통
 | 경로 | 설명 | 권한 | 상태 |
 |---|---|---|---|
-| GET / | 홈 | 누구나 | ✅ |
+| GET / | 홈 (소개 + 최신 공개 공고 5건). 비로그인은 60초 캐시 | 누구나 | ✅ |
 | GET /login · POST /login/request · POST /login/verify | 이메일 인증코드 로그인·가입 | 누구나 | ✅ |
 | POST /logout | 로그아웃 | 로그인 | ✅ |
 | GET·POST /login/totp | 관리자 2단계 인증 (최초에는 인증 앱 등록) | 인증코드를 통과한 관리자 | ✅ |
@@ -20,8 +20,8 @@
 ## 구직자
 | 경로 | 설명 | 권한 | 작업 |
 |---|---|---|---|
-| GET /jobs | 공고 목록·필터 (published, office 만) | 누구나 | T-06 |
-| GET /jobs/:id | 공고 상세 (기업 연락처 표시) | 누구나 | T-06 |
+| GET /jobs | 공고 목록 (공개 조건: ARCHITECTURE 9장). 필터 `chinese_level` `role_category` `industry` `entry_stage` `salary_basis` `report_line` `location`, `page`(20건씩, 최대 100). 빈 칸·모르는 조건이 붙은 주소는 정규화 주소로 302. 비로그인은 60초 캐시 | 누구나 | ✅ |
+| GET /jobs/:id | 공고 상세 (구조 항목·기업·기업 연락처. 지원 버튼은 T-08). 보이지 않는 공고는 404. 비로그인은 60초 캐시 | 누구나 | ✅ |
 | GET /companies · /companies/:id | 기업 목록·기업 페이지 (검증된 기업만, "기업 제공 정보" 표시. 사업자번호·담당자·서류는 공개하지 않음) | 누구나 | ✅ |
 | GET /my/resumes · GET·POST /my/resumes/new · /my/resumes/:id | 이력서 목록·작성·수정 (여러 개) | seeker 본인 | T-07 |
 | POST /my/resumes/:id/default · /copy · /delete | 대표 지정·복사·삭제 | seeker 본인 | T-07 |
