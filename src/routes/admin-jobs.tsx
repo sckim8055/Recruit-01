@@ -12,6 +12,8 @@ import { render, renderError } from '../render';
 import { AdminJobDetail, AdminJobList, LocalizeTestPage } from '../views/admin-jobs';
 import { findCompanyBrief } from '../db/companies';
 import { blockJob, clearJobReview, listJobsForAdmin, loadJob, unblockJob, type JobRow } from '../db/jobs';
+import { listOptions } from '../db/options';
+import { buildOptionSet } from '../lib/options';
 
 export const adminJobs = new Hono<AppEnv>();
 
@@ -29,8 +31,8 @@ adminJobs.get('/jobs', async (c) => {
 const OK: Record<string, string> = { cleared: 'adm.job.ok.cleared', blocked: 'adm.job.ok.blocked', unblocked: 'adm.job.ok.unblocked' };
 
 async function detailPage(c: Context<AppEnv>, job: JobRow, msg: { ok?: string; error?: string }, status: 200 | 400 = 200) {
-  const co = await findCompanyBrief(c.env.DB, job.company_id);
-  return render(c, <AdminJobDetail locale={c.var.locale} job={job} company={co} ok={msg.ok} error={msg.error} />, 'adm.job.title', status);
+  const [co, optionRows] = await Promise.all([findCompanyBrief(c.env.DB, job.company_id), listOptions(c.env.DB)]);
+  return render(c, <AdminJobDetail locale={c.var.locale} job={job} company={co} options={buildOptionSet(optionRows)} ok={msg.ok} error={msg.error} />, 'adm.job.title', status);
 }
 
 adminJobs.get('/jobs/:id', async (c) => {

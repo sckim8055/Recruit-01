@@ -6,7 +6,8 @@
 // 여기는 "이미 게재된 공고 중 지금 구직자에게 보여도 되는가" 만 정한다.
 import type { Flags } from '../env';
 import { ENTRY_STAGES } from './company';
-import { CHINESE_LEVELS, INDUSTRIES, LOCATIONS, REPORT_LINES, ROLE_CATEGORIES, SALARY_BASES } from './jobs';
+import { CHINESE_LEVELS, REPORT_LINES, SALARY_BASES } from './jobs';
+import { activeCodes, type OptionSet } from './options';
 
 export const PUBLIC_PAGE_SIZE = 20;
 export const HOME_JOB_COUNT = 5;
@@ -41,19 +42,39 @@ export function isPubliclyVisible(j: VisibilityInput, ctx: { flags: Flags; now: 
 
 // ── 필터
 
-/** 필터 이름 → 고를 수 있는 값. 공고 작성 폼·기업 정보 폼의 목록을 그대로 쓴다 (새 목록을 만들지 않는다). */
-export const FILTER_CHOICES = {
+/** 필터 이름. 화면 순서도 이 순서다. */
+const FILTER_KEY_LIST = ['chinese_level', 'role_category', 'industry', 'entry_stage', 'salary_basis', 'report_line', 'location'] as const;
+export type FilterKey = (typeof FILTER_KEY_LIST)[number];
+export const FILTER_KEYS: FilterKey[] = [...FILTER_KEY_LIST];
+
+/** 고정 목록 필터 → 고를 수 있는 값. 공고 작성 폼·기업 정보 폼의 목록을 그대로 쓴다 (새 목록을 만들지 않는다). */
+export const FIXED_FILTER_CHOICES = {
   chinese_level: CHINESE_LEVELS,
-  role_category: ROLE_CATEGORIES,
-  industry: INDUSTRIES,
   entry_stage: ENTRY_STAGES,
   salary_basis: SALARY_BASES,
   report_line: REPORT_LINES,
-  location: LOCATIONS,
 } as const;
 
-export type FilterKey = keyof typeof FILTER_CHOICES;
-export const FILTER_KEYS = Object.keys(FILTER_CHOICES) as FilterKey[];
+/** 관리자가 관리하는 항목(job_options)을 쓰는 필터. 이름은 lib/options 의 종류 이름과 같다. */
+export const OPTION_FILTER_KEYS = ['role_category', 'industry', 'location'] as const;
+export const isOptionFilter = (k: FilterKey): k is (typeof OPTION_FILTER_KEYS)[number] => (OPTION_FILTER_KEYS as readonly string[]).includes(k);
+
+/** 필터 이름 → 고를 수 있는 값. parseJobFilter·canonicalJobsHref·검색 칸이 같은 것을 쓴다. */
+export type FilterChoices = Readonly<Record<FilterKey, readonly string[]>>;
+
+/**
+ * 검색에 쓸 수 있는 값: 고정 목록 + 직무·업계·근무지는 **사용 중인** 항목만 (T-06e).
+ * 사용 종료된 항목은 모르는 값과 똑같이 다룬다 — 걸러지지 않고, 정규화 302 에서 주소에서 빠진다. 그 값을 가진 공고는 목록에 그대로 보인다.
+ */
+export function filterChoices(set: OptionSet): FilterChoices {
+  return {
+    ...FIXED_FILTER_CHOICES,
+    role_category: activeCodes(set, 'role_category'),
+    industry: activeCodes(set, 'industry'),
+    location: activeCodes(set, 'location'),
+  };
+}
+
 export type JobFilter = Partial<Record<FilterKey, string>>;
 
 // ── 화면에 보일 필터 (T-06d, 관리자 설정 /admin/settings)
@@ -98,14 +119,15 @@ export const serializeEnabledFilters = (keys: readonly FilterKey[]): string => J
 /**
  * 주소의 검색 조건을 정규화한다. 모르는 이름·값, 빈 값, 같은 이름이 여러 번 온 경우의 뒤쪽 값은 버린다 (오류로 보지 않는다).
  * enabled 에 없는 필터(관리자가 숨긴 조건)도 모르는 이름과 똑같이 버린다 — 걸러지지도, 적용된 조건으로 세지도 않는다.
+ * choices(filterChoices)에 없는 값 — 사용 종료되었거나 없는 직무·업계·근무지 — 도 모르는 값과 똑같이 버린다.
  * 결과에는 목록에 있는 값만 들어간다 — DB 계층은 이 값을 바인딩 매개변수로만 쓴다.
  */
-export function parseJobFilter(q: Record<string, string | undefined>, enabled: readonly FilterKey[] = FILTER_KEYS): JobFilter {
+export function parseJobFilter(q: Record<string, string | undefined>, enabled: readonly FilterKey[], choices: FilterChoices): JobFilter {
   const out: JobFilter = {};
   for (const k of FILTER_KEYS) {
     if (!enabled.includes(k)) continue;
     const v = q[k];
-    if (typeof v === 'string' && (FILTER_CHOICES[k] as readonly string[]).includes(v)) out[k] = v;
+    if (typeof v === 'string' && choices[k].includes(v)) out[k] = v;
   }
   return out;
 }
@@ -152,10 +174,10 @@ const withLang = (href: string, lang: string | undefined): string => (lang ? `${
 /**
  * /jobs 의 정규화 주소. 필터 폼(GET)은 고르지 않은 칸도 빈 값으로 보내므로(`?chinese_level=&location=seoul…`),
  * 같은 조건이 여러 주소가 되어 캐시가 나뉜다. 요청 주소가 이것과 다르면 이 주소로 보낸다 (모르는 이름·값, page=1 도 지운다).
- * 숨긴 필터(enabled 에 없음)도 지운다 — 예전에 저장한 주소도 그대로 열리고, 캐시 키가 나뉘지 않는다.
+ * 숨긴 필터(enabled 에 없음)와 사용 종료된 항목 값도 지운다 — 예전에 저장한 주소도 그대로 열리고, 캐시 키가 나뉘지 않는다.
  */
-export const canonicalJobsHref = (q: Record<string, string | undefined>, enabled: readonly FilterKey[] = FILTER_KEYS): string =>
-  withLang(jobsHref(parseJobFilter(q, enabled), parsePage(q.page)), langOf(q));
+export const canonicalJobsHref = (q: Record<string, string | undefined>, enabled: readonly FilterKey[], choices: FilterChoices): string =>
+  withLang(jobsHref(parseJobFilter(q, enabled, choices), parsePage(q.page)), langOf(q));
 
 /** /jobs/:id 의 정규화 주소: 검색 조건은 lang 만 남긴다. */
 export const canonicalJobHref = (id: string, q: Record<string, string | undefined>): string => withLang(`/jobs/${id}`, langOf(q));

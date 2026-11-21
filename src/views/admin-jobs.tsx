@@ -4,6 +4,7 @@ import type { Locale } from '../env';
 import { fmtDate } from '../lib/company';
 import { t } from '../lib/i18n';
 import { JOB_LIMITS, type JobStatus } from '../lib/jobs';
+import type { OptionSet } from '../lib/options';
 import type { CompareResult } from '../routes/admin-jobs';
 import type { JobRow } from '../db/jobs';
 import { Flash } from './company';
@@ -50,6 +51,8 @@ export interface AdminJobDetailProps {
   locale: Locale;
   job: JobRow;
   company: { name_ko: string; verify_status: string } | null;
+  /** 직무·업계·근무지 이름 (사용 종료된 항목도 보인다). */
+  options: OptionSet;
   ok?: string;
   error?: string;
 }
@@ -96,7 +99,7 @@ export const AdminJobDetail = (p: AdminJobDetailProps) => {
       )}
       <div class="box">
         <h2>{t(l, 'job.form.conditions')}</h2>
-        <JobConditions locale={l} job={j} />
+        <JobConditions locale={l} job={j} options={p.options} />
       </div>
 
       <div class="box">

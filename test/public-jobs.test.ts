@@ -10,6 +10,12 @@ import {
 import { pageCacheKey, PRIVATE_CACHE_CONTROL, PUBLIC_CACHE_CONTROL } from '../src/lib/page-cache';
 import { closesText, publicSalaryText } from '../src/views/public-jobs';
 import { parseKstDate } from '../src/lib/jobs';
+import { buildOptionSet } from '../src/lib/options';
+import { filterChoices } from '../src/lib/public-jobs';
+import { optionRows } from './option-seed';
+
+// T-06e: 직무·업계·근무지 값은 DB(job_options) 에서 온다. 기본 행(0007 = test/option-seed.ts)으로 만든 검색 값 목록.
+const CHOICES = filterChoices(buildOptionSet(optionRows()));
 
 const flagsOff = { productionJobs: false, headhunterPosting: false, resumeZhSummary: false, paidLabel: false };
 const flagsProd = { ...flagsOff, productionJobs: true };
@@ -48,9 +54,9 @@ describe('parseJobFilter', () => {
     expect(parseJobFilter({
       chinese_level: 'business', role_category: 'sales', industry: 'nope', entry_stage: 'operating', salary_basis: '',
       report_line: 'cn_hq', location: "seoul' OR 1=1 --", page: '3', foo: 'bar',
-    })).toEqual({ chinese_level: 'business', role_category: 'sales', entry_stage: 'operating', report_line: 'cn_hq' });
+    }, FILTER_KEYS, CHOICES)).toEqual({ chinese_level: 'business', role_category: 'sales', entry_stage: 'operating', report_line: 'cn_hq' });
   });
-  it('빈 조건', () => expect(parseJobFilter({})).toEqual({}));
+  it('빈 조건', () => expect(parseJobFilter({}, FILTER_KEYS, CHOICES)).toEqual({}));
   it('적용된 조건 개수', () => {
     expect(activeFilterCount({})).toBe(0);
     expect(activeFilterCount({ location: 'seoul', salary_basis: 'severance_included' })).toBe(2);
@@ -205,7 +211,7 @@ function fakeDb(o: { rows?: PublicJobListRow[]; detail?: PublicJobDetail | null;
         first: async () => (sql.includes('FROM sessions') ? o.session ?? null
           : sql.includes('FROM site_settings') ? (o.setting == null ? null : { value: o.setting })
           : o.detail ?? null),
-        all: async () => ({ results: o.rows ?? [] }),
+        all: async () => ({ results: sql.includes('FROM job_options') ? optionRows() : o.rows ?? [] }),
       };
       return stmt;
     },
@@ -279,12 +285,12 @@ describe('정규화 주소', async () => {
   const { canonicalJobsHref, canonicalJobHref } = await import('../src/lib/public-jobs');
   const { pathAndSearch } = await import('../src/render');
   it('폼이 보낸 빈 칸·모르는 이름·page=1 을 지우고 순서를 맞춘다', () => {
-    expect(canonicalJobsHref({ chinese_level: '', location: 'seoul', report_line: 'cn_hq', page: '1', x: 'y' }))
+    expect(canonicalJobsHref({ chinese_level: '', location: 'seoul', report_line: 'cn_hq', page: '1', x: 'y' }, FILTER_KEYS, CHOICES))
       .toBe('/jobs?report_line=cn_hq&location=seoul');
-    expect(canonicalJobsHref({ page: '0' })).toBe('/jobs');
-    expect(canonicalJobsHref({ page: '500' })).toBe(`/jobs?page=${MAX_PAGE}`);
-    expect(canonicalJobsHref({ location: 'seoul', lang: 'zh' })).toBe('/jobs?location=seoul&lang=zh');
-    expect(canonicalJobsHref({ lang: 'fr' })).toBe('/jobs');
+    expect(canonicalJobsHref({ page: '0' }, FILTER_KEYS, CHOICES)).toBe('/jobs');
+    expect(canonicalJobsHref({ page: '500' }, FILTER_KEYS, CHOICES)).toBe(`/jobs?page=${MAX_PAGE}`);
+    expect(canonicalJobsHref({ location: 'seoul', lang: 'zh' }, FILTER_KEYS, CHOICES)).toBe('/jobs?location=seoul&lang=zh');
+    expect(canonicalJobsHref({ lang: 'fr' }, FILTER_KEYS, CHOICES)).toBe('/jobs');
   });
   it('상세는 lang 만 남긴다', () => {
     expect(canonicalJobHref('abc', { t: '1' })).toBe('/jobs/abc');
@@ -294,20 +300,20 @@ describe('정규화 주소', async () => {
     expect(pathAndSearch('http://x.test/jobs?location=seoul&lang=zh')).toBe('/jobs?location=seoul');
     expect(pathAndSearch('http://x.test/jobs?lang=zh')).toBe('/jobs');
   });
-  it('정규화되지 않은 /jobs 주소는 302 (설정 한 행만 읽고 공고는 읽지 않는다)', async () => {
+  it('정규화되지 않은 /jobs 주소는 302 (설정 한 행 + 선택 항목 목록만 읽고 공고는 읽지 않는다)', async () => {
     const read: string[] = [];
     const db = {
       prepare(sql: string) {
         read.push(sql);
-        if (!sql.includes('FROM site_settings')) throw new Error('공고를 읽으면 안 된다');
-        const stmt = { bind: () => stmt, first: async () => null };
+        if (!sql.includes('FROM site_settings') && !sql.includes('FROM job_options')) throw new Error('공고를 읽으면 안 된다');
+        const stmt = { bind: () => stmt, first: async () => null, all: async () => ({ results: optionRows() }) };
         return stmt;
       },
     };
     const res = await get('/jobs?chinese_level=&location=seoul', db);
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/jobs?location=seoul');
-    expect(read).toHaveLength(1);
+    expect(read).toHaveLength(2);
   });
 });
 
@@ -358,15 +364,15 @@ describe('관리자 설정 폼 값 (readEnabledFiltersForm)', () => {
 describe('숨긴 필터는 모르는 조건과 같다', () => {
   const enabled: FilterKey[] = ['chinese_level', 'location'];
   it('parseJobFilter: 숨긴 필터는 걸러지지 않고 개수에도 들지 않는다', () => {
-    const f = parseJobFilter({ chinese_level: 'business', industry: 'trade', location: 'seoul', report_line: 'cn_hq' }, enabled);
+    const f = parseJobFilter({ chinese_level: 'business', industry: 'trade', location: 'seoul', report_line: 'cn_hq' }, enabled, CHOICES);
     expect(f).toEqual({ chinese_level: 'business', location: 'seoul' });
     expect(activeFilterCount(f)).toBe(2);
-    expect(parseJobFilter({ industry: 'trade' }, [])).toEqual({});
+    expect(parseJobFilter({ industry: 'trade' }, [], CHOICES)).toEqual({});
   });
   it('canonicalJobsHref: 숨긴 필터를 지운다', () => {
-    expect(canonicalJobsHref({ industry: 'trade', location: 'seoul', page: '2', lang: 'zh' }, enabled)).toBe('/jobs?location=seoul&page=2&lang=zh');
-    expect(canonicalJobsHref({ industry: 'trade' }, [])).toBe('/jobs');
-    expect(canonicalJobsHref({ industry: 'trade' }, ['industry'])).toBe('/jobs?industry=trade');
+    expect(canonicalJobsHref({ industry: 'trade', location: 'seoul', page: '2', lang: 'zh' }, enabled, CHOICES)).toBe('/jobs?location=seoul&page=2&lang=zh');
+    expect(canonicalJobsHref({ industry: 'trade' }, [], CHOICES)).toBe('/jobs');
+    expect(canonicalJobsHref({ industry: 'trade' }, ['industry'], CHOICES)).toBe('/jobs?industry=trade');
   });
 });
 
@@ -404,7 +410,7 @@ describe('/jobs 와 보일 필터 설정', () => {
         const stmt = {
           bind: (...b: unknown[]) => { seen.push({ sql, binds: b }); return stmt; },
           first: async () => (sql.includes('FROM site_settings') ? { value: '["industry"]' } : null),
-          all: async () => ({ results: [listRow] }),
+          all: async () => ({ results: sql.includes('FROM job_options') ? optionRows() : [listRow] }),
         };
         return stmt;
       },

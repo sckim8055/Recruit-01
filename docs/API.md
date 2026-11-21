@@ -20,7 +20,7 @@
 ## 구직자
 | 경로 | 설명 | 권한 | 작업 |
 |---|---|---|---|
-| GET /jobs | 공고 목록 (공개 조건: ARCHITECTURE 9장). 필터 `chinese_level` `role_category` `industry` `entry_stage` `salary_basis` `report_line` `location` 중 관리자가 보이게 한 것만(기본: `chinese_level` `report_line` `location`, `/admin/settings`), `page`(20건씩, 최대 100). 빈 칸·모르는 조건·숨긴 조건이 붙은 주소는 정규화 주소로 302. 비로그인은 60초 캐시 | 누구나 | ✅ |
+| GET /jobs | 공고 목록 (공개 조건: ARCHITECTURE 9장). 필터 `chinese_level` `role_category` `industry` `entry_stage` `salary_basis` `report_line` `location` 중 관리자가 보이게 한 것만(기본: `chinese_level` `report_line` `location`, `/admin/settings`), `page`(20건씩, 최대 100). 직무·업계·근무지 값은 사용 중인 항목(`job_options`, `/admin/options`)만 받는다. 빈 칸·모르는 조건·숨긴 조건·사용 종료된 항목 값이 붙은 주소는 정규화 주소로 302. 비로그인은 60초 캐시 | 누구나 | ✅ |
 | GET /jobs/:id | 공고 상세 (구조 항목·기업·기업 연락처. 지원 버튼은 T-08). 보이지 않는 공고는 404. 비로그인은 60초 캐시 | 누구나 | ✅ |
 | GET /companies · /companies/:id | 기업 목록·기업 페이지 (검증된 기업만, "기업 제공 정보" 표시. 사업자번호·담당자·서류는 공개하지 않음) | 누구나 | ✅ |
 | GET /my/resumes · GET·POST /my/resumes/new · /my/resumes/:id | 이력서 목록·작성·수정 (여러 개) | seeker 본인 | T-07 |
@@ -65,6 +65,10 @@
 | POST /admin/jobs/:id/clear-review · /block · /unblock | 검토 통과(본 rev 일 때만) · 차단(사유 필수) · 차단 해제(→ 미게재). 내용 수정·게재는 없다 | ✅ |
 | GET·POST /admin/localize-test | 현지화 엔진 비교 (같은 글을 엔진별로, 초안·대조본·시간·오류). 저장하지 않음 | ✅ |
 | GET·POST /admin/settings | 사이트 설정: `/jobs` 검색 칸에 보일 필터 체크박스(`filters`, 여러 개). `FILTER_KEYS` 밖의 값은 버림, 모두 끄면 빈 목록 저장(`site_settings.public_job_filters`). 저장 후 `?ok=saved` 로 302. 비로그인 화면 반영은 최대 60초 | ✅ |
+| GET /admin/options | 직무·업계·근무지 항목 관리: 종류별 표(코드·한국어·중국어 이름·순서·상태·쓰는 공고 수), 줄마다 이름·순서 수정과 사용 종료/다시 사용, 종류마다 추가 폼. 삭제 없음 | ✅ |
+| POST /admin/options/:kind/add | 항목 추가 (`code`·`label_ko`·`label_zh`·`sort`). code 형식 `[a-z][a-z0-9_]{1,29}`, 같은 종류 안에서 중복 금지(사용 종료 포함). 오류는 400 + 안내 | ✅ |
+| POST /admin/options/:kind/:code/edit | 이름·순서 수정 (code·종류는 바꿀 수 없음). 없는 항목은 404 | ✅ |
+| POST /admin/options/:kind/:code/retire · /restore | 사용 종료 · 다시 사용. 종류의 마지막 사용 중 항목은 사용 종료 거부(400). 비로그인 화면 반영은 최대 60초 | ✅ |
 | GET /admin/applications/:id?reason= | 사유 입력 후 지원서 열람 (access_log) | T-09 |
 | GET /admin/access-log | 열람 기록 | T-09 |
 

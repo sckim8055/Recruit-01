@@ -4,9 +4,11 @@
 import { Hono, type Context } from 'hono';
 import { flagsOf, now, type AppEnv } from '../env';
 import { findPublicJob, listPublicJobs } from '../db/public-jobs';
+import { listOptions } from '../db/options';
 import { getSetting } from '../db/settings';
+import { buildOptionSet } from '../lib/options';
 import {
-  canonicalJobHref, canonicalJobsHref, HOME_JOB_COUNT, isJobId, pageOf, pageQuery, parseEnabledFilters, parseJobFilter, parsePage,
+  canonicalJobHref, canonicalJobsHref, filterChoices, HOME_JOB_COUNT, isJobId, pageOf, pageQuery, parseEnabledFilters, parseJobFilter, parsePage,
   PUBLIC_FILTERS_SETTING,
 } from '../lib/public-jobs';
 import { pageCache } from '../lib/page-cache';
@@ -17,9 +19,13 @@ import { PublicJobList, PublicJobPage } from '../views/public-jobs';
 export const jobs = new Hono<AppEnv>();
 
 /** 홈 (index.tsx 에서 '/' 에 붙인다). */
+// 직무·업계·근무지 이름(job_options, T-06e)은 캐시에 없는 요청마다 listOptions 한 번으로 읽는다 (약 50행). 따로 캐시하지 않는다 (메모리 전역 없음).
 export async function homePage(c: Context<AppEnv>) {
-  const rows = await listPublicJobs(c.env.DB, { flags: flagsOf(c.env), now: now(), filter: {}, limit: HOME_JOB_COUNT, offset: 0 });
-  return render(c, <Home locale={c.var.locale} jobs={rows} />);
+  const [rows, optionRows] = await Promise.all([
+    listPublicJobs(c.env.DB, { flags: flagsOf(c.env), now: now(), filter: {}, limit: HOME_JOB_COUNT, offset: 0 }),
+    listOptions(c.env.DB),
+  ]);
+  return render(c, <Home locale={c.var.locale} jobs={rows} options={buildOptionSet(optionRows)} />);
 }
 
 /** 요청 주소(경로 + 검색 조건)가 정규화 주소와 다른가. */
@@ -29,18 +35,22 @@ const differs = (c: Context<AppEnv>, href: string): boolean => {
 };
 
 jobs.get('/', pageCache, async (c) => {
-  // 보일 필터(관리자 설정, T-06d). 캐시에 없는 요청마다 기본 키 한 행을 읽는다 (캐시 hit 이면 여기까지 오지 않는다).
-  // 따로 캐시하지 않는다 — 설정을 바꾸면 비로그인 화면에는 page-cache TTL(60초) 안에 반영된다.
-  const enabled = parseEnabledFilters(await getSetting(c.env.DB, PUBLIC_FILTERS_SETTING));
-  // 빈 칸·모르는 조건·숨긴 조건·page=1 이 붙은 주소는 정규화 주소로 보낸다 (공고는 읽지 않는다. 302 는 캐시하지 않는다).
-  const canonical = canonicalJobsHref(c.req.query(), enabled);
+  // 보일 필터(관리자 설정, T-06d)와 직무·업계·근무지 항목(T-06e). 캐시에 없는 요청마다 이 두 작은 읽기만 한 뒤 정규화를 판단한다
+  // (설정 기본 키 한 행 + job_options 전체 약 50행, 동시에). 캐시 hit 이면 여기까지 오지 않는다.
+  // 따로 캐시하지 않는다 — 바꾸면 비로그인 화면에는 page-cache TTL(60초) 안에 반영된다.
+  const [setting, optionRows] = await Promise.all([getSetting(c.env.DB, PUBLIC_FILTERS_SETTING), listOptions(c.env.DB)]);
+  const enabled = parseEnabledFilters(setting);
+  const options = buildOptionSet(optionRows);
+  const choices = filterChoices(options);
+  // 빈 칸·모르는 조건·숨긴 조건·사용 종료된 항목·page=1 이 붙은 주소는 정규화 주소로 보낸다 (공고는 읽지 않는다. 302 는 캐시하지 않는다).
+  const canonical = canonicalJobsHref(c.req.query(), enabled, choices);
   if (differs(c, canonical)) return c.redirect(canonical, 302);
-  const filter = parseJobFilter(c.req.query(), enabled);
+  const filter = parseJobFilter(c.req.query(), enabled, choices);
   const page = parsePage(c.req.query('page'));
   const { limit, offset } = pageQuery(page);
   const rows = await listPublicJobs(c.env.DB, { flags: flagsOf(c.env), now: now(), filter, limit, offset });
   const pg = pageOf(rows, page);
-  return render(c, <PublicJobList locale={c.var.locale} filter={filter} enabled={enabled} {...pg} />, 'pj.title');
+  return render(c, <PublicJobList locale={c.var.locale} filter={filter} enabled={enabled} choices={choices} options={options} {...pg} />, 'pj.title');
 });
 
 jobs.get('/:id', pageCache, async (c) => {
@@ -48,7 +58,7 @@ jobs.get('/:id', pageCache, async (c) => {
   if (!isJobId(id)) return renderError(c, 404);
   const canonical = canonicalJobHref(id, c.req.query());
   if (differs(c, canonical)) return c.redirect(canonical, 302);
-  const job = await findPublicJob(c.env.DB, { id, flags: flagsOf(c.env), now: now() });
+  const [job, optionRows] = await Promise.all([findPublicJob(c.env.DB, { id, flags: flagsOf(c.env), now: now() }), listOptions(c.env.DB)]);
   if (!job) return renderError(c, 404);
-  return render(c, <PublicJobPage locale={c.var.locale} job={job} />, { text: job.title_ko ?? '' });
+  return render(c, <PublicJobPage locale={c.var.locale} job={job} options={buildOptionSet(optionRows)} />, { text: job.title_ko ?? '' });
 });

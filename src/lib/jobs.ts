@@ -6,23 +6,14 @@
 // - 연봉·근무시간·근무지 등은 선택형·숫자 입력이며 번역하지 않는다. 공개 화면은 이 값을 그대로 쓴다.
 // - 한국어 초안(title_ko·body_ko)을 기업이 직접 고치면 대조본(back_zh)은 지운다 (고친 글의 대조본이 아니므로).
 import type { Flags } from '../env';
+import type { OptionKind } from './options';
 import { contactEmailProblem, techLeakFlag, type PublishInput } from './rules';
 
 export const JOB_LIMITS = { title: 120, body: 8000, reason: 500 } as const;
 export const SALARY_MAX = 100_000; // 만원/년 (10억)
 
-export const ROLE_CATEGORIES = [
-  'sales', 'marketing', 'finance', 'hr', 'admin', 'it', 'engineering', 'operations', 'logistics', 'purchasing',
-  'legal', 'customer', 'translation', 'management', 'other',
-] as const;
-export const INDUSTRIES = [
-  'electronics', 'battery', 'auto', 'machinery', 'chemicals', 'ecommerce', 'retail', 'logistics', 'trade',
-  'finance', 'it_software', 'gaming', 'consumer', 'food', 'travel', 'other',
-] as const;
-export const LOCATIONS = [
-  'seoul', 'gyeonggi', 'incheon', 'busan', 'daegu', 'daejeon', 'gwangju', 'ulsan', 'sejong', 'gangwon',
-  'chungbuk', 'chungnam', 'jeonbuk', 'jeonnam', 'gyeongbuk', 'gyeongnam', 'jeju', 'remote',
-] as const;
+// 직무(role_category)·업계(industry)·근무지(location)의 선택 항목은 DB(job_options)에 있다 (T-06e, lib/options.ts).
+// 아래는 관리하지 않는 고정 목록이다.
 export const SALARY_BASES = ['severance_excluded', 'severance_included'] as const;
 export const REPORT_LINES = ['kr_head', 'cn_hq'] as const;
 export const CHINESE_LEVELS = ['none', 'basic', 'business', 'native'] as const;
@@ -121,8 +112,13 @@ export type JobCheck = { ok: true; value: JobFields } | { ok: false; errors: Job
  * - 생산직(production)은 FLAG_PRODUCTION_JOBS 가 켜져 있을 때만 받는다 (꺼져 있으면 폼에 선택 칸도 없다)
  * - 연봉: 정수(만원/년). 최대만 적을 수는 없다. 연봉을 적으면 퇴직금 포함/별도가 필수
  * - 연락처: 비워 둘 수 있지만(게재 때 막힘), 적으면 형식이 맞고 운영자 도메인이 아니어야 한다
+ * - 직무·업계·근무지: 비워 둘 수 있다. 적으면 ctx.options 의 목록 안의 값이어야 한다. 호출부는 화면에 보인 목록과 같은 것
+ *   (lib/options.selectableAll: 사용 중인 항목 + 편집하는 공고에 지금 저장된 값)을 넘긴다 — 사용 종료된 값은 원래 그 값일 때만 통과한다
  */
-export function validateJob(i: JobInput, ctx: { flags: Flags; operatorDomains: string[]; now: number }): JobCheck {
+export function validateJob(
+  i: JobInput,
+  ctx: { flags: Flags; operatorDomains: string[]; now: number; options: Readonly<Record<OptionKind, readonly string[]>> },
+): JobCheck {
   const errors: JobFieldError[] = [];
   const err = (field: JobFieldError['field'], code: JobFieldError['code']) => errors.push({ field, code });
 
@@ -143,9 +139,9 @@ export function validateJob(i: JobInput, ctx: { flags: Flags; operatorDomains: s
     if (!isOneOf(list, v)) { err(field, 'invalid'); return null; }
     return v;
   };
-  const role_category = choice('role_category', ROLE_CATEGORIES);
-  const industry = choice('industry', INDUSTRIES);
-  const location = choice('location', LOCATIONS);
+  const role_category = choice('role_category', ctx.options.role_category);
+  const industry = choice('industry', ctx.options.industry);
+  const location = choice('location', ctx.options.location);
   const salary_basis = choice('salary_basis', SALARY_BASES);
   const report_line = choice('report_line', REPORT_LINES);
   const chinese_level = choice('chinese_level', CHINESE_LEVELS);

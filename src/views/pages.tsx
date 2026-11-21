@@ -1,10 +1,11 @@
 import type { Locale } from '../env';
 import { t } from '../lib/i18n';
+import type { OptionSet } from '../lib/options';
 import type { PublicJobListRow } from '../db/public-jobs';
 import { PublicJobItem } from './public-jobs';
 
 /** 홈: 짧은 소개 + 최신 공개 공고 몇 건(목록과 같은 줄 모양) + 전체 목록 링크. */
-export const Home = ({ locale, jobs }: { locale: Locale; jobs: PublicJobListRow[] }) => (
+export const Home = ({ locale, jobs, options }: { locale: Locale; jobs: PublicJobListRow[]; options: OptionSet }) => (
   <>
     <section class="hero">
       <h1>{t(locale, 'site.tagline')}</h1>
@@ -14,7 +15,7 @@ export const Home = ({ locale, jobs }: { locale: Locale; jobs: PublicJobListRow[
     <section class="wide spaced">
       <h2>{t(locale, 'home.latest')}</h2>
       {jobs.length === 0 ? <p class="muted">{t(locale, 'home.no_jobs')}</p>
-        : <ul class="list">{jobs.map((r) => <PublicJobItem locale={locale} row={r} />)}</ul>}
+        : <ul class="list">{jobs.map((r) => <PublicJobItem locale={locale} row={r} options={options} />)}</ul>}
       <p><a href="/jobs">{t(locale, 'home.all_jobs')}</a></p>
     </section>
   </>
@@ -117,7 +118,7 @@ export const AdminHome = ({ locale, counts }: { locale: Locale; counts: { compan
       <li><a class="stat" href="/admin/jobs"><b>{counts.jobReviews}</b><span>{t(locale, 'admin.count.job_reviews')}</span></a></li>
       <li><b>{counts.reports}</b><span>{t(locale, 'admin.count.reports')}</span></li>
     </ul>
-    <p><a href="/admin/settings">{t(locale, 'adm.set.title')}</a></p>
+    <p><a href="/admin/settings">{t(locale, 'adm.set.title')}</a> · <a href="/admin/options">{t(locale, 'adm.opt.title')}</a></p>
     <p class="muted">{t(locale, 'admin.note')}</p>
   </section>
 );

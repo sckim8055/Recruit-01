@@ -1,0 +1,71 @@
+-- 직무·업계·근무지 선택 항목 (T-06e). 관리자가 /admin/options 에서 추가·이름 변경·순서 변경·사용 종료·다시 사용을 한다.
+-- 삭제하지 않는다 — 이미 쓰인 항목은 사용 종료(active = 0)만 한다. 사용 종료된 항목은 새 공고 작성 폼과 공개 검색 칸에서만 빠지고,
+-- 그 값을 가진 공고는 예전처럼 이름이 그대로 보인다.
+-- jobs.role_category · industry · location 은 이 표의 code 를 담는 평범한 TEXT 다 (외래키 없음, 기존 공고 데이터는 바꾸지 않는다).
+-- kind·code 는 한 번 만들면 바꾸지 않는다 (공고에 저장된 값이므로). 이름(label_ko·label_zh)·순서(sort)·사용 여부(active)만 바뀐다.
+-- 아래 기본 행은 이 작업 전 코드의 상수(ROLE_CATEGORIES·INDUSTRIES·LOCATIONS)와 화면 문구(job.role.* 등)를 그대로 옮긴 것이다.
+-- 개인정보를 넣지 않는다.
+CREATE TABLE job_options (
+  kind       TEXT NOT NULL CHECK (kind IN ('role_category','industry','location')),
+  code       TEXT NOT NULL,
+  label_ko   TEXT NOT NULL,
+  label_zh   TEXT NOT NULL,
+  sort       INTEGER NOT NULL,
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT REFERENCES users(id),
+  PRIMARY KEY (kind, code)
+);
+
+-- [sqlite] strftime('%s','now') = 지금 시각(에포크 초, 문자열 → INTEGER 컬럼이라 정수로 저장된다). PostgreSQL 은 extract(epoch from now())::bigint.
+INSERT INTO job_options (kind, code, label_ko, label_zh, sort, active, created_at, updated_at, updated_by) VALUES
+  ('role_category', 'sales', '영업', '销售', 10, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('role_category', 'marketing', '마케팅', '市场营销', 20, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('role_category', 'finance', '재무·회계', '财务与会计', 30, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('role_category', 'hr', '인사', '人力资源', 40, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('role_category', 'admin', '총무·사무', '行政与文员', 50, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('role_category', 'it', 'IT·개발', 'IT与开发', 60, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('role_category', 'engineering', '기술·엔지니어링', '技术与工程', 70, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('role_category', 'operations', '운영', '运营', 80, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('role_category', 'logistics', '물류', '物流', 90, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('role_category', 'purchasing', '구매', '采购', 100, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('role_category', 'legal', '법무', '法务', 110, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('role_category', 'customer', '고객 응대', '客户服务', 120, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('role_category', 'translation', '통번역', '翻译', 130, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('role_category', 'management', '경영·관리', '经营管理', 140, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('role_category', 'other', '기타', '其他', 150, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'electronics', '전자', '电子', 10, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'battery', '배터리', '电池', 20, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'auto', '자동차', '汽车', 30, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'machinery', '기계', '机械', 40, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'chemicals', '화학', '化工', 50, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'ecommerce', '전자상거래', '电子商务', 60, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'retail', '유통', '零售', 70, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'logistics', '물류', '物流', 80, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'trade', '무역', '贸易', 90, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'finance', '금융', '金融', 100, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'it_software', 'IT·소프트웨어', 'IT与软件', 110, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'gaming', '게임', '游戏', 120, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'consumer', '소비재', '消费品', 130, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'food', '식품', '食品', 140, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'travel', '여행·관광', '旅游', 150, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('industry', 'other', '기타', '其他', 160, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'seoul', '서울', '首尔', 10, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'gyeonggi', '경기', '京畿道', 20, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'incheon', '인천', '仁川', 30, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'busan', '부산', '釜山', 40, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'daegu', '대구', '大邱', 50, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'daejeon', '대전', '大田', 60, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'gwangju', '광주', '光州', 70, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'ulsan', '울산', '蔚山', 80, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'sejong', '세종', '世宗', 90, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'gangwon', '강원', '江原道', 100, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'chungbuk', '충북', '忠清北道', 110, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'chungnam', '충남', '忠清南道', 120, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'jeonbuk', '전북', '全罗北道', 130, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'jeonnam', '전남', '全罗南道', 140, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'gyeongbuk', '경북', '庆尚北道', 150, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'gyeongnam', '경남', '庆尚南道', 160, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'jeju', '제주', '济州', 170, 1, strftime('%s','now'), strftime('%s','now'), NULL),
+  ('location', 'remote', '재택', '远程办公', 180, 1, strftime('%s','now'), strftime('%s','now'), NULL);

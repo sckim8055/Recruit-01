@@ -91,3 +91,13 @@ main:has(.cols3){max-width:1120px}
 .facts small{display:block;margin-top:2px}
 .pager{display:flex;justify-content:space-between;align-items:center;margin:16px 0}
 @media (max-width:720px){.facts{grid-template-columns:1fr}}
+.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0 12px}
+.opt-table input{margin:0;padding:6px 8px;font-size:14px;min-width:0}
+.opt-table input.opt-sort{max-width:72px}
+.opt-table tr.retired td{color:#5b6472}
+.opt-table .badge{white-space:nowrap}
+.opt-table td.opt-actions{white-space:nowrap}
+.opt-table td.opt-actions form + form{margin-left:10px}
+.opt-add{margin-top:16px;padding-top:12px;border-top:1px solid #e3e6ea}
+.opt-add h3{font-size:14px;margin:0 0 4px}
+ul.hint{padding-left:20px;margin:8px 0}

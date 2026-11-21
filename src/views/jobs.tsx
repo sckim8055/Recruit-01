@@ -4,9 +4,10 @@ import type { Locale } from '../env';
 import { fmtDate } from '../lib/company';
 import { t } from '../lib/i18n';
 import {
-  CHINESE_LEVELS, INDUSTRIES, JOB_LIMITS, LOCATIONS, REPORT_LINES, ROLE_CATEGORIES, SALARY_BASES, SALARY_MAX,
+  CHINESE_LEVELS, JOB_LIMITS, REPORT_LINES, SALARY_BASES, SALARY_MAX,
   type JobFieldError, type JobFormField, type JobInput, type JobStatus, type LocalizeStatus,
 } from '../lib/jobs';
+import { isActiveCode, labelOf, type OptionKind, type OptionSet } from '../lib/options';
 import type { PublishBlock } from '../lib/rules';
 import type { JobRow } from '../db/jobs';
 import { Flash } from './company';
@@ -44,12 +45,15 @@ export function salaryText(locale: Locale, j: Pick<JobRow, 'salary_min' | 'salar
   return `${range} ${t(locale, 'job.unit.salary')}${basis}`;
 }
 
-/** 구조 항목. 공개 화면(T-06)에 표시될 연봉·근무시간은 이 값 그대로다 (번역하지 않는다). */
-export const JobConditions = ({ locale, job }: { locale: Locale; job: JobRow }) => {
+/**
+ * 구조 항목. 공개 화면(T-06)에 표시될 연봉·근무시간은 이 값 그대로다 (번역하지 않는다).
+ * 직무·업계·근무지 이름은 job_options 에서 (사용 종료된 항목도 이름이 보인다, lib/options.labelOf).
+ */
+export const JobConditions = ({ locale, job, options }: { locale: Locale; job: JobRow; options: OptionSet }) => {
   const rows: [string, string][] = [
-    ['job.f.role_category', choiceText(locale, 'job.role', job.role_category)],
-    ['job.f.industry', choiceText(locale, 'job.industry', job.industry)],
-    ['job.f.location', choiceText(locale, 'job.location', job.location)],
+    ['job.f.role_category', labelOf(options, 'role_category', job.role_category, locale)],
+    ['job.f.industry', labelOf(options, 'industry', job.industry, locale)],
+    ['job.f.location', labelOf(options, 'location', job.location, locale)],
     ['job.f.salary', salaryText(locale, job)],
     ['job.f.work_hours', job.work_hours ?? ''],
     ['job.f.report_line', choiceText(locale, 'job.report_line', job.report_line)],
@@ -115,6 +119,10 @@ export interface JobFormProps {
   input: JobInput;
   errors: JobFieldError[];
   productionJobs: boolean;
+  /** 직무·업계·근무지 항목 (이름). */
+  options: OptionSet;
+  /** 고를 수 있는 code (lib/options.selectableAll — 새 공고는 사용 중인 것만, 편집은 + 저장된 값). validateJob 도 같은 목록을 받는다. */
+  selectable: Record<OptionKind, string[]>;
   jobId?: string;
   rev?: number;
   error?: string;
@@ -126,6 +134,20 @@ const Select = ({ locale, name, list, prefix, value, required }: {
   <select name={name} required={required}>
     <option value="">{t(locale, 'common.choose')}</option>
     {list.map((v) => <option value={v} selected={value === v}>{t(locale, `${prefix}.${v}`)}</option>)}
+  </select>
+);
+
+/** 직무·업계·근무지 선택. 사용 종료된 항목(편집하는 공고에 저장된 값일 때만 목록에 있다)은 이름 뒤에 "(사용 종료)". */
+const OptionSelect = ({ locale, kind, options, codes, value }: {
+  locale: Locale; kind: OptionKind; options: OptionSet; codes: readonly string[]; value: string;
+}) => (
+  <select name={kind}>
+    <option value="">{t(locale, 'common.choose')}</option>
+    {codes.map((v) => (
+      <option value={v} selected={value === v}>
+        {labelOf(options, kind, v, locale)}{isActiveCode(options, kind, v) ? '' : t(locale, 'opt.retired_suffix')}
+      </option>
+    ))}
   </select>
 );
 
@@ -162,9 +184,9 @@ export const JobFormPage = (p: JobFormProps) => {
             </label>
           ) : <input type="hidden" name="job_family" value="office" />}
           <div class="grid2">
-            <label>{t(l, 'job.f.role_category')}<Select locale={l} name="role_category" list={ROLE_CATEGORIES} prefix="job.role" value={i.role_category} /></label>
-            <label>{t(l, 'job.f.industry')}<Select locale={l} name="industry" list={INDUSTRIES} prefix="job.industry" value={i.industry} /></label>
-            <label>{t(l, 'job.f.location')}<Select locale={l} name="location" list={LOCATIONS} prefix="job.location" value={i.location} /></label>
+            <label>{t(l, 'job.f.role_category')}<OptionSelect locale={l} kind="role_category" options={p.options} codes={p.selectable.role_category} value={i.role_category} /></label>
+            <label>{t(l, 'job.f.industry')}<OptionSelect locale={l} kind="industry" options={p.options} codes={p.selectable.industry} value={i.industry} /></label>
+            <label>{t(l, 'job.f.location')}<OptionSelect locale={l} kind="location" options={p.options} codes={p.selectable.location} value={i.location} /></label>
             <label>{t(l, 'job.f.chinese_level')}<Select locale={l} name="chinese_level" list={CHINESE_LEVELS} prefix="job.chinese_level" value={i.chinese_level} /></label>
             <label>{t(l, 'job.f.report_line')}<Select locale={l} name="report_line" list={REPORT_LINES} prefix="job.report_line" value={i.report_line} /></label>
             <label>{t(l, 'job.f.closes_at')}<input type="date" name="closes_at" value={i.closes_at} /></label>
@@ -202,6 +224,7 @@ export const JobFormPage = (p: JobFormProps) => {
 export interface JobReviewProps {
   locale: Locale;
   job: JobRow;
+  options: OptionSet;
   blocks: PublishBlock[];
   digits: { missing: string[]; extra: string[] };
   enginesAvailable: boolean;
@@ -326,7 +349,7 @@ export const JobReview = (p: JobReviewProps) => {
 
       <div class="box">
         <h2>{t(l, 'job.form.conditions')}</h2>
-        <JobConditions locale={l} job={j} />
+        <JobConditions locale={l} job={j} options={p.options} />
         <p class="hint">{t(l, 'job.conditions_note')}</p>
       </div>
     </section>

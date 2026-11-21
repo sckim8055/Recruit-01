@@ -36,10 +36,11 @@ src/
     i18n.ts          언어 판별, 문구 조회
     jobs.ts          공고 폼 검사, 저장 시 상태 계산(planJobSave), 숫자 대조 — 순수 함수
     public-jobs.ts   공개 공고 조건(isPubliclyVisible)·필터·페이지 — 순수 함수 (9절)
+    options.ts       직무·업계·근무지 선택 항목(이름 표시·고를 수 있는 값·관리자 입력 검사) — 순수 함수 (10절)
     page-cache.ts    공개 화면 캐시 (비로그인만, 60초) (9절)
     localize/        현지화 엔진 층 (7절)
   db/                SQL 과 D1 호출은 여기에만 (T-05d). users · sessions(인증코드·세션·TOTP 대기) · companies(기업·담당자·초대·서류 행)
-                     · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수) · settings(site_settings). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
+                     · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수) · settings(site_settings) · options(job_options). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
                      PostgreSQL 로 옮길 때 고칠 곳과 SQLite 전용 문법 목록은 docs/DB-PORTING.md
   locales/ko.ts zh.ts  화면 문구
   routes/            화면·API 라우트 (기능별 파일)
@@ -179,3 +180,22 @@ docs/                이 문서, API.md, TASKS.md
   - **반영 시간:** 설정을 바꿔도 비로그인 방문자에게는 이미 캐시된 화면이 **최대 60초**(page-cache TTL, 브라우저 `max-age=60` 도 같다) 보인다.
     그동안은 숨긴 필터가 붙은 예전 주소의 캐시된 화면(걸러진 목록·예전 검색 칸)도 그대로 보일 수 있다. 캐시를 지우지 않고 TTL 로 만료되기를 기다린다.
     로그인한 사용자(관리자 포함)는 캐시를 거치지 않으므로 바로 바뀐다.
+
+## 10. 직무·업계·근무지 항목 (T-06e)
+
+- **저장:** `job_options`(0007) — `(kind, code)` 기본 키, `kind` 는 `role_category`·`industry`·`location`, 이름 `label_ko`·`label_zh`, 순서 `sort`(작은 수가 먼저, 같으면 code), `active`(0/1), `updated_by`·`updated_at`.
+  0007 이 이전 코드의 상수·문구 49개를 넣었다. 이 표가 세 목록의 유일한 출처다 (코드 상수·`job.role.*` 등 문구는 없다).
+  `jobs.role_category`·`industry`·`location` 은 code 를 담는 평범한 TEXT 다 (외래키 없음).
+- **지우지 않는다.** 관리자는 추가·이름/순서 수정·사용 종료·다시 사용만 한다 (`/admin/options`). code·kind 는 만든 뒤 바꿀 수 없다.
+  종류마다 사용 중인 항목이 하나는 남아야 한다 (`lib/options.retireProblem` + `db/options.setOptionActive` 의 한 문장 가드).
+  공고 폼의 세 칸은 선택 사항이라(비우면 NULL) 목록이 비어도 저장은 되지만, 고를 것이 없는 칸이 되지 않게 막는다.
+- **사용 종료된 항목:** 새 공고 작성 폼과 공개 검색 칸에서만 빠진다. 그 값을 가진 공고는 목록·상세·홈·기업·관리자 화면에 이름이 그대로 보인다(`labelOf`).
+  기존 공고를 고칠 때는 저장된 값이 사용 종료여도 "(사용 종료)" 표시로 목록에 있고 그대로 저장된다(`selectableCodes`). 다른 사용 종료 값으로 바꾸는 요청은 `validateJob` 이 거부한다
+  (화면 목록과 서버 검사 목록이 같은 `selectableAll` 결과). 검색 주소의 사용 종료·없는 값은 모르는 값처럼 버려지고 정규화 302 에서 빠진다.
+- **이름 변경:** 이름은 공고에 복사하지 않으므로 고치면 기존 공고의 표시도 바뀐다. 관리자가 입력한 이름은 믿을 수 없는 글로 보고 JSX 로만 출력하며,
+  한 줄·40자·금지 표현(`rules.findBannedPhrases`) 검사를 한다.
+- **읽기:** 이름이 필요한 화면은 요청마다 `listOptions` 한 번(약 50행)으로 전체를 읽는다. 메모리 전역 캐시는 두지 않는다.
+  `/jobs` 는 설정 한 행과 항목 목록을 동시에 읽은 뒤 정규화 302 를 판단한다(공고는 읽지 않는다). 비로그인 캐시 hit 은 D1 을 읽지 않는다.
+  → 항목을 바꾸면 비로그인 방문자에게는 **최대 60초** 예전 화면이 보일 수 있다 (9절과 같은 TTL). 로그인한 사용자는 바로 바뀐다.
+- **사용 공고 수:** 관리자 화면의 숫자는 상태와 관계없이 그 code 를 가진 모든 공고 수다(`countOptionUsage`, 세 컬럼에 인덱스가 없어 jobs 전체를 읽는다. 관리자 화면에서만).
+- 고정 목록은 그대로 코드에 있다: 중국어 수준·진출 단계·퇴직금 기준·보고 라인 (값이 규칙·CHECK 제약과 묶여 있다).

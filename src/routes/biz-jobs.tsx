@@ -11,6 +11,7 @@ import {
   validateJob, type JobFieldError, type JobInput, type JobText,
 } from '../lib/jobs';
 import { availableEngines, localizeJob } from '../lib/localize';
+import { buildOptionSet, selectableAll, type OptionKind, type OptionSet } from '../lib/options';
 import { parseOperatorDomains, publishBlocks } from '../lib/rules';
 import { render, renderError } from '../render';
 import { JobFormPage, JobList, JobReview } from '../views/jobs';
@@ -20,6 +21,7 @@ import {
   approveJob, claimLocalize, closeJob, insertJob, jobFieldsOf, listCompanyJobs, loadJob, publishJob, saveKorean, saveLocalized,
   updateJobSource, type JobRow,
 } from '../db/jobs';
+import { listOptions } from '../db/options';
 
 export const bizJobs = new Hono<AppEnv>();
 
@@ -48,19 +50,23 @@ const OK: Record<string, string> = {
   approved: 'job.ok.approved', published: 'job.ok.published', closed: 'job.ok.closed', unpublished: 'job.ok.unpublished',
 };
 
-function reviewPage(
+/** 직무·업계·근무지 항목 (job_options 전체, 한 번 읽기). */
+const loadOptions = async (c: Context<AppEnv>): Promise<OptionSet> => buildOptionSet(await listOptions(c.env.DB));
+
+async function reviewPage(
   c: Context<AppEnv>, ctx: CompanyCtx, job: JobRow,
   msg: { ok?: string; error?: string; koErrors?: JobFieldError[]; koInput?: { title_ko: string; body_ko: string }; showBlocks?: boolean },
   status: 200 | 400 = 200,
 ) {
   const blocks = publishBlocks(publishInputOf(job, publishCtx(c, ctx)));
+  const options = await loadOptions(c);
   const digits = job.title_ko || job.body_ko
     ? digitDiff(`${job.title_zh ?? ''}\n${job.source_zh ?? ''}`, `${job.title_ko ?? ''}\n${job.body_ko ?? ''}`)
     : { missing: [], extra: [] };
   return render(
     c,
     <JobReview
-      locale={c.var.locale} job={job} blocks={blocks} digits={digits}
+      locale={c.var.locale} job={job} options={options} blocks={blocks} digits={digits}
       enginesAvailable={availableEngines(c.env).length > 0}
       ok={msg.ok} error={msg.error} koErrors={msg.koErrors ?? []} koInput={msg.koInput} highlightBlocks={msg.showBlocks}
     />,
@@ -80,25 +86,43 @@ bizJobs.get('/jobs', async (c) => {
 
 // ── 새 공고
 
-const formPage = (c: Context<AppEnv>, p: { input: JobInput; errors: JobFieldError[]; action: string; jobId?: string; rev?: number; error?: string }, status: 200 | 400 = 200) =>
-  render(c, <JobFormPage locale={c.var.locale} productionJobs={flagsOf(c.env).productionJobs} {...p} />, 'job.form.title', status);
+// 직무·업계·근무지: 화면에 보이는 목록(selectable)과 서버 검사(validateJob)가 받는 목록은 같은 값이다 (lib/options.selectableAll).
+// 새 공고는 사용 중인 항목만, 편집은 + 그 공고에 지금 저장된 값 (사용 종료여도).
+interface FormOptions { options: OptionSet; selectable: Record<OptionKind, string[]> }
 
-const validateCtx = (c: Context<AppEnv>) => ({
-  flags: flagsOf(c.env), operatorDomains: parseOperatorDomains(c.env.OPERATOR_DOMAINS ?? ''), now: now(),
+const formPage = (
+  c: Context<AppEnv>,
+  p: FormOptions & { input: JobInput; errors: JobFieldError[]; action: string; jobId?: string; rev?: number; error?: string },
+  status: 200 | 400 = 200,
+) => render(c, <JobFormPage locale={c.var.locale} productionJobs={flagsOf(c.env).productionJobs} {...p} />, 'job.form.title', status);
+
+const validateCtx = (c: Context<AppEnv>, selectable: Record<OptionKind, string[]>) => ({
+  flags: flagsOf(c.env), operatorDomains: parseOperatorDomains(c.env.OPERATOR_DOMAINS ?? ''), now: now(), options: selectable,
 });
+
+async function newFormOptions(c: Context<AppEnv>): Promise<FormOptions> {
+  const options = await loadOptions(c);
+  return { options, selectable: selectableAll(options) };
+}
+
+async function editFormOptions(c: Context<AppEnv>, job: JobRow): Promise<FormOptions> {
+  const options = await loadOptions(c);
+  return { options, selectable: selectableAll(options, job) };
+}
 
 bizJobs.get('/jobs/new', async (c) => {
   const ctx = await requireCompany(c);
   if (ctx instanceof Response) return ctx;
-  return formPage(c, { input: EMPTY_JOB_INPUT, errors: [], action: '/biz/jobs/new' });
+  return formPage(c, { ...(await newFormOptions(c)), input: EMPTY_JOB_INPUT, errors: [], action: '/biz/jobs/new' });
 });
 
 bizJobs.post('/jobs/new', async (c) => {
   const ctx = await requireCompany(c);
   if (ctx instanceof Response) return ctx;
   const input = readJobForm(await c.req.parseBody());
-  const r = validateJob(input, validateCtx(c));
-  if (!r.ok) return formPage(c, { input, errors: r.errors, action: '/biz/jobs/new' }, 400);
+  const fo = await newFormOptions(c);
+  const r = validateJob(input, validateCtx(c, fo.selectable));
+  if (!r.ok) return formPage(c, { ...fo, input, errors: r.errors, action: '/biz/jobs/new' }, 400);
   const v = r.value;
   const empty: JobText = { title_zh: null, source_zh: null, title_ko: null, body_ko: null };
   const review = reviewAfterSave({ ...empty, review_cleared_by: null }, { ...empty, title_zh: v.title_zh, source_zh: v.source_zh });
@@ -122,7 +146,9 @@ bizJobs.get('/jobs/:id/edit', async (c) => {
   const x = await requireJob(c);
   if (x instanceof Response) return x;
   if (x.job.status === 'closed') return reviewPage(c, x.ctx, x.job, { error: 'job.err.closed' }, 400);
-  return formPage(c, { input: inputFromJob(jobFieldsOf(x.job)), errors: [], action: `/biz/jobs/${x.job.id}/edit`, jobId: x.job.id, rev: x.job.rev });
+  return formPage(c, {
+    ...(await editFormOptions(c, x.job)), input: inputFromJob(jobFieldsOf(x.job)), errors: [], action: `/biz/jobs/${x.job.id}/edit`, jobId: x.job.id, rev: x.job.rev,
+  });
 });
 
 bizJobs.post('/jobs/:id/edit', async (c) => {
@@ -133,16 +159,17 @@ bizJobs.post('/jobs/:id/edit', async (c) => {
   const input = readJobForm(f);
   const action = `/biz/jobs/${job.id}/edit`;
   if (job.status === 'closed') return reviewPage(c, ctx, job, { error: 'job.err.closed' }, 400);
-  if (readRev(f) !== job.rev) return formPage(c, { input, errors: [], action, jobId: job.id, rev: job.rev, error: 'job.err.stale' }, 400);
-  const r = validateJob(input, validateCtx(c));
-  if (!r.ok) return formPage(c, { input, errors: r.errors, action, jobId: job.id, rev: job.rev }, 400);
+  const fo = await editFormOptions(c, job);
+  if (readRev(f) !== job.rev) return formPage(c, { ...fo, input, errors: [], action, jobId: job.id, rev: job.rev, error: 'job.err.stale' }, 400);
+  const r = validateJob(input, validateCtx(c, fo.selectable));
+  if (!r.ok) return formPage(c, { ...fo, input, errors: r.errors, action, jobId: job.id, rev: job.rev }, 400);
   const v = r.value;
   const next: JobText = { title_zh: v.title_zh, source_zh: v.source_zh, title_ko: job.title_ko, body_ko: job.body_ko };
   // 글은 그대로이고 조건만 바뀐 게재 중 공고: 바뀐 값으로도 publishBlocks 가 비어 있어야 게재를 유지한다.
   const plan = planJobSave(job, next, (review) =>
     publishBlocks(publishInputOf({ ...job, ...v, ...review }, publishCtx(c, ctx))).length === 0);
   const saved = await updateJobSource(c.env.DB, { v, plan, ts: now(), id: job.id, rev: job.rev, readStatus: job.status });
-  if (!saved) return formPage(c, { input, errors: [], action, jobId: job.id, rev: job.rev, error: 'job.err.stale' }, 400);
+  if (!saved) return formPage(c, { ...fo, input, errors: [], action, jobId: job.id, rev: job.rev, error: 'job.err.stale' }, 400);
   return c.redirect(`/biz/jobs/${job.id}?ok=${plan.unpublished ? 'unpublished' : 'saved'}`);
 });
 

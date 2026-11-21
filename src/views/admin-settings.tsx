@@ -22,7 +22,7 @@ export const AdminSettingsPage = ({ locale, enabled, ok }: { locale: Locale; ena
             {FILTER_KEYS.map((k) => (
               <label class="check">
                 <input type="checkbox" name="filters" value={k} checked={enabled.includes(k)} />
-                {t(l, FILTER_LABELS[k][0])}
+                {t(l, FILTER_LABELS[k])}
               </label>
             ))}
           </fieldset>
@@ -31,6 +31,11 @@ export const AdminSettingsPage = ({ locale, enabled, ok }: { locale: Locale; ena
           <p class="hint">{t(l, 'adm.set.cache_note')}</p>
           <button type="submit">{t(l, 'common.save')}</button>
         </form>
+      </div>
+      <div class="box">
+        <h2>{t(l, 'adm.opt.title')}</h2>
+        <p class="muted">{t(l, 'adm.set.options_lead')}</p>
+        <p><a href="/admin/options">{t(l, 'adm.opt.title')}</a></p>
       </div>
     </section>
   );

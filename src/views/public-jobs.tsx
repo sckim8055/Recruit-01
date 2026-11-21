@@ -5,20 +5,32 @@
 import type { Locale } from '../env';
 import { fmtDate } from '../lib/company';
 import { t } from '../lib/i18n';
-import { activeFilterCount, FILTER_CHOICES, FILTER_KEYS, jobsHref, type FilterKey, type JobFilter } from '../lib/public-jobs';
+import { labelOf, type OptionSet } from '../lib/options';
+import { activeFilterCount, FILTER_KEYS, isOptionFilter, jobsHref, type FilterChoices, type FilterKey, type JobFilter } from '../lib/public-jobs';
 import type { PublicJobDetail, PublicJobListRow } from '../db/public-jobs';
 import { salaryText } from './jobs';
 
-/** 필터 이름 → [칸 이름 문구 키, 값 문구 키 앞부분]. 공고 작성·기업 정보 화면의 문구를 그대로 쓴다 (관리자 설정 화면도 쓴다). */
-export const FILTER_LABELS: Record<FilterKey, [string, string]> = {
-  chinese_level: ['job.f.chinese_level', 'job.chinese_level'],
-  role_category: ['job.f.role_category', 'job.role'],
-  industry: ['job.f.industry', 'job.industry'],
-  entry_stage: ['co.f.entry_stage', 'co.stage'],
-  salary_basis: ['job.f.salary_basis', 'job.salary_basis'],
-  report_line: ['job.f.report_line', 'job.report_line'],
-  location: ['job.f.location', 'job.location'],
+/** 필터 이름 → 칸 이름 문구 키. 공고 작성·기업 정보 화면의 문구를 그대로 쓴다 (관리자 설정 화면도 쓴다). */
+export const FILTER_LABELS: Record<FilterKey, string> = {
+  chinese_level: 'job.f.chinese_level',
+  role_category: 'job.f.role_category',
+  industry: 'job.f.industry',
+  entry_stage: 'co.f.entry_stage',
+  salary_basis: 'job.f.salary_basis',
+  report_line: 'job.f.report_line',
+  location: 'job.f.location',
 };
+
+/** 고정 목록 필터의 값 문구 키 앞부분. 직무·업계·근무지는 job_options 의 이름을 쓴다 (labelOf). */
+const FIXED_VALUE_PREFIX: Record<Exclude<FilterKey, 'role_category' | 'industry' | 'location'>, string> = {
+  chinese_level: 'job.chinese_level',
+  entry_stage: 'co.stage',
+  salary_basis: 'job.salary_basis',
+  report_line: 'job.report_line',
+};
+
+const filterValueLabel = (locale: Locale, options: OptionSet, k: FilterKey, v: string): string =>
+  isOptionFilter(k) ? labelOf(options, k, v, locale) : t(locale, `${FIXED_VALUE_PREFIX[k]}.${v}`);
 
 const choice = (locale: Locale, prefix: string, v: string | null): string => (v ? t(locale, `${prefix}.${v}`) : '');
 
@@ -38,11 +50,11 @@ const CompanyName = ({ locale, row, link = true }: { locale: Locale; row: Pick<P
 
 // ── 목록 한 줄 (목록·홈 공통)
 
-export const PublicJobItem = ({ locale, row }: { locale: Locale; row: PublicJobListRow }) => {
+export const PublicJobItem = ({ locale, row, options }: { locale: Locale; row: PublicJobListRow; options: OptionSet }) => {
   const meta = [
-    choice(locale, 'job.location', row.location),
-    choice(locale, 'job.role', row.role_category),
-    choice(locale, 'job.industry', row.industry),
+    labelOf(options, 'location', row.location, locale),
+    labelOf(options, 'role_category', row.role_category, locale),
+    labelOf(options, 'industry', row.industry, locale),
   ].filter(Boolean).join(' · ');
   return (
     <li class="job">
@@ -61,21 +73,25 @@ export const PublicJobItem = ({ locale, row }: { locale: Locale; row: PublicJobL
 
 // ── 목록
 
-/** 검색 칸. enabled(관리자 설정, FILTER_KEYS 순서)에 있는 필터만 보인다. 하나도 없으면 폼 전체를 그리지 않는다. */
-const FilterForm = ({ locale, filter, enabled }: { locale: Locale; filter: JobFilter; enabled: readonly FilterKey[] }) => {
+/**
+ * 검색 칸. enabled(관리자 설정, FILTER_KEYS 순서)에 있는 필터만 보인다. 하나도 없으면 폼 전체를 그리지 않는다.
+ * 고를 수 있는 값은 choices (직무·업계·근무지는 사용 중인 항목만, lib/public-jobs.filterChoices).
+ */
+const FilterForm = ({ locale, filter, enabled, choices, options }: {
+  locale: Locale; filter: JobFilter; enabled: readonly FilterKey[]; choices: FilterChoices; options: OptionSet;
+}) => {
   if (enabled.length === 0) return null;
   const n = activeFilterCount(filter);
   return (
     <form method="get" action="/jobs" class="box">
       <div class="grid3">
         {FILTER_KEYS.filter((k) => enabled.includes(k)).map((k) => {
-          const [labelKey, prefix] = FILTER_LABELS[k];
           return (
-            <label>{t(locale, labelKey)}
+            <label>{t(locale, FILTER_LABELS[k])}
               <select name={k}>
                 <option value="">{t(locale, 'pj.filter.any')}</option>
-                {(FILTER_CHOICES[k] as readonly string[]).map((v) => (
-                  <option value={v} selected={filter[k] === v}>{t(locale, `${prefix}.${v}`)}</option>
+                {choices[k].map((v) => (
+                  <option value={v} selected={filter[k] === v}>{filterValueLabel(locale, options, k, v)}</option>
                 ))}
               </select>
             </label>
@@ -100,6 +116,10 @@ export interface PublicJobListProps {
   filter: JobFilter;
   /** 보일 필터 (lib/public-jobs.parseEnabledFilters). 목록 줄·상세는 이 값과 관계없이 모든 항목을 보인다. */
   enabled: readonly FilterKey[];
+  /** 검색 칸에서 고를 수 있는 값 (lib/public-jobs.filterChoices). */
+  choices: FilterChoices;
+  /** 직무·업계·근무지 이름 (사용 종료된 항목도 목록 줄에는 이름이 보인다). */
+  options: OptionSet;
   rows: PublicJobListRow[];
   page: number;
   hasPrev: boolean;
@@ -110,14 +130,14 @@ export const PublicJobList = (p: PublicJobListProps) => (
   <section class="wide">
     <h1>{t(p.locale, 'pj.title')}</h1>
     <p class="muted sub">{t(p.locale, 'pj.lead')}</p>
-    <FilterForm locale={p.locale} filter={p.filter} enabled={p.enabled} />
+    <FilterForm locale={p.locale} filter={p.filter} enabled={p.enabled} choices={p.choices} options={p.options} />
     {p.rows.length === 0 ? (
       <div class="box">
         <p>{t(p.locale, p.page > 1 ? 'pj.empty_page' : 'pj.empty')}</p>
         {p.page > 1 && <p><a href={jobsHref(p.filter)}>{t(p.locale, 'pj.first_page')}</a></p>}
       </div>
     ) : (
-      <ul class="list">{p.rows.map((r) => <PublicJobItem locale={p.locale} row={r} />)}</ul>
+      <ul class="list">{p.rows.map((r) => <PublicJobItem locale={p.locale} row={r} options={p.options} />)}</ul>
     )}
     {(p.hasPrev || p.hasNext) && (
       <nav class="pager" aria-label={t(p.locale, 'pj.pager')}>
@@ -131,15 +151,15 @@ export const PublicJobList = (p: PublicJobListProps) => (
 
 // ── 상세
 
-export const PublicJobPage = ({ locale, job }: { locale: Locale; job: PublicJobDetail }) => {
+export const PublicJobPage = ({ locale, job, options }: { locale: Locale; job: PublicJobDetail; options: OptionSet }) => {
   const conditions: [string, string][] = [
     ['job.f.salary', publicSalaryText(locale, job)],
     ['job.f.work_hours', job.work_hours ?? ''],
     ['job.f.report_line', choice(locale, 'job.report_line', job.report_line)],
     ['job.f.chinese_level', choice(locale, 'job.chinese_level', job.chinese_level)],
-    ['job.f.location', choice(locale, 'job.location', job.location)],
-    ['job.f.role_category', choice(locale, 'job.role', job.role_category)],
-    ['job.f.industry', choice(locale, 'job.industry', job.industry)],
+    ['job.f.location', labelOf(options, 'location', job.location, locale)],
+    ['job.f.role_category', labelOf(options, 'role_category', job.role_category, locale)],
+    ['job.f.industry', labelOf(options, 'industry', job.industry, locale)],
     ['job.f.closes_at', closesText(locale, job.closes_at)],
     ['pj.published', job.published_at ? fmtDate(job.published_at) : ''],
   ];

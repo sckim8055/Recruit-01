@@ -11,6 +11,7 @@ import { render, renderError } from '../render';
 import { AdminCompanyDetail, AdminCompanyList } from '../views/admin-company';
 import { AdminHome } from '../views/pages';
 import { adminJobs } from './admin-jobs';
+import { adminOptions } from './admin-options';
 import { adminSettings } from './admin-settings';
 import { adminCounts } from '../db/admin';
 import {
@@ -118,3 +119,6 @@ admin.route('/', adminJobs);
 
 // 사이트 설정: 채용정보 목록에 보일 검색 조건 (/admin/settings)
 admin.route('/', adminSettings);
+
+// 직무·업계·근무지 선택 항목 관리 (/admin/options). 추가·이름·순서·사용 종료만, 삭제 없음
+admin.route('/', adminOptions);

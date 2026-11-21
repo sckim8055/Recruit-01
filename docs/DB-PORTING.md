@@ -18,6 +18,7 @@
 | `src/db/logs.ts` | access_log, email_log |
 | `src/db/admin.ts` | 관리자 첫 화면 개수 (companies·agencies·jobs·reports) |
 | `src/db/settings.ts` | site_settings (사이트 설정 이름 → 값, upsert) |
+| `src/db/options.ts` | job_options (직무·업계·근무지 선택 항목: 전체 읽기·추가·이름/순서 수정·사용 종료/다시 사용) + 항목별 공고 수 |
 
 - 스키마는 `migrations/` (SQLite 문법). 판단 규칙(`rules.ts`·`authz.ts`)·TTL·횟수 제한은 DB 와 무관하므로 옮길 때 고치지 않는다.
 
@@ -57,9 +58,14 @@
 | `companies.insertInviteWithinLimit` | 유일 인덱스 위반 시 예외 | PostgreSQL 은 SQLSTATE 23505. 지금 호출부는 예외 종류를 보지 않고 "중복" 으로 안내하므로 그대로 된다 |
 | `companies.listCompaniesForAdmin`, `admin.adminCounts` | `COUNT(*)` 가 숫자로 옴 | bigint → 문자열로 올 수 있음. `COUNT(*)::int` 또는 변환 (확인 필요) |
 | `public-jobs.ts` (`LIST_COLS`) | `CASE WHEN j.company_name_public = 1` — INTEGER 0/1 | integer 로 두면 그대로. boolean 이면 `WHEN j.company_name_public` |
+| `options.ts` (파일 머리말) | `meta.changes`, `active` INTEGER 0/1 (`active = 1`) | `rowCount`. boolean 으로 바꾸면 SQL 과 `lib/options.buildOptionSet` 수정 |
+| `options.countOptionUsage` | `COUNT(*)` 가 숫자로 옴 | `COUNT(*)::int` 또는 변환 (확인 필요) |
+| `options.setOptionActive` | 사용 종료 가드 `… AND (SELECT COUNT(*) FROM job_options WHERE kind = ? AND active = 1) > 1` — D1 은 쓰기가 순서대로라 안전 | 문법은 된다. 동시성은 4장 |
+| `migrations/0007_job_options.sql` | 기본 행의 시각 `strftime('%s','now')` | `extract(epoch from now())::bigint` |
 | `companies.listPublicCompanies` | `ORDER BY name_ko` = 바이트 순서 | DB 콜레이션에 따라 한글 정렬이 달라질 수 있음 (`COLLATE "C"` 로 맞춤) |
 
-PostgreSQL 에서도 그대로 되는 것(표시하지 않음): `ON CONFLICT … DO UPDATE … excluded`(`settings.setSetting` 포함), `EXISTS (…)` 가드, `UPDATE … WHERE … AND EXISTS`,
+PostgreSQL 에서도 그대로 되는 것(표시하지 않음): `ON CONFLICT … DO UPDATE … excluded`(`settings.setSetting` 포함), `ON CONFLICT (kind, code) DO NOTHING`(`options.insertOption`),
+`SELECT … UNION ALL SELECT …`(`options.countOptionUsage`), `EXISTS (…)` 가드, `UPDATE … WHERE … AND EXISTS`,
 `ORDER BY 식 = '값' DESC`(참/거짓 정렬), `CASE`, `LIMIT`, `rev = rev + 1`.
 `public-jobs.ts` 의 `LIMIT ? OFFSET ?`, `CASE WHEN … END`(ELSE 없으면 NULL)도 그대로 된다. 목록 정렬 `published_at DESC, id DESC` 의 id 는 TEXT 이므로
 PostgreSQL 콜레이션에 따라 같은 시각 안의 순서만 달라질 수 있다(페이지가 겹치지 않으려면 `COLLATE "C"` 권장, 확인 필요).
@@ -71,6 +77,8 @@ PostgreSQL 콜레이션에 따라 같은 시각 안의 순서만 달라질 수 �
 - **동시성 차이:** D1 은 한 곳에서 순서대로 쓰기 때문에 지금의 "한 문장 가드" 가 안전하다. PostgreSQL(기본 READ COMMITTED)에서도
   한 문장 UPDATE/INSERT … WHERE 가드는 대체로 같게 동작하지만, 동시에 들어온 두 INSERT … SELECT … WHERE NOT EXISTS 는 **둘 다 성공할 수 있다**
   (예: 기업 등록 두 번 누르기, 초대 한도). 유일 인덱스 추가나 `SERIALIZABLE` 이 필요한지 따로 검토한다 (확인 필요).
+  같은 이유로 `options.setOptionActive` 의 "마지막 사용 중 항목은 끄지 않음" 가드도, 서로 다른 두 항목을 동시에 사용 종료하면 둘 다 통과해 그 종류의 사용 중 항목이 0개가 될 수 있다
+  (공고 폼의 세 칸은 선택 사항이라 저장은 되지만 고를 것이 없어진다). 옮길 때 `SELECT … FOR UPDATE` 로 그 종류의 행을 잠그거나 `SERIALIZABLE` 로 한다 (확인 필요).
 - 새로 만드는 기능(T-06 이후)도 `src/db/` 에만 SQL 을 두어야 이 장점이 유지된다 (CLAUDE.md 작업 방식, 테스트가 검사).
 - 백업·복구 절차, 접속 정보(비밀값) 관리, 지역(서울/중국 접속) 선택은 별도로 정해야 한다.
 

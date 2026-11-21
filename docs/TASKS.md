@@ -50,6 +50,17 @@
       걸러지지 않음, 개수에 안 듦, 정규화 302 에서 빠짐). 목록 줄·상세·공고 작성 폼·홈은 그대로. 관리자 `/admin/settings`(체크박스, 모르는 값 버림, 관리자 첫 화면에 링크).
       `/jobs` 는 캐시에 없는 요청마다 설정 한 행을 읽음(따로 캐시하지 않음) → 비로그인 화면 반영은 최대 60초(page-cache TTL).
       기존 테스트 "정규화 302 는 DB 를 읽지 않는다" 는 "설정 한 행만 읽고 공고는 읽지 않는다" 로 바꿈
+- [x] T-06e 직무·업계·근무지 항목 관리: 세 선택 목록을 코드 상수·화면 문구에서 DB `job_options`(0007, `(kind, code)` 기본 키, 이름 한국어·중국어, 순서, 사용 여부)로 옮겼다.
+      0007 이 이전 상수·문구 49개를 같은 code·이름·순서(10 간격)로 넣고, 상수 `ROLE_CATEGORIES`·`INDUSTRIES`·`LOCATIONS` 와 문구 `job.role.*`·`job.industry.*`·`job.location.*` 는 지웠다
+      (`test/option-seed.ts` 에 옮기기 전 값을 적어 두고 0007 결과와 비교). `jobs` 의 세 컬럼은 그대로 TEXT code(외래키·데이터 변경 없음).
+      `db/options.ts`(listOptions 한 번에 전체·insertOption·updateOption 이름·순서만·setOptionActive 한 문장 가드·countOptionUsage), 판단은 `lib/options.ts`
+      (labelOf: 사용 종료·없는 code 도 표시, selectableCodes: 사용 중 + 편집하는 공고의 저장된 값, 관리자 입력 검사, 마지막 사용 중 항목 사용 종료 금지).
+      공고 폼은 새 공고에 사용 중 항목만, 편집에는 저장된 사용 종료 값도 "(사용 종료)" 로 보이고, `validateJob` 은 같은 목록을 ctx 로 받는다
+      (사용 종료 값은 저장된 값과 같을 때만 통과). 공개 목록·상세·홈·관리자 공고 화면은 labelOf 로 이름을 보이고, 공개 검색 칸·`parseJobFilter`·`canonicalJobsHref` 는
+      사용 중 항목만 받는다(그 밖의 값은 모르는 값처럼 302 에서 빠짐). `/jobs` 는 설정 한 행 + 항목 목록을 동시에 읽은 뒤 정규화를 판단(공고는 읽지 않음), 따로 캐시하지 않음.
+      관리자 `/admin/options`(종류별 표, 사용 공고 수, 이름·순서 수정, 사용 종료 ↔ 다시 사용, 추가, 삭제 없음, 관리자 첫 화면·사이트 설정에 링크).
+      관리자 입력 이름에도 금지 표현 검사(`findBannedPhrases`). wrangler dev + Chromium(Playwright)으로 추가·사용 종료·이름 변경·위조 요청 거부 확인.
+      일부러 뺀 것(나중에): 두 항목 합치기, 공고 분류 일괄 바꾸기(사용 종료한 항목의 공고를 다른 항목으로 옮기기), 항목 변경 이력 화면
 ## 운영자 설정 (사람이 하는 일 — 안내 문서를 먼저 써서 건넨다)
 - [ ] O-1 GitHub 저장소에 이 폴더 올리기
 - [ ] O-2 Cloudflare: D1 `recruit-test` 생성 → `wrangler.jsonc` 의 `database_id` 교체, R2 `recruit-test-files` 생성

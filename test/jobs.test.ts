@@ -3,11 +3,14 @@ import {
   EMPTY_JOB_INPUT, digitDiff, digitRuns, hasContactInText, inputFromJob, parseKstDate, kstDate, planJobSave, publishInputOf,
   readBlockReason, readJobForm, readKoreanForm, readRev, reviewAfterSave, validateJob, type JobInput, type JobState,
 } from '../src/lib/jobs';
+import { buildOptionSet, selectableAll } from '../src/lib/options';
 import { publishBlocks } from '../src/lib/rules';
+import { optionRows } from './option-seed';
 
 const flagsOff = { productionJobs: false, headhunterPosting: false, resumeZhSummary: false, paidLabel: false };
 const NOW = parseKstDate('2026-11-21')! - 86399; // 2026-11-21 00:00 KST
-const vctx = { flags: flagsOff, operatorDomains: ['kimbbob.com', 'nexthub.me'], now: NOW };
+// 직무·업계·근무지 목록은 T-06e 부터 DB(job_options) 에 있다. 기본 행(0007 = test/option-seed.ts)으로 만든 새 공고용 목록을 넘긴다.
+const vctx = { flags: flagsOff, operatorDomains: ['kimbbob.com', 'nexthub.me'], now: NOW, options: selectableAll(buildOptionSet(optionRows())) };
 
 const form = (p: Partial<JobInput> = {}): JobInput => ({
   ...EMPTY_JOB_INPUT,
