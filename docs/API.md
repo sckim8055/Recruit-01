@@ -12,7 +12,7 @@
 | GET·POST /login/totp | 관리자 2단계 인증 (최초에는 인증 앱 등록) | 인증코드를 통과한 관리자 | ✅ |
 | GET /lang/:l | 언어 전환 (ko/zh) | 누구나 | ✅ |
 | GET /my | 역할별 첫 화면 (구직자: 지원 현황 자리, 기업·헤드헌터 → /biz, 관리자 → /admin) | 로그인 | ✅ |
-| GET /biz | 기업·헤드헌터 첫 화면 | company, headhunter | ✅ (임시 화면) |
+| GET /biz | 기업 첫 화면 (소속 없음: 받은 초대 + 기업 등록 폼 / 소속 있음: 검증 상태·남은 할 일). 헤드헌터는 임시 화면 | company, headhunter | ✅ |
 | GET /api/health | 상태 확인 | 누구나 | ✅ |
 | (없는 경로) · 권한 없음 | 404 · 403 화면 (공통 레이아웃, 한국어·중국어) | 누구나 | ✅ |
 | GET /terms · /privacy | 약관·개인정보처리방침 | 누구나 | T-11 |
@@ -22,7 +22,7 @@
 |---|---|---|---|
 | GET /jobs | 공고 목록·필터 (published, office 만) | 누구나 | T-06 |
 | GET /jobs/:id | 공고 상세 (기업 연락처 표시) | 누구나 | T-06 |
-| GET /companies · /companies/:id | 기업 목록·기업 페이지 | 누구나 | T-04 |
+| GET /companies · /companies/:id | 기업 목록·기업 페이지 (검증된 기업만, "기업 제공 정보" 표시. 사업자번호·담당자·서류는 공개하지 않음) | 누구나 | ✅ |
 | GET /my/resumes · GET·POST /my/resumes/new · /my/resumes/:id | 이력서 목록·작성·수정 (여러 개) | seeker 본인 | T-07 |
 | POST /my/resumes/:id/default · /copy · /delete | 대표 지정·복사·삭제 | seeker 본인 | T-07 |
 | GET·POST /jobs/:id/apply | 지원 (국외 이전 동의 포함) | seeker | T-08 |
@@ -33,9 +33,13 @@
 ## 기업
 | 경로 | 설명 | 권한 | 작업 |
 |---|---|---|---|
-| GET·POST /biz/company | 기업 등록·기업 페이지 편집 | company | T-04 |
-| POST /biz/company/docs | 검증 서류 업로드 (R2) | company | T-04 |
-| GET·POST /biz/members | 담당자 초대 | company owner | T-04 |
+| POST /biz/company | 기업 등록 (대표 담당자 자동 지정. 이미 소속이 있으면 거부). GET 은 /biz 로 보냄 | company (소속 없음) | ✅ |
+| GET·POST /biz/company/edit | 기업 정보 편집 (검증 뒤 기업명·사업자 형태·번호 잠금) | canManageCompany | ✅ |
+| GET·POST /biz/company/docs | 검증 서류 목록·업로드 (R2 비공개, 기업당 5개) | canManageCompany | ✅ |
+| GET /biz/docs/:id | 검증 서류 내려받기 (access_log) | canViewVerificationDoc | ✅ |
+| GET /biz/members | 담당자·대기 초대 목록 (대표 담당자가 아니면 읽기만) | canManageCompany | ✅ |
+| POST /biz/members/invite · /biz/members/:userId/remove · /biz/invites/:id/cancel | 담당자 초대·내보내기·초대 취소 | canManageMembers (owner) | ✅ |
+| POST /biz/invites/:id/accept | 초대 수락 (초대받은 이메일 본인, 소속 없을 때만) | company | ✅ |
 | GET /biz/jobs · GET·POST /biz/jobs/new · /biz/jobs/:id | 공고 작성(중국어)·수정 | canEditJob | T-05 |
 | POST /biz/jobs/:id/localize | AI 현지화 초안 + 대조본 생성 | canEditJob | T-05 |
 | POST /biz/jobs/:id/publish | 게재 (`publishBlocks` 가 비어야 함) | canEditJob | T-05 |
@@ -48,8 +52,10 @@
 ## 관리자
 | 경로 | 설명 | 작업 |
 |---|---|---|
-| GET /admin | 처리할 일 개수 (검증 대기·검토 대기·신고). 목록 화면은 T-04·T-05·T-09 | ✅ |
-| POST /admin/companies/:id/verify | 기업 승인·반려 | T-04 |
+| GET /admin | 처리할 일 개수 (검증 대기·검토 대기·신고). 검증 대기 기업 → /admin/companies, 나머지 목록은 T-05·T-09 | ✅ |
+| GET /admin/companies · /admin/companies/:id | 기업 목록(검증 대기 먼저)·상세 (담당자 이메일, 서류, `verifyBlocks` 결과) | ✅ |
+| POST /admin/companies/:id/verify | 기업 승인(`verifyBlocks` 가 비어야 함)·반려(사유 필수). 검증 대기 상태에서만 | ✅ |
+| GET /admin/docs/:id | 검증 서류 내려받기 (access_log) | ✅ |
 | POST /admin/jobs/:id/block · /clear-review | 공고 차단 · 기술유출 검토 통과 | T-05 |
 | GET /admin/applications/:id?reason= | 사유 입력 후 지원서 열람 (access_log) | T-09 |
 | GET /admin/access-log | 열람 기록 | T-09 |
