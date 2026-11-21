@@ -28,7 +28,7 @@ export const SystemPage = (p: {
 
       <div class="box">
         <h2>{t(l, 'sys.checks.title')}</h2>
-        <table>
+        <div class="table-wrap"><table>
           <thead><tr><th>{t(l, 'sys.col.level')}</th><th>{t(l, 'sys.col.item')}</th><th>{t(l, 'sys.col.result')}</th></tr></thead>
           <tbody>
             {p.checks.map((c) => (
@@ -39,12 +39,12 @@ export const SystemPage = (p: {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
 
       <div class="box">
         <h2>{t(l, 'sys.secrets.title')}</h2>
-        <table>
+        <div class="table-wrap"><table>
           <tbody>
             {p.secrets.map((s) => (
               <tr>
@@ -54,43 +54,43 @@ export const SystemPage = (p: {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
         <p class="hint">{t(l, 'sys.secrets.note')}</p>
       </div>
 
       <div class="box">
         <h2>{t(l, 'admin.usage.title')} <span class="muted">({p.usage.day})</span></h2>
-        <table>
+        <div class="table-wrap"><table>
           <tbody>
             <tr><th>{t(l, 'admin.usage.localize')}</th><td>{p.usage.localize.n} / {p.usage.localize.limit}</td></tr>
             <tr><th>{t(l, 'admin.usage.mail')}</th><td>{p.usage.mail.n} / {p.usage.mail.limit}</td></tr>
           </tbody>
-        </table>
+        </table></div>
       </div>
 
       <div class="box">
         <h2>{t(l, 'sys.ret.title')}</h2>
-        <table>
+        <div class="table-wrap"><table>
           <tbody>
             {RETENTION_SPEC.map((s) => (
               <tr><th>{t(l, `adm.ret.short.${s.key}`)}</th><td>{retentionValueText(l, s.key, p.retention[s.key])}</td></tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
         <p class="hint">{t(l, 'sys.ret.note')} <a href="/admin/settings#retention">{t(l, 'adm.set.title')}</a></p>
       </div>
 
       <div class="box">
         <h2>{t(l, 'sys.cron.title')}</h2>
         <p class="hint">{t(l, 'sys.cron.note')}</p>
-        <table>
+        <div class="table-wrap"><table>
           <thead><tr><th>UTC</th><th>{t(l, 'sys.cron.kst')}</th><th>{t(l, 'sys.cron.step')}</th></tr></thead>
           <tbody>
             {p.schedule.map((step, h) => (
               <tr><td>{String(h).padStart(2, '0')}:00</td><td>{String((h + 9) % 24).padStart(2, '0')}:00</td><td>{t(l, `sys.step.${step}`)} <span class="muted">({step})</span></td></tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
 
       <div class="box">

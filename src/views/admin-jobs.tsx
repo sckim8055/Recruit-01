@@ -24,7 +24,7 @@ export const AdminJobList = ({ locale, rows }: { locale: Locale; rows: AdminJobL
     <p class="muted">{t(locale, 'adm.job.lead')}</p>
     {rows.length === 0 ? <p class="muted">{t(locale, 'adm.job.empty')}</p> : (
       <div class="box">
-        <table>
+        <div class="table-wrap"><table>
           <thead><tr>
             <th>{t(locale, 'job.f.title_ko')}</th><th>{t(locale, 'adm.job.company')}</th><th>{t(locale, 'job.status')}</th>
             <th>{t(locale, 'adm.job.flag')}</th><th>{t(locale, 'job.updated')}</th>
@@ -40,7 +40,7 @@ export const AdminJobList = ({ locale, rows }: { locale: Locale; rows: AdminJobL
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
     )}
     <p><a href="/admin/localize-test">{t(locale, 'adm.lt.title')}</a></p>

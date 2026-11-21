@@ -77,7 +77,7 @@ const Section = ({ locale, kind, set, counts, form }: { locale: Locale; kind: Op
       <h2>{t(l, KIND_TITLE[kind])}</h2>
       <p class="muted">{t(l, 'adm.opt.summary').replace('{n}', String(set.list[kind].length)).replace('{a}', String(activeN))}</p>
       {mine && <FieldErrors locale={l} errors={mine.errors} />}
-      <table class="opt-table">
+      <div class="table-wrap"><table class="opt-table">
         <thead><tr>
           <th>{t(l, 'adm.opt.f.code')}</th><th>{t(l, 'adm.opt.f.label_ko')}</th><th>{t(l, 'adm.opt.f.label_zh')}</th>
           <th>{t(l, 'adm.opt.f.sort')}</th><th>{t(l, 'adm.opt.status')}</th><th>{t(l, 'adm.opt.count')}</th><th />
@@ -88,7 +88,7 @@ const Section = ({ locale, kind, set, counts, form }: { locale: Locale; kind: Op
               input={mine?.mode === 'edit' && mine.input.code === r.code ? mine.input : undefined} />
           ))}
         </tbody>
-      </table>
+      </table></div>
       <form method="post" action={`/admin/options/${kind}/add`} class="opt-add">
         <h3>{t(l, 'adm.opt.add')}</h3>
         <div class="grid4">

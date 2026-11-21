@@ -90,7 +90,7 @@ export const JobList = ({ locale, rows, counts, verified, ok }: {
     <p><a class="button" href="/biz/jobs/new">{t(locale, 'job.new')}</a></p>
     {rows.length === 0 ? <p class="muted">{t(locale, 'job.list.empty')}</p> : (
       <div class="box">
-        <table>
+        <div class="table-wrap"><table>
           <thead><tr>
             <th>{t(locale, 'job.f.title_zh')}</th><th>{t(locale, 'job.status')}</th><th>{t(locale, 'job.loc')}</th>
             <th>{t(locale, 'apl.list.title')}</th><th>{t(locale, 'job.updated')}</th>
@@ -112,7 +112,7 @@ export const JobList = ({ locale, rows, counts, verified, ok }: {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
     )}
   </section>
@@ -230,8 +230,10 @@ export const JobFormPage = (p: JobFormProps) => {
             <span class="hint">{t(l, 'job.hint.contact_email')}</span>
           </label>
         </div>
-        <button type="submit">{t(l, 'common.save')}</button>
-        {p.jobId && <> <a href={`/biz/jobs/${p.jobId}`}>{t(l, 'common.back')}</a></>}
+        <div class="actions">
+          <button type="submit">{t(l, 'common.save')}</button>
+          {p.jobId && <a href={`/biz/jobs/${p.jobId}`}>{t(l, 'common.back')}</a>}
+        </div>
       </form>
     </section>
   );

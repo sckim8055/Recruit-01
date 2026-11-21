@@ -4,20 +4,71 @@ import type { OptionSet } from '../lib/options';
 import type { PublicJobListRow } from '../db/public-jobs';
 import { PublicJobItem } from './public-jobs';
 
-/** 홈: 짧은 소개 + 최신 공개 공고 몇 건(목록과 같은 줄 모양) + 전체 목록 링크. */
+/** 이용 방법 단계 (구직자 3 · 기업 3). 문구 키: home.how.<who>.<n>.t / .d */
+const HOW_STEPS = [1, 2, 3] as const;
+/** "이 사이트가 다른 점" — 각 항목이 코드로 참인지는 docs/ARCHITECTURE.md "디자인 규칙 > 첫 화면 문구" 에 적어 둔다. */
+const HOME_POINTS = [1, 2, 3, 4] as const;
+/** 자주 묻는 질문. 문의처는 운영자 정보(src/legal/types.ts OPERATOR)가 【확인 필요】인 동안 넣지 않는다. */
+const HOME_FAQ = ['cost', 'who_posts', 'no_referral', 'who_sees', 'delete'] as const;
+
+const Steps = ({ locale, who }: { locale: Locale; who: 'seeker' | 'company' }) => (
+  <div class="box">
+    <h3>{t(locale, `home.how.${who}`)}</h3>
+    <ol class="steps">
+      {HOW_STEPS.map((n) => (
+        <li><b>{t(locale, `home.how.${who}.${n}.t`)}</b><span>{t(locale, `home.how.${who}.${n}.d`)}</span></li>
+      ))}
+    </ol>
+  </div>
+);
+
+/**
+ * 홈(첫 화면). 비로그인 요청은 page-cache 로 캐시되므로 사용자별 내용을 넣지 않는다 (bye 안내는 캐시를 거치지 않는 ?bye=1 에서만).
+ * 읽는 데이터는 예전과 같다: 최신 공개 공고 몇 건 + 직무·업계·근무지 이름 (routes/jobs.homePage). 나머지는 고정 문구.
+ */
 export const Home = ({ locale, jobs, options, bye }: { locale: Locale; jobs: PublicJobListRow[]; options: OptionSet; bye?: boolean }) => (
   <>
     {bye && <p class="ok">{t(locale, 'home.bye')}</p>}
     <section class="hero">
       <h1>{t(locale, 'site.tagline')}</h1>
-      <p>{t(locale, 'home.lead')}</p>
-      <p class="muted">{t(locale, 'home.for_company')}</p>
+      <p class="lead">{t(locale, 'home.hero.lead')}</p>
+      <div class="actions">
+        <a class="button" href="/jobs">{t(locale, 'home.cta.jobs')}</a>
+        <a class="button plain" href="/biz">{t(locale, 'home.cta.company')}</a>
+      </div>
+      <p class="hint">{t(locale, 'home.cta.company_note')}</p>
     </section>
-    <section class="wide spaced">
+
+    <section class="home-sec">
+      <h2>{t(locale, 'home.how.title')}</h2>
+      <div class="two">
+        <Steps locale={locale} who="seeker" />
+        <Steps locale={locale} who="company" />
+      </div>
+    </section>
+
+    <section class="home-sec">
+      <h2>{t(locale, 'home.points.title')}</h2>
+      <ul class="points">
+        {HOME_POINTS.map((n) => <li><b>{t(locale, `home.points.${n}.t`)}</b><span>{t(locale, `home.points.${n}.d`)}</span></li>)}
+      </ul>
+    </section>
+
+    <section class="home-sec">
       <h2>{t(locale, 'home.latest')}</h2>
-      {jobs.length === 0 ? <p class="muted">{t(locale, 'home.no_jobs')}</p>
+      {jobs.length === 0 ? <div class="box"><p class="muted">{t(locale, 'home.no_jobs')}</p></div>
         : <ul class="list">{jobs.map((r) => <PublicJobItem locale={locale} row={r} options={options} />)}</ul>}
-      <p><a href="/jobs">{t(locale, 'home.all_jobs')}</a></p>
+      <p class="more"><a href="/jobs">{t(locale, 'home.all_jobs')}</a></p>
+    </section>
+
+    <section class="home-sec faq">
+      <h2>{t(locale, 'home.faq.title')}</h2>
+      {HOME_FAQ.map((k) => (
+        <details>
+          <summary>{t(locale, `home.faq.${k}.q`)}</summary>
+          <p>{t(locale, `home.faq.${k}.a`)}</p>
+        </details>
+      ))}
     </section>
   </>
 );
@@ -149,15 +200,20 @@ export const AdminHome = ({ locale, counts, usage }: {
     </ul>
     {usage && <div class="box usage">
       <h2>{t(locale, 'admin.usage.title')} <span class="muted">({usage.day})</span></h2>
-      <table>
+      <div class="table-wrap"><table>
         <tbody>
           <tr><th>{t(locale, 'admin.usage.localize')}</th><td>{usage.localize.n} / {usage.localize.limit}</td></tr>
           <tr><th>{t(locale, 'admin.usage.mail')}</th><td>{usage.mail.n} / {usage.mail.limit}</td></tr>
         </tbody>
-      </table>
+      </table></div>
       <p class="hint">{t(locale, 'admin.usage.note')}</p>
     </div>}
-    <p><a href="/admin/settings">{t(locale, 'adm.set.title')}</a> · <a href="/admin/options">{t(locale, 'adm.opt.title')}</a> · <a href="/admin/access-log">{t(locale, 'adm.log.title')}</a> · <a href="/admin/system">{t(locale, 'sys.title')}</a></p>
+    <ul class="menu">
+      <li><a href="/admin/settings">{t(locale, 'adm.set.title')}</a></li>
+      <li><a href="/admin/options">{t(locale, 'adm.opt.title')}</a></li>
+      <li><a href="/admin/access-log">{t(locale, 'adm.log.title')}</a></li>
+      <li><a href="/admin/system">{t(locale, 'sys.title')}</a></li>
+    </ul>
     <p class="muted">{t(locale, 'admin.note')}</p>
   </section>
 );

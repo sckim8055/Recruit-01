@@ -251,14 +251,14 @@ export const ViewHistory = ({ locale, views }: { locale: Locale; views: Array<{ 
     <h2>{t(locale, 'app.views.title')}</h2>
     <p class="hint">{t(locale, 'app.views.note')}</p>
     {views.length === 0 ? <p class="muted">{t(locale, 'app.views.empty')}</p> : (
-      <table>
+      <div class="table-wrap"><table>
         <thead><tr><th>{t(locale, 'app.views.at')}</th><th>{t(locale, 'app.views.who')}</th></tr></thead>
         <tbody>
           {views.map((v) => (
             <tr><td>{fmtDateTime(v.at)}</td><td>{t(locale, `app.views.role.${v.actor_role === 'admin' ? 'admin' : v.actor_role === 'headhunter' ? 'headhunter' : 'company'}`)}</td></tr>
           ))}
         </tbody>
-      </table>
+      </table></div>
     )}
   </div>
 );

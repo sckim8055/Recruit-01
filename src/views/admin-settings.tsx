@@ -141,7 +141,7 @@ export const RetentionConfirmPage = (p: {
       <Flash locale={l} error={p.error} />
       <div class="box">
         <p>{t(l, 'adm.ret.confirm.lead')}</p>
-        <table>
+        <div class="table-wrap"><table>
           <thead><tr><th>{t(l, 'adm.ret.confirm.item')}</th><th>{t(l, 'adm.ret.confirm.now')}</th><th>{t(l, 'adm.ret.confirm.after')}</th></tr></thead>
           <tbody>
             {p.changes.map((c) => (
@@ -152,7 +152,7 @@ export const RetentionConfirmPage = (p: {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
       <div class="box">
         <h2>{t(l, 'adm.ret.confirm.effects')}</h2>

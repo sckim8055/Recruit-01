@@ -16,7 +16,7 @@ export const AdminCompanyList = ({ locale, rows }: { locale: Locale; rows: Admin
     <h1>{t(locale, 'adm.co.title')}</h1>
     {rows.length === 0 ? <p class="muted">{t(locale, 'adm.co.empty')}</p> : (
       <div class="box">
-        <table>
+        <div class="table-wrap"><table>
           <thead><tr>
             <th>{t(locale, 'co.f.name_ko')}</th><th>{t(locale, 'co.f.entity_type')}</th><th>{t(locale, 'co.status')}</th>
             <th>{t(locale, 'adm.co.created')}</th><th>{t(locale, 'adm.co.docs')}</th>
@@ -32,7 +32,7 @@ export const AdminCompanyList = ({ locale, rows }: { locale: Locale; rows: Admin
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
     )}
   </section>
@@ -92,7 +92,7 @@ export const AdminCompanyDetail = (p: AdminCompanyDetailProps) => {
 
       <div class="box">
         <h2>{t(l, 'mem.title')}</h2>
-        <table>
+        <div class="table-wrap"><table>
           <thead><tr><th>{t(l, 'mem.email')}</th><th>{t(l, 'mem.role')}</th><th>{t(l, 'mem.hq')}</th><th>{t(l, 'mem.joined')}</th></tr></thead>
           <tbody>
             {p.members.map((m) => (
@@ -102,13 +102,13 @@ export const AdminCompanyDetail = (p: AdminCompanyDetailProps) => {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
 
       <div class="box">
         <h2>{t(l, 'doc.title')}</h2>
         {p.docs.length === 0 ? <p class="muted">{t(l, 'doc.none')}</p> : (
-          <table>
+          <div class="table-wrap"><table>
             <thead><tr><th>{t(l, 'doc.type')}</th><th>{t(l, 'doc.date')}</th><th>{t(l, 'doc.review')}</th><th></th></tr></thead>
             <tbody>
               {p.docs.map((d) => (
@@ -119,7 +119,7 @@ export const AdminCompanyDetail = (p: AdminCompanyDetailProps) => {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
         <p class="hint">{t(l, 'adm.co.doc_log_note')}</p>
       </div>

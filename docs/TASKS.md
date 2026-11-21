@@ -44,6 +44,17 @@
       `Vary: Cookie, Accept-Language`), 로그인 쿠키가 있으면 캐시를 거치지 않고 `private, no-store`. 언어 전환 링크가 검색 조건을 유지하도록 render 수정.
       목록 질의는 기존 `idx_jobs_status(status, job_family, published_at)` 를 순서대로 읽어 새 인덱스는 추가하지 않음(마이그레이션 없음).
       wrangler dev + Chromium(Playwright)으로 필터·페이지·상세·언어 전환·로그인/로그아웃 머리글·캐시 hit/miss 확인
+- [x] T-06b 디자인 정리 + 첫 화면 (동작·경로·권한·SQL·법정 문구 변경 없음). `public/app.css` 를 손으로 다시 씀(7,223 → 약 16.8KB, gzip 2.0 → 4.7KB):
+      색·간격·글자 크기·모서리·그림자 토큰(:root), 강조색 하나(파랑 #1d5b9b), ok/warn/problem 색(본문 대비 모두 WCAG AA 이상), 시스템 글꼴(한·중 대체 글꼴 포함), 한국어 `word-break: keep-all`,
+      상자·표·폼·버튼(주/보조 .plain/위험 .secondary/글자 .link)·배지·알림·목록·페이지 이동·정의 목록·머리글(자바스크립트 없이 줄바꿈)·바닥글·인쇄 스타일. 기존 클래스 이름은 그대로.
+      표는 모두 `.table-wrap` 으로 감싸 좁은 화면에서 표 안에서만 가로로 넘김(제목 행이 있는 표는 640px 아래에서 최소 520px). 라디오·체크박스가 폭 100% 로 늘어나던 문제, 숫자·날짜 칸 폭, `.pre` 뒤 간격, 공고 목록의 기업 링크 색(강조를 제목 한 곳으로) 정리.
+      첫 화면(`views/pages.Home`): 소개 + 버튼 2개(`/jobs`, 기업 `/biz` — 비로그인은 로그인 화면으로), 이용 방법(구직자 3·기업 3단계), 이 사이트가 다른 점 4개, 최신 공고(기존 질의·캐시 그대로), 자주 묻는 질문 5개(`<details>`).
+      문구 `home.*` 한국어·중국어(옛 `home.lead`·`home.for_company` 는 지움). 문의처 질문은 운영자 이메일이 【확인 필요】라 넣지 않음. 관리자 첫 화면의 링크 줄을 `.menu` 로, 공고 폼의 저장·돌아가기를 `.actions` 로.
+      라우트·lib·db·legal·마이그레이션은 고치지 않음. 테스트 변경 없음(604).
+      확인: wrangler dev + Chromium(Playwright)으로 가짜 관리자(TOTP)·검증 기업·공고 3건·이력서·지원 1건을 만들고 16개 화면을 1280·360px(첫 화면·목록·상세는 중국어도) 스크린샷으로 확인,
+      360px 가로 스크롤 없음(전에는 `/admin/system` 이 378px), `/`·`/jobs` 외부 요청 없음, 비로그인 `/` 응답 머리글이 바뀌기 전과 같음(miss 기준).
+      하지 않은 것: 공개 기업 목록·상세, 기업 정보·서류·담당자, 관리자 기업·공고·항목·열람 기록, 면접 요청·불합격 화면, 점검 모드 화면은 스크린샷으로 보지 않았다(같은 부품만 씀).
+      브랜드명·로고(8장 미정), 다크 모드, 관리자 설정 화면의 주 버튼 2개(상자마다 폼이 따로라 그대로 둠)
 - [x] T-06d 공개 필터 표시 설정: `site_settings`(0006, key/value, `updated_by`·`updated_at`)와 `db/settings.ts`(getSetting·setSetting upsert).
       `public_job_filters` = `/jobs` 에 보일 필터의 JSON 배열(`lib/public-jobs.parseEnabledFilters`: 없으면 중국어 수준·보고 라인·근무지, 잘못된 값은 기본값,
       모르는 이름은 버림, 빈 배열 = 검색 칸 없음, 표시는 `FILTER_KEYS` 순서). 숨긴 필터는 모르는 조건과 같게 처리(`parseJobFilter`·`canonicalJobsHref` 에 목록을 넘김:
@@ -255,10 +266,6 @@
 - [ ] T-05b 현지화 엔진 실호출 확인 (운영자가 키를 넣은 뒤): `/admin/localize-test` 로 claude·gemini·workers_ai 각각 호출해
       응답 모양·소요 시간(25초 안인지)·JSON 준수·숫자 보존을 확인하고, 기본 모델(`DEFAULT_*_MODEL`)이 맞는지 정한다.
       Gemini `thinkingLevel`, Workers AI 모델의 출력 모양(`choices` / `response`)과 `max_tokens` 인식 여부, Claude `anthropic-version` 을 새 버전(2026-10-21)으로 올릴지 함께 본다
-- [ ] T-06b 디자인 패스: 공고 목록·상세·로그인 화면이 생긴 뒤 한 번에 한다. 밝은 톤, 사무직·전문직 대상의 차분한 인상.
-      Claude Code 에서 unslop 스킬(https://github.com/heydamir/unslop, CC BY 4.0)을 쓸 수 있다. 단 이 프로젝트 제약이 우선한다:
-      외부 폰트·CDN·외부 스크립트 금지, 유료 이미지 생성 금지, 이모지 라벨·보라색 그라데이션·글로우 금지, 색 강조는 한두 곳만,
-      한국어·중국어 화면 모두 확인. 스킬은 제3자 지침이므로 설치 전에 운영자가 내용을 확인한다
 - [ ] T-06c 공개 화면 보완: 생산직 플래그를 켤 때 목록 질의 계획 다시 확인(`job_family IN (...)` 이면 정렬용 임시 B-tree 가 전체 게재 공고를 읽을 수 있음),
       공고가 수천 건을 넘으면 필터별 인덱스 필요 여부 확인(D1 대시보드의 rows read), 캐시를 우회하는 임의 검색 조건(홈 `/?x=`) 처리,
       마감·차단 직후 캐시 즉시 지우기(지금은 최대 60초 남음 — 배포 환경의 Cache API purge 는 zone 단위라 확인 필요)

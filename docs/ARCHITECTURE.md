@@ -490,3 +490,33 @@ D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다)
   (`lib/jobs.draftDeletable`, 확인 화면 `GET /biz/jobs/:id/delete` → POST). `db/jobs.deleteUnusedDraft` 한 문장이 세 조건과 기업을 다시 확인한다. 게재 중·마감·차단 공고, 차단이 풀려 초안으로 돌아온 예전 게재 공고는 지울 수 없다
   (공개된 기록·지원이 남아야 하므로). jobs 를 가리키는 표는 applications 뿐이라 지원이 없으면 다른 행이 남지 않는다. 삭제 기록은 따로 남기지 않는다(개인정보 없는 기업의 초안).
 
+
+## 16. 디자인 규칙 (T-06b)
+
+화면은 서버 렌더링 JSX + `public/app.css` 한 파일이다. 프레임워크·외부 글꼴·아이콘·이미지·CDN 을 쓰지 않는다 (CLAUDE.md 규칙 7). 새 화면은 아래 부품만으로 만든다.
+
+- **토큰 (`:root`):** 글자 `--text`·`--text-2`·`--muted`, 바탕 `--bg`(회색)·`--surface`(흰색)·`--subtle`, 선 `--line`·`--line-2`,
+  강조 `--accent`(파랑 하나 — 보라·그라데이션·글로우 금지), 상태 `--ok`·`--warn`·`--bad`(+`-bg`·`-line`, 흰 바탕·옅은 바탕에서 모두 대비 4.5:1 이상),
+  간격 `--s1`~`--s7`(4·8·12·16·24·32·48px — 이 값 밖의 여백을 새로 쓰지 않는다), 모서리 `--r`(8)·`--r-sm`(6), 그림자 `--shadow` 하나, 글자 크기 `--fs-*`, 폭 `--w`(920)·`--w-wide`(1120).
+- **글꼴:** 시스템 글꼴(`--font`: Apple SD Gothic Neo·Malgun Gothic·PingFang SC·Microsoft YaHei·Noto Sans CJK KR). 줄 간격 1.7. 한국어는 `word-break: keep-all`(:lang(ko)), 중국어는 normal.
+  이메일·주소처럼 긴 글은 `overflow-wrap:anywhere`(`.kv dd`, `td`, `.pre`, `.doc li` 에 이미 걸려 있다).
+- **부품:** 화면 = `section.wide` > `p.crumbs`(선택) > `h1`(한 화면에 하나) > `p.sub muted`(한 줄 설명) > `.box`(흰 상자, 안에 `h2`) 반복. 짧은 화면(로그인·확인·오류)은 `section.card`.
+  정의 목록 `dl.kv`(좁은 화면에서 위아래로), 표는 **반드시 `<div class="table-wrap">` 로 감싼다**(좁은 화면에서 표 안에서만 가로로 넘김), 숫자 열은 `.num`.
+  폼: `label` 안에 글 + 입력 칸 + `span.hint`, 여러 칸은 `.grid2`·`.grid3`·`.grid4`, 묶음은 `fieldset/legend`, 체크·라디오는 `label.check`, 버튼 줄은 `div.actions`.
+  알림 `p.ok`·`p.warn`·`p.error`·`p.info`(목록이면 `ul.error`), 배지 `.badge` + `s-verified|s-published|l-approved`(초록)·`s-rejected|s-blocked`(빨강)·`l-review|s-pending`(노랑), 그 밖은 회색.
+  목록 카드 `ul.list > li`, 메뉴 `ul.menu`, 숫자 상자 `ul.stats`, 페이지 이동 `nav.pager`, 접는 글 `details`.
+- **버튼:** 기본 `button`·`a.button` = 주 버튼 — **한 화면(한 폼)에 하나**. 보조 `.plain`, 되돌릴 수 없는 일(삭제·마감·반려·불합격) `.secondary`(빨간 테두리), 글자 버튼 `.link`(`.link.danger`).
+- **색 강조는 화면당 한두 곳:** 주 버튼과(공고 상세라면) 연봉 칸 정도. 공고 목록은 제목만 강조색이고 기업 링크는 `--text-2`.
+- **하지 않는 것:** 이모지 라벨, 보라색·그라데이션·글로우, 과장된 문구("최고", "유일", "100%"), 장식 이미지·일러스트, 움직임(애니메이션 없음, `prefers-reduced-motion` 존중), 인라인 `style=`, 화면마다 다른 여백.
+- **확인:** 360·768·1280px 에서 가로 스크롤이 없어야 한다(표는 `.table-wrap` 안에서만). 초점은 `:focus-visible` 파란 테두리. 인쇄하면 머리글·폼·버튼이 빠진다(공고 상세 인쇄용).
+
+### 16-1. 첫 화면 문구 (`views/pages.Home`, locales `home.*`)
+
+첫 화면은 비로그인 page-cache(9절) 대상이라 사용자별 내용이 없고, 읽는 데이터는 최신 공고 + 항목 이름뿐이다(T-06b 전과 같음). 보관 기간 숫자처럼 D1 설정에 따라 바뀌는 값은 넣지 않고 개인정보처리방침을 가리킨다.
+"이 사이트가 다른 점" 과 자주 묻는 질문은 **코드로 참인 것만** 적는다. 근거:
+- 확인된 기업만 게재: `rules.publishBlocks` → `company_not_verified`, 공개 조건 `publicJobWhere`(`verify_status = 'verified'`), 승인 취소 시 게재 중 공고 `closed`(T-04b).
+- 근로조건 같은 항목: `views/public-jobs.PublicJobPage` 의 조건 표(연봉·퇴직금·근무시간·보고 라인·중국어 수준·근무지·마감일), `publishBlocks` → `salary_basis_missing`. (연봉 자체는 필수가 아니다 — 없으면 "협의")
+- 중국어로 쓰고 한국어로 읽기: 7절(원문 | 한국어 | 대조본 확인 후 승인), 공고 글은 한국어로만 게재(9절), 화면 언어 전환.
+- 지원서는 지원한 기업만 열람·기록·삭제: `authz.canViewApplication`, `lib/applicants.openApplication`(access_log), 구직자 화면 열람 기록(12절), 보관 기한 삭제(14절), 취소 시 즉시 삭제(11절).
+- 이용료: 이용약관 제9조. 추천·전달 없음: CLAUDE.md 규칙 1. 탈퇴: 13절.
+기능 플래그(`FLAG_HEADHUNTER_POSTING` 등)를 켜거나 위 근거가 바뀌면 이 문구도 함께 고친다. 문의처(운영자 이메일)는 `src/legal/types.ts` 의 【확인 필요】를 채운 뒤 질문을 추가한다.

@@ -61,7 +61,7 @@ export const ApplicantList = (p: ApplicantListProps) => {
       {p.error && <p class="error">{p.error}</p>}
       {p.rows.length === 0 ? <p class="muted">{t(l, 'apl.list.empty')}</p> : (
         <form method="post" action={`/biz/jobs/${p.job.id}/applicants/reject/confirm`} class="box">
-          <table>
+          <div class="table-wrap"><table>
             <thead><tr>
               <th>{t(l, 'aplm.list.select')}</th>
               <th>{t(l, 'apl.no')}</th><th>{t(l, 'app.applied_at')}</th><th>{t(l, 'app.status')}</th><th>{t(l, 'resume.f.attachment')}</th><th></th>
@@ -90,7 +90,7 @@ export const ApplicantList = (p: ApplicantListProps) => {
                 );
               })}
             </tbody>
-          </table>
+          </table></div>
           {p.rows.some((r) => isMailOpen(r.status) && !(p.hq && r.cross_border_consent_at === null)) && (
             <div class="spaced">
               <p class="hint">{tf(l, 'aplm.list.reject_hint', { max: REJECT_BATCH_MAX })}</p>
@@ -246,7 +246,7 @@ export const AccessLogPage = (p: { locale: Locale; rows: AccessLogRow[]; type: A
       </form>
       {p.rows.length === 0 ? <p class="muted">{t(l, 'adm.log.empty')}</p> : (
         <div class="box">
-          <table>
+          <div class="table-wrap"><table>
             <thead><tr>
               <th>{t(l, 'adm.log.at')}</th><th>{t(l, 'adm.log.actor')}</th><th>{t(l, 'adm.log.target')}</th><th>{t(l, 'adm.log.reason')}</th>
             </tr></thead>
@@ -265,7 +265,7 @@ export const AccessLogPage = (p: { locale: Locale; rows: AccessLogRow[]; type: A
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </div>
       )}
       <div class="pager">

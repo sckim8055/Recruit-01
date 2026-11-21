@@ -230,7 +230,7 @@ export const DocsPage = (p: { locale: Locale; company: CompanyRow; docs: DocView
     <Flash locale={p.locale} ok={p.ok} error={p.error} />
     <div class="box">
       {p.docs.length === 0 ? <p class="muted">{t(p.locale, 'doc.none')}</p> : (
-        <table>
+        <div class="table-wrap"><table>
           <thead><tr><th>{t(p.locale, 'doc.type')}</th><th>{t(p.locale, 'doc.date')}</th><th>{t(p.locale, 'doc.review')}</th><th></th></tr></thead>
           <tbody>
             {p.docs.map((d) => (
@@ -242,7 +242,7 @@ export const DocsPage = (p: { locale: Locale; company: CompanyRow; docs: DocView
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </div>
     <div class="box">
@@ -281,7 +281,7 @@ export const MembersPage = (p: {
     <h1>{t(p.locale, 'mem.title')}</h1>
     <Flash locale={p.locale} ok={p.ok} error={p.error} />
     <div class="box">
-      <table>
+      <div class="table-wrap"><table>
         <thead><tr><th>{t(p.locale, 'mem.email')}</th><th>{t(p.locale, 'mem.role')}</th><th>{t(p.locale, 'mem.hq')}</th><th>{t(p.locale, 'mem.joined')}</th><th></th></tr></thead>
         <tbody>
           {p.members.map((m) => (
@@ -298,12 +298,12 @@ export const MembersPage = (p: {
             </tr>
           ))}
         </tbody>
-      </table>
+      </table></div>
     </div>
     {p.invites.length > 0 && (
       <div class="box">
         <h2>{t(p.locale, 'inv.pending')}</h2>
-        <table>
+        <div class="table-wrap"><table>
           <thead><tr><th>{t(p.locale, 'mem.email')}</th><th>{t(p.locale, 'mem.hq')}</th><th>{t(p.locale, 'inv.date')}</th><th></th></tr></thead>
           <tbody>
             {p.invites.map((i) => (
@@ -319,7 +319,7 @@ export const MembersPage = (p: {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
     )}
     <div class="box">
