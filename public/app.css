@@ -1,0 +1,19 @@
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI","Malgun Gothic","Apple SD Gothic Neo","Microsoft YaHei","PingFang SC",sans-serif;color:#1c2330;background:#f6f7f9;line-height:1.6}
+a{color:#1d4ed8;text-decoration:none}a:hover{text-decoration:underline}
+.envbar{background:#fef3c7;color:#78350f;font-size:13px;text-align:center;padding:4px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 24px;background:#fff;border-bottom:1px solid #e3e6ea;flex-wrap:wrap}
+.brand{font-weight:700;font-size:18px;color:#1c2330}
+nav{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+main{max-width:880px;margin:32px auto;padding:0 20px}
+.hero h1{font-size:28px;margin:0 0 8px}
+.card{background:#fff;border:1px solid #e3e6ea;border-radius:10px;padding:24px;max-width:440px;margin:0 auto}
+.card h1{font-size:20px;margin:0 0 16px}
+label{display:block;margin:12px 0;font-size:14px}
+input,select{display:block;width:100%;margin-top:4px;padding:10px;border:1px solid #c9ced6;border-radius:6px;font-size:16px}
+button{padding:10px 16px;border:0;border-radius:6px;background:#1d4ed8;color:#fff;font-size:15px;cursor:pointer}
+button.link{background:none;color:#1d4ed8;padding:0;font-size:inherit}
+form.inline{display:inline}
+.muted{color:#5b6472;font-size:14px}
+.error{color:#b42318;background:#fef3f2;border-radius:6px;padding:8px 12px;font-size:14px}
+footer{max-width:880px;margin:48px auto 24px;padding:0 20px;color:#5b6472;font-size:13px}

@@ -1,0 +1,8 @@
+# 복사해서 .dev.vars 로 저장한다. .dev.vars 는 git 에 올리지 않는다.
+# ENC_KEY: 32바이트 무작위 값(base64).  node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+ENC_KEY=
+# SESSION_PEPPER: 임의의 긴 문자열. 인증코드·세션 해시에 섞는다.
+SESSION_PEPPER=
+# 비워 두면 dev/test 에서는 메일을 보내지 않고 콘솔에 출력한다.
+RESEND_API_KEY=
+ANTHROPIC_API_KEY=

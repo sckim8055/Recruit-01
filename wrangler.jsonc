@@ -1,0 +1,31 @@
+{
+  // 테스트 환경 (recruit.kimbbob.xyz). 운영 환경은 env.production 으로 분리한다 (docs/ARCHITECTURE.md 6장).
+  "name": "recruit-test",
+  "main": "src/index.tsx",
+  "compatibility_date": "2026-11-01",
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "recruit-test",
+      "database_id": "REPLACE_WITH_D1_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "recruit-test-files" }],
+  "triggers": { "crons": ["0 18 * * *"] },
+  "vars": {
+    "APP_ENV": "test",
+    "APP_ORIGIN": "https://recruit.kimbbob.xyz",
+    "MAIL_FROM": "",
+    // 운영자 소유 도메인: 공고 연락처로 쓸 수 없다 (직업정보제공사업자 준수사항)
+    "OPERATOR_DOMAINS": "kimbbob.xyz,kimbbob.com,nexthub.me",
+    // 직업정보제공사업 신고번호. 비어 있으면 운영(production)에서 공고를 게재할 수 없다.
+    "REGISTRATION_NO": "",
+    // 기능 플래그: "on" 일 때만 켜진다. 켜기 전 조건은 docs/ARCHITECTURE.md 5장.
+    "FLAG_PRODUCTION_JOBS": "off",
+    "FLAG_HEADHUNTER_POSTING": "off",
+    "FLAG_RESUME_ZH_SUMMARY": "off",
+    "FLAG_PAID_LABEL": "off"
+  }
+}
