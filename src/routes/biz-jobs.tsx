@@ -11,6 +11,7 @@ import {
   validateJob, type JobFieldError, type JobInput, type JobText,
 } from '../lib/jobs';
 import { availableEngines, localizeJob } from '../lib/localize';
+import { translatorNoteLines } from '../lib/localize/prompt';
 import { buildOptionSet, selectableAll, type OptionKind, type OptionSet } from '../lib/options';
 import { parseOperatorDomains, publishBlocks } from '../lib/rules';
 import { render, renderError } from '../render';
@@ -66,7 +67,7 @@ async function reviewPage(
   return render(
     c,
     <JobReview
-      locale={c.var.locale} job={job} options={options} blocks={blocks} digits={digits}
+      locale={c.var.locale} job={job} options={options} blocks={blocks} digits={digits} notes={translatorNoteLines(job.body_ko ?? '')}
       enginesAvailable={availableEngines(c.env).length > 0}
       ok={msg.ok} error={msg.error} koErrors={msg.koErrors ?? []} koInput={msg.koInput} highlightBlocks={msg.showBlocks}
     />,

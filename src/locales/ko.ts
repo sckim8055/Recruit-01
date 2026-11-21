@@ -313,6 +313,7 @@ export const ko: Record<string, string> = {
   'job.digits.warn': '원문과 한국어 초안의 숫자가 다릅니다. 금액·연차·시간 등이 바뀌지 않았는지 확인해 주세요. (한자로 적은 숫자도 여기에 표시될 수 있습니다)',
   'job.digits.missing': '원문에만 있는 숫자',
   'job.digits.extra': '한국어에만 있는 숫자',
+  'job.notes.warn': '한국어 초안에 공고 내용이 아닌 안내 문장으로 보이는 줄이 있습니다. 그대로 구직자에게 공개되니, 필요 없으면 아래 "한국어 직접 고치기"에서 지워 주세요.',
   'job.localize': '한국어 초안 만들기',
   'job.localize.again': '다시 만들기',
   'job.localize.hint': '자동으로 만든 초안은 원문과 다를 수 있습니다. 반드시 대조본으로 확인해 주세요. 30초 정도 걸릴 수 있습니다.',

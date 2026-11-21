@@ -286,3 +286,27 @@ describe('gemini: 혼잡하면 다음 모델', () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe('번역자 메모 감지와 지시문', () => {
+  it('메모처럼 보이는 줄만 찾는다', async () => {
+    const { translatorNoteLines } = await import('../src/lib/localize/prompt');
+    const body = [
+      '한국 구직 사이트에 오신 것을 환영합니다.',
+      '',
+      '[참고] 원문에 담당업무, 자격요건 등 채용 세부 내용이 포함되어 있지 않아 원문 내용만 옮겼습니다.',
+      '※ 급여는 원문에 명시되어 있지 않습니다.',
+      '담당업무: 한국 시장 영업',
+      '자격요건: 경력 3년 이상',
+      '우대사항: 중국어 가능자 (참고로 본사와 소통합니다)',
+    ].join('\n');
+    expect(translatorNoteLines(body)).toHaveLength(2);
+    expect(translatorNoteLines('담당업무\n- 고객 개발\n자격요건\n- 경력 3년')).toEqual([]);
+    expect(translatorNoteLines('')).toEqual([]);
+  });
+  it('초안 지시문은 메모를 금지하고, 대조본 지시문은 빠짐없이 옮기라고 한다', async () => {
+    const { LOCALIZE_SYSTEM, BACK_SYSTEM } = await import('../src/lib/localize/prompt');
+    expect(LOCALIZE_SYSTEM).toContain('번역자 메모');
+    expect(LOCALIZE_SYSTEM).toContain('[참고]');
+    expect(BACK_SYSTEM).toContain('하나도 빼지 마세요');
+  });
+});

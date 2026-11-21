@@ -227,6 +227,8 @@ export interface JobReviewProps {
   options: OptionSet;
   blocks: PublishBlock[];
   digits: { missing: string[]; extra: string[] };
+  /** 한국어 초안에서 번역자 메모처럼 보이는 줄 (경고용) */
+  notes?: string[];
   enginesAvailable: boolean;
   koErrors: JobFieldError[];
   koInput?: { title_ko: string; body_ko: string };
@@ -307,6 +309,12 @@ export const JobReview = (p: JobReviewProps) => {
             <p>{t(l, 'job.digits.warn')}</p>
             {p.digits.missing.length > 0 && <p>{t(l, 'job.digits.missing')}: {p.digits.missing.join(', ')}</p>}
             {p.digits.extra.length > 0 && <p>{t(l, 'job.digits.extra')}: {p.digits.extra.join(', ')}</p>}
+          </div>
+        )}
+        {hasKo && (p.notes?.length ?? 0) > 0 && (
+          <div class="warn">
+            <p>{t(l, 'job.notes.warn')}</p>
+            <ul>{p.notes!.slice(0, 5).map((n) => <li>{n.length > 120 ? `${n.slice(0, 120)}…` : n}</li>)}</ul>
           </div>
         )}
         {!closed && (

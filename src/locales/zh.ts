@@ -313,6 +313,7 @@ export const zh: Record<string, string> = {
   'job.digits.warn': '原文与韩文稿中的数字不一致。请确认金额、年限、时间等没有被改动。（用汉字书写的数字也可能显示在这里）',
   'job.digits.missing': '仅原文中有的数字',
   'job.digits.extra': '仅韩文稿中有的数字',
+  'job.notes.warn': '韩文稿中有看起来不属于招聘内容的说明性句子。这些内容会原样公开给求职者，如不需要，请在下方“直接修改韩文”中删除。',
   'job.localize': '生成韩文稿',
   'job.localize.again': '重新生成',
   'job.localize.hint': '自动生成的韩文稿可能与原文有出入，请务必通过对照稿确认。可能需要约 30 秒。',
