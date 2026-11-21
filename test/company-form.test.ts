@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { findBannedPhrases } from '../src/lib/rules';
 import {
   MAX_COMPANY_SEATS, REJECT_REASON_MAX, bizNoDigits, fmtBizNo, fmtDate, hasSeatLeft, identitySnapshot, inputFromFields,
-  inviteIsHq, isHttpUrl, lockedFields, ownerIsHq, parseInvite, parseVerifyAction, planCompanyEdit, readCompanyForm,
+  inviteIsHq, inviteMail, isHttpUrl, lockedFields, ownerIsHq, parseInvite, parseRevokeAction, parseVerifyAction, planCompanyEdit,
+  readCompanyForm,
   removeCheck, statusAfterDocUpload, validateCompany, type CompanyFields, type CompanyInput,
 } from '../src/lib/company';
 
@@ -166,9 +168,58 @@ describe('parseVerifyAction', () => {
   it('반려는 사유 필수, 500자까지', () => {
     expect(parseVerifyAction({ action: 'reject', reason: '  ' })).toEqual({ ok: false, why: 'reason_required' });
     expect(parseVerifyAction({ action: 'reject', reason: 'a'.repeat(REJECT_REASON_MAX + 1) })).toEqual({ ok: false, why: 'reason_too_long' });
-    expect(parseVerifyAction({ action: 'reject', reason: ' 서류 불일치 ' })).toEqual({ ok: true, action: 'reject', reason: '서류 불일치' });
+    expect(parseVerifyAction({ action: 'reject', reason: ' 서류 불일치 ' }))
+      .toEqual({ ok: true, action: 'reject', reason: '서류 불일치', rejectDocs: false });
+  });
+  it('반려할 때 "서류에 문제가 있음" 체크', () => {
+    expect(parseVerifyAction({ action: 'reject', reason: '흐림', reject_docs: '1' }))
+      .toEqual({ ok: true, action: 'reject', reason: '흐림', rejectDocs: true });
+    expect(parseVerifyAction({ action: 'reject', reason: '흐림', reject_docs: 'on' })).toMatchObject({ rejectDocs: true });
+    expect(parseVerifyAction({ action: 'reject', reason: '흐림', reject_docs: 'yes' })).toMatchObject({ rejectDocs: false });
   });
   it('그 밖의 값은 거부', () => expect(parseVerifyAction({ action: 'edit' })).toEqual({ ok: false, why: 'bad_action' }));
+});
+
+describe('parseRevokeAction (승인 취소)', () => {
+  it('사유 필수, 500자까지 (반려와 같은 검사)', () => {
+    expect(parseRevokeAction({})).toEqual({ ok: false, why: 'reason_required' });
+    expect(parseRevokeAction({ reason: ' \r\n ' })).toEqual({ ok: false, why: 'reason_required' });
+    expect(parseRevokeAction({ reason: 'a'.repeat(REJECT_REASON_MAX + 1) })).toEqual({ ok: false, why: 'reason_too_long' });
+    expect(parseRevokeAction({ reason: 'a'.repeat(REJECT_REASON_MAX) })).toMatchObject({ ok: true });
+    expect(parseRevokeAction({ reason: ' 폐업 확인\r\n재확인 필요 ' })).toEqual({ ok: true, reason: '폐업 확인\n재확인 필요', rejectDocs: false });
+  });
+  it('서류 반려 체크', () => {
+    expect(parseRevokeAction({ reason: '서류 위조 의심', reject_docs: '1' })).toEqual({ ok: true, reason: '서류 위조 의심', rejectDocs: true });
+  });
+  it('승인 취소된 기업(rejected)은 신원 항목이 다시 열리고, 고치면 검증 대기로 돌아간다', () => {
+    const revoked = { ...stored, verify_status: 'rejected' as const };
+    expect(lockedFields(revoked.verify_status)).toEqual([]);
+    const p = planCompanyEdit(revoked, form({ name_ko: '바꾼이름', biz_no: '220-81-62517' }));
+    expect(p.ok && [p.locked, p.value.name_ko, p.value.biz_no, p.nextStatus, p.clearRejectReason])
+      .toEqual([false, '바꾼이름', '2208162517', 'pending', true]);
+  });
+});
+
+describe('inviteMail (담당자 초대 메일)', () => {
+  const m = inviteMail({ name_ko: '테스트전자', name_zh: '测试电子' }, 'https://recruit.example/');
+  it('기업 이름과 로그인 주소가 들어가고, 한국어가 먼저, 중국어가 뒤에', () => {
+    expect(m.subject).toContain('테스트전자');
+    expect(m.subject).toContain('测试电子');
+    expect(m.text).toContain('https://recruit.example/login');
+    expect(m.text).toContain('기업 담당자');
+    expect(m.text).toContain('企业招聘负责人');
+    expect(m.text.indexOf('테스트전자')).toBeLessThan(m.text.indexOf('测试电子'));
+    expect(m.text).not.toMatch(/\{(company|url|site)\}/);
+  });
+  it('이메일 주소 같은 개인정보는 넣지 않는다', () => {
+    expect(m.subject + m.text).not.toContain('@');
+  });
+  it('중국어 이름이 없으면 한국어 이름을 쓴다', () => {
+    const k = inviteMail({ name_ko: '가나상사', name_zh: null }, 'http://localhost:8799');
+    expect(k.text.split('가나상사').length - 1).toBe(2);
+    expect(k.text).toContain('http://localhost:8799/login');
+  });
+  it('금지 표현이 없다', () => expect(findBannedPhrases(m.subject + m.text)).toEqual([]));
 });
 
 describe('표시용', () => {

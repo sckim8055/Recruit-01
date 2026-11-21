@@ -1,4 +1,4 @@
-// 관리자 기업 검증 화면. 관리자는 기업 정보를 고칠 수 없고 승인·반려만 한다.
+// 관리자 기업 검증 화면. 관리자는 기업 정보를 고칠 수 없고 승인·반려·승인 취소만 한다.
 import type { Locale } from '../env';
 import { REJECT_REASON_MAX, fmtBizNo, fmtDate, type EntityType, type VerifyStatus } from '../lib/company';
 import { t } from '../lib/i18n';
@@ -53,6 +53,17 @@ export const AdminCompanyDetail = (p: AdminCompanyDetailProps) => {
   const c = p.company;
   const l = p.locale;
   const pending = c.verify_status === 'pending';
+  const verified = c.verify_status === 'verified';
+  const reasonField = (labelKey: string) => (
+    <>
+      <label>{t(l, labelKey)}
+        <textarea name="reason" rows={3} required maxlength={REJECT_REASON_MAX}></textarea>
+        <span class="hint">{t(l, 'adm.co.reason_hint')}</span>
+      </label>
+      <label class="check"><input type="checkbox" name="reject_docs" value="1" />{t(l, 'adm.co.reject_docs')}</label>
+      <p class="hint">{t(l, 'adm.co.reject_docs_hint')}</p>
+    </>
+  );
   const row = (k: string, v: unknown) => (<><dt>{t(l, k)}</dt><dd>{v as string}</dd></>);
   return (
     <section class="wide">
@@ -116,7 +127,13 @@ export const AdminCompanyDetail = (p: AdminCompanyDetailProps) => {
       <div class="box">
         <h2>{t(l, 'adm.co.decide')}</h2>
         <p class="muted">{t(l, 'adm.co.manual_note')}</p>
-        {!pending ? <p class="muted">{t(l, 'adm.err.not_pending')}</p> : (
+        {verified ? (
+          <form method="post" action={`/admin/companies/${c.id}/revoke`}>
+            <p>{t(l, 'adm.co.revoke_note')}</p>
+            {reasonField('adm.co.revoke_reason')}
+            <button type="submit" class="secondary">{t(l, 'adm.co.revoke')}</button>
+          </form>
+        ) : !pending ? <p class="muted">{t(l, 'adm.err.not_pending')}</p> : (
           <>
             {p.blocks.length > 0 && (
               <>
@@ -131,10 +148,7 @@ export const AdminCompanyDetail = (p: AdminCompanyDetailProps) => {
             </form>
             <form method="post" action={`/admin/companies/${c.id}/verify`} class="spaced">
               <input type="hidden" name="action" value="reject" />
-              <label>{t(l, 'adm.co.reason')}
-                <textarea name="reason" rows={3} required maxlength={REJECT_REASON_MAX}></textarea>
-                <span class="hint">{t(l, 'adm.co.reason_hint')}</span>
-              </label>
+              {reasonField('adm.co.reason')}
               <button type="submit" class="secondary">{t(l, 'adm.co.reject')}</button>
             </form>
           </>

@@ -38,7 +38,7 @@
 | GET·POST /biz/company/docs | 검증 서류 목록·업로드 (R2 비공개, 기업당 5개) | canManageCompany | ✅ |
 | GET /biz/docs/:id | 검증 서류 내려받기 (access_log) | canViewVerificationDoc | ✅ |
 | GET /biz/members | 담당자·대기 초대 목록 (대표 담당자가 아니면 읽기만) | canManageCompany | ✅ |
-| POST /biz/members/invite · /biz/members/:userId/remove · /biz/invites/:id/cancel | 담당자 초대·내보내기·초대 취소 | canManageMembers (owner) | ✅ |
+| POST /biz/members/invite · /biz/members/:userId/remove · /biz/invites/:id/cancel | 담당자 초대(초대 메일 `company_invite` 발송, 실패해도 초대 유지)·내보내기·초대 취소 | canManageMembers (owner) | ✅ |
 | POST /biz/invites/:id/accept | 초대 수락 (초대받은 이메일 본인, 소속 없을 때만) | company | ✅ |
 | GET /biz/jobs · GET·POST /biz/jobs/new · /biz/jobs/:id | 공고 작성(중국어)·수정 | canEditJob | T-05 |
 | POST /biz/jobs/:id/localize | AI 현지화 초안 + 대조본 생성 | canEditJob | T-05 |
@@ -54,7 +54,8 @@
 |---|---|---|
 | GET /admin | 처리할 일 개수 (검증 대기·검토 대기·신고). 검증 대기 기업 → /admin/companies, 나머지 목록은 T-05·T-09 | ✅ |
 | GET /admin/companies · /admin/companies/:id | 기업 목록(검증 대기 먼저)·상세 (담당자 이메일, 서류, `verifyBlocks` 결과) | ✅ |
-| POST /admin/companies/:id/verify | 기업 승인(`verifyBlocks` 가 비어야 함)·반려(사유 필수). 검증 대기 상태에서만 | ✅ |
+| POST /admin/companies/:id/verify | 기업 승인(`verifyBlocks` 가 비어야 함)·반려(사유 필수, `reject_docs` 체크 시 서류도 반려). 검증 대기 상태에서만 | ✅ |
+| POST /admin/companies/:id/revoke | 승인 취소(사유 필수, `reject_docs` 체크 시 서류도 반려). 검증 완료 상태에서만. 기업은 반려 상태, 게재 중 공고는 `closed` | ✅ |
 | GET /admin/docs/:id | 검증 서류 내려받기 (access_log) | ✅ |
 | POST /admin/jobs/:id/block · /clear-review | 공고 차단 · 기술유출 검토 통과 | T-05 |
 | GET /admin/applications/:id?reason= | 사유 입력 후 지원서 열람 (access_log) | T-09 |

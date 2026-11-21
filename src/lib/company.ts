@@ -1,6 +1,7 @@
 // 기업 등록·편집 폼의 검사와 정규화, 검증 뒤 잠금 판단, 담당자·승인 폼 검사.
-// 순수 함수만 둔다 (DB 접근 없음) — test/company-form.test.ts 로 검증한다.
+// 순수 함수만 둔다 (DB 접근 없음, 초대 메일 문구 조립 포함) — test/company-form.test.ts 로 검증한다.
 // 승인 가능 여부 자체는 rules.verifyBlocks 가 정한다. 여기서는 입력값만 다룬다.
+import { t } from './i18n';
 import { isValidBizNo } from './rules';
 
 export const ENTITY_TYPES = ['kr_entity', 'cn_hq'] as const;
@@ -199,19 +200,57 @@ export function removeCheck(callerId: string, target: { user_id: string; member_
   return 'ok';
 }
 
+export type ReasonError = 'reason_required' | 'reason_too_long';
+
 export type VerifyAction =
   | { ok: true; action: 'approve' }
-  | { ok: true; action: 'reject'; reason: string }
-  | { ok: false; why: 'bad_action' | 'reason_required' | 'reason_too_long' };
+  /** rejectDocs: "서류에 문제가 있음" 체크 — 반려와 함께 서류도 반려해 새 서류를 올려야 승인할 수 있게 한다. */
+  | { ok: true; action: 'reject'; reason: string; rejectDocs: boolean }
+  | { ok: false; why: 'bad_action' | ReasonError };
+
+const isChecked = (v: unknown): boolean => v === '1' || v === 'on';
+
+/** 반려·승인 취소 사유: 필수, 500자까지. 줄바꿈은 \n 으로 맞춘다. */
+function readReason(f: Record<string, unknown>): { ok: true; reason: string } | { ok: false; why: ReasonError } {
+  const reason = str(f, 'reason').replace(/\r\n?/g, '\n');
+  if (!reason) return { ok: false, why: 'reason_required' };
+  if (reason.length > REJECT_REASON_MAX) return { ok: false, why: 'reason_too_long' };
+  return { ok: true, reason };
+}
 
 export function parseVerifyAction(f: Record<string, unknown>): VerifyAction {
   const action = str(f, 'action');
   if (action === 'approve') return { ok: true, action };
   if (action !== 'reject') return { ok: false, why: 'bad_action' };
-  const reason = str(f, 'reason').replace(/\r\n?/g, '\n');
-  if (!reason) return { ok: false, why: 'reason_required' };
-  if (reason.length > REJECT_REASON_MAX) return { ok: false, why: 'reason_too_long' };
-  return { ok: true, action, reason };
+  const r = readReason(f);
+  if (!r.ok) return r;
+  return { ok: true, action, reason: r.reason, rejectDocs: isChecked(f.reject_docs) };
+}
+
+export type RevokeAction = { ok: true; reason: string; rejectDocs: boolean } | { ok: false; why: ReasonError };
+
+/** 승인 취소 폼: 반려와 같은 사유 검사 + 서류 반려 체크. */
+export function parseRevokeAction(f: Record<string, unknown>): RevokeAction {
+  const r = readReason(f);
+  if (!r.ok) return r;
+  return { ok: true, reason: r.reason, rejectDocs: isChecked(f.reject_docs) };
+}
+
+/**
+ * 담당자 초대 메일. 초대받는 사람의 언어를 모르므로 한국어 다음에 중국어를 함께 쓴다.
+ * 개인정보는 넣지 않는다: 초대한 기업 이름과 로그인 주소만 들어간다 (초대한 사람·받는 사람의 주소 없음).
+ */
+export function inviteMail(co: { name_ko: string; name_zh: string | null }, origin: string): { subject: string; text: string } {
+  const url = `${origin.replace(/\/+$/, '')}/login`;
+  const fill = (l: 'ko' | 'zh', key: string) =>
+    t(l, key)
+      .replaceAll('{site}', t(l, 'site.name'))
+      .replaceAll('{url}', url)
+      .replaceAll('{company}', l === 'zh' ? co.name_zh || co.name_ko : co.name_ko);
+  return {
+    subject: `[${t('ko', 'site.name')}] ${fill('ko', 'mail.invite.subject')} / ${fill('zh', 'mail.invite.subject')}`,
+    text: `${fill('ko', 'mail.invite.body')}\n\n----------------------------------------\n\n${fill('zh', 'mail.invite.body')}`,
+  };
 }
 
 /**
