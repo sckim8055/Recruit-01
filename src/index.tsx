@@ -13,7 +13,9 @@ import { Home } from './views/pages';
 
 const app = new Hono<AppEnv>();
 
-app.use('*', secureHeaders());
+// Referrer-Policy 는 same-origin 으로 둔다. 기본값(no-referrer)이면 브라우저가 같은 사이트의 폼 전송에도
+// Origin 을 "null" 로 보내서 아래 sameOrigin 검사(CSRF 방어)가 모든 폼을 막는다. same-origin 은 바깥 사이트로는 여전히 아무것도 보내지 않는다.
+app.use('*', secureHeaders({ referrerPolicy: 'same-origin' }));
 app.use('*', sameOrigin);
 app.use('*', loadUser);
 app.use('*', async (c, next) => {
