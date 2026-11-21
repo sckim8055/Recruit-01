@@ -4,7 +4,7 @@ import type { Locale } from '../env';
 import { t } from '../lib/i18n';
 import type { CheckItem, CheckLevel, SecretState } from '../lib/config-check';
 import type { StepName } from '../lib/maintenance';
-import type { TodayUsage } from '../lib/quota';
+import type { TodayUsage, UsageLine } from '../lib/quota';
 import { RETENTION_SPEC, type RetentionSettings } from '../lib/retention';
 import { retentionValueText } from './admin-settings';
 
@@ -15,6 +15,10 @@ const BADGE: Record<CheckLevel, string> = { ok: 'badge s-verified', warning: 'ba
 export const SystemPage = (p: {
   locale: Locale; appEnv: string; worst: CheckLevel; checks: CheckItem[]; secrets: SecretState[];
   schedule: readonly StepName[]; usage: TodayUsage; retention: RetentionSettings;
+  /** 시간표 단계 뒤에 같은 실행에서 하는 단계 (UTC 시 → 단계, T-10). */
+  shared?: Readonly<Record<number, StepName>>;
+  /** 조건 알림 개수와 오늘 알림 메일 (개수만, T-10). */
+  alerts?: { active: number; paused: number; mail: UsageLine };
 }) => {
   const l = p.locale;
   return (
@@ -68,6 +72,20 @@ export const SystemPage = (p: {
         </table></div>
       </div>
 
+      {p.alerts && (
+        <div class="box">
+          <h2>{t(l, 'sys.alerts.title')}</h2>
+          <div class="table-wrap"><table>
+            <tbody>
+              <tr><th>{t(l, 'sys.alerts.active')}</th><td class="num">{p.alerts.active}</td></tr>
+              <tr><th>{t(l, 'sys.alerts.paused')}</th><td class="num">{p.alerts.paused}</td></tr>
+              <tr><th>{t(l, 'sys.alerts.mail_today')}</th><td class="num">{p.alerts.mail.n} / {p.alerts.mail.limit}</td></tr>
+            </tbody>
+          </table></div>
+          <p class="hint">{t(l, 'sys.alerts.note')}</p>
+        </div>
+      )}
+
       <div class="box">
         <h2>{t(l, 'sys.ret.title')}</h2>
         <div class="table-wrap"><table>
@@ -87,7 +105,8 @@ export const SystemPage = (p: {
           <thead><tr><th>UTC</th><th>{t(l, 'sys.cron.kst')}</th><th>{t(l, 'sys.cron.step')}</th></tr></thead>
           <tbody>
             {p.schedule.map((step, h) => (
-              <tr><td>{String(h).padStart(2, '0')}:00</td><td>{String((h + 9) % 24).padStart(2, '0')}:00</td><td>{t(l, `sys.step.${step}`)} <span class="muted">({step})</span></td></tr>
+              <tr><td>{String(h).padStart(2, '0')}:00</td><td>{String((h + 9) % 24).padStart(2, '0')}:00</td><td>{t(l, `sys.step.${step}`)} <span class="muted">({step})</span>
+                {p.shared?.[h] && <> + {t(l, `sys.step.${p.shared[h]}`)} <span class="muted">({p.shared[h]})</span></>}</td></tr>
             ))}
           </tbody>
         </table></div>

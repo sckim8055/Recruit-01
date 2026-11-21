@@ -20,7 +20,7 @@ import { kstDate } from './jobs';
 import { deleteResumeFile } from './resume-files';
 import {
   DAY, DEFAULT_RETENTION, EMAIL_LOG_KEEP, ERASED_ROW_KEEP, JOB_CLOSE_NOTICE_BEFORE, JOB_STALE_AFTER, LEGACY_APPLICATION_KEEP_DAYS,
-  ORPHAN_MIN_AGE, retentionSeconds, type RetentionValues,
+  ORPHAN_MIN_AGE, retentionSeconds, type RetentionSettings, type RetentionValues,
 } from './retention';
 import { loadRetention } from './retention-setting';
 import { legalParams } from '../legal/render';
@@ -32,11 +32,12 @@ import {
 } from '../db/maintenance';
 import { getSetting } from '../db/settings';
 import { USAGE_KEEP_DAYS, kstDay } from './quota';
+import { sendAlerts } from './alert-send';
 
 // ───────── 단계 이름·시간표·상한
 
 export const STEP_NAMES = [
-  'closeJobs', 'markApplications', 'purgeApplications', 'dropOldRows', 'purgeVerificationDocs', 'sweepOrphans', 'report',
+  'closeJobs', 'markApplications', 'purgeApplications', 'dropOldRows', 'purgeVerificationDocs', 'sweepOrphans', 'report', 'sendAlerts',
 ] as const;
 export type StepName = (typeof STEP_NAMES)[number];
 export interface StepResult { step: StepName; done: Record<string, number> }
@@ -77,6 +78,20 @@ export const SCHEDULE: readonly StepName[] = [
 export const REPORT_HOUR_UTC = 0;
 
 export const stepForTime = (nowSec: number): StepName => SCHEDULE[Math.floor(nowSec / 3600) % 24]!;
+
+/**
+ * 같은 실행에서 시간표의 단계 **다음에** 하는 단계 (T-10). SCHEDULE 24칸이 모두 차 있어, 조건 알림(sendAlerts)은
+ * 가벼운 단계(report · dropOldRows · purgeVerificationDocs)가 있는 한국 시간 낮 시각에 그 단계 뒤에 붙인다:
+ * 00 UTC = 09 KST (report 뒤 — 매일 알림이 나가는 시각), 04 = 13 KST · 10 = 19 KST (dropOldRows 뒤), 06 = 15 KST (purgeVerificationDocs 뒤) — 밀린 알림을 잇는다.
+ * 앞 단계의 동작은 바뀌지 않는다 (같은 보관 기간 설정을 쓰고, 단계마다 따로 try 하고 로그 한 줄). 하위 요청 계산은 docs/ARCHITECTURE.md 17절.
+ */
+export const SHARED_SLOTS: Readonly<Record<number, StepName>> = { 0: 'sendAlerts', 4: 'sendAlerts', 6: 'sendAlerts', 10: 'sendAlerts' };
+
+/** 이 시각의 실행에서 하는 단계들 (시간표의 단계 + 붙은 단계). */
+export const stepsForTime = (nowSec: number): StepName[] => {
+  const extra = SHARED_SLOTS[Math.floor(nowSec / 3600) % 24];
+  return extra ? [stepForTime(nowSec), extra] : [stepForTime(nowSec)];
+};
 
 /**
  * 한 번 실행의 상한. D1 문장은 batch 안의 문장도 하나씩 센다 (D1 은 batch 를 한 번으로 세지만 보수적으로) — 실행 1회 25개 이하,
@@ -421,7 +436,7 @@ export async function report(env: Env, now: number): Promise<StepResult> {
 }
 
 export const STEPS: Record<StepName, StepFn> = {
-  closeJobs, markApplications, purgeApplications, dropOldRows: dropOldRowsStep, purgeVerificationDocs, sweepOrphans, report,
+  closeJobs, markApplications, purgeApplications, dropOldRows: dropOldRowsStep, purgeVerificationDocs, sweepOrphans, report, sendAlerts,
 };
 
 // ───────── 실행
@@ -433,30 +448,45 @@ export interface RunOptions {
   impl?: Partial<Record<StepName, StepFn>>;
 }
 
-export interface RunOutcome { step: StepName; ok: boolean; done: Record<string, number> }
+export interface RunOutcome { step: StepName; ok: boolean; done: Record<string, number>; also?: RunOutcome[] }
 
 /**
- * 예약 작업 한 번: 보관 기간 설정 읽기(기본 키 한 행) → 단계 하나 → 집계 기록 → 로그 한 줄. 예외를 밖으로 내보내지 않는다.
- * 설정을 읽지 못하면 단계를 실행하지 않는다 (failed).
+ * 예약 작업 한 번: 보관 기간 설정 읽기(기본 키 한 행) → 단계 하나(+ SHARED_SLOTS 의 붙은 단계) → 집계 기록(한 번) → 단계마다 로그 한 줄.
+ * 예외를 밖으로 내보내지 않는다. 설정을 읽지 못하면 어느 단계도 실행하지 않는다 (failed). 단계를 고른 실행(force)은 그 단계 하나만 한다.
+ * 돌려주는 값은 시간표의 단계 결과이고, 붙은 단계의 결과는 also 에 있다.
  */
 export async function runMaintenance(env: Env, nowSec: number, opts: RunOptions = {}): Promise<RunOutcome> {
-  const step = opts.force ?? stepForTime(nowSec);
-  const fn = opts.impl?.[step] ?? STEPS[step];
-  let ok = true;
-  let done: Record<string, number> = {};
+  const steps = opts.force ? [opts.force] : stepsForTime(nowSec);
+  let retention: RetentionSettings | null = null;
   try {
-    const retention = await loadRetention(env.DB);
-    done = (await fn(env, nowSec, retention)).done;
+    retention = await loadRetention(env.DB);
   } catch {
-    ok = false; // 오류 내용은 남기지 않는다 (키·주소가 들어 있을 수 있다)
+    retention = null;
   }
-  const numbers = Object.fromEntries(Object.entries(done).filter(([, n]) => typeof n === 'number' && Number.isFinite(n)));
+  const outcomes: RunOutcome[] = [];
+  for (const step of steps) {
+    const fn = opts.impl?.[step] ?? STEPS[step];
+    let ok = retention !== null;
+    let done: Record<string, number> = {};
+    if (ok) {
+      try {
+        done = (await fn(env, nowSec, retention!)).done;
+      } catch {
+        ok = false; // 오류 내용은 남기지 않는다 (키·주소가 들어 있을 수 있다)
+      }
+    }
+    const numbers = Object.fromEntries(Object.entries(done).filter(([, n]) => typeof n === 'number' && Number.isFinite(n)));
+    outcomes.push({ step, ok, done: numbers });
+  }
   try {
     const key = statsKey(nowSec);
-    await putMaintSetting(env.DB, key, JSON.stringify(mergeStats(parseStats(await getSetting(env.DB, key)), step, ok, numbers)), nowSec);
+    let stats = parseStats(await getSetting(env.DB, key));
+    for (const o of outcomes) stats = mergeStats(stats, o.step, o.ok, o.done);
+    await putMaintSetting(env.DB, key, JSON.stringify(stats), nowSec);
   } catch {
     /* 집계를 못 남겨도 작업 결과는 그대로다 */
   }
-  console.log(`maint: step=${step} ${ok ? 'ok' : 'failed'} counts=${JSON.stringify(numbers)}`);
-  return { step, ok, done: numbers };
+  for (const o of outcomes) console.log(`maint: step=${o.step} ${o.ok ? 'ok' : 'failed'} counts=${JSON.stringify(o.done)}`);
+  const [first, ...rest] = outcomes;
+  return rest.length ? { ...first!, also: rest } : first!;
 }

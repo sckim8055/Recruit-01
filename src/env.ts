@@ -33,6 +33,9 @@ export interface Env {
   MAIL_PER_COMPANY_DAY?: string;
   MAIL_SITE_DAY?: string;
   DRAFT_JOBS_PER_COMPANY?: string;
+  // 조건 알림(T-10): 사이트 전체 하루 알림 메일(기본 40, quota.ts) · 예약 작업 한 번에 처리하는 알림 수(기본 8, 최대 10 — lib/alerts.alertRunCap).
+  ALERT_MAIL_SITE_DAY?: string;
+  ALERT_SEND_PER_RUN?: string;
   // secrets
   ENC_KEY: string;
   SESSION_PEPPER: string;

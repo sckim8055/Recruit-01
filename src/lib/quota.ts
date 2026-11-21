@@ -22,6 +22,11 @@ export const DEFAULT_LIMITS = {
   MAIL_SITE_DAY: 1000,
   /** 기업당 작성 중인 공고 수 (게재 중·마감이 아닌 공고 = 초안·차단). 하루 횟수가 아니라 개수. */
   DRAFT_JOBS_PER_COMPANY: 20,
+  /**
+   * 사이트 전체 하루 조건 알림 메일 (T-10, lib/alert-send.ts). Resend 무료 플랜은 하루 100통이고 로그인 인증코드와 같이 쓰므로
+   * 알림이 그 몫을 다 쓰지 않게 따로 센다. 위 MAIL_SITE_DAY(기업 메일)와는 다른 몫이다. 0 = 알림 메일을 보내지 않음.
+   */
+  ALERT_MAIL_SITE_DAY: 40,
 } as const;
 
 export type LimitName = keyof typeof DEFAULT_LIMITS;
@@ -58,6 +63,7 @@ export const SCOPES = {
   adminTest: 'admin_localize_test',
   mailCompany: 'mail_company',
   mailSite: 'mail_site',
+  alertMailSite: 'alert_mail_site',
 } as const;
 /** 사이트 전체 몫의 subject. */
 export const SITE = 'site';
@@ -126,6 +132,11 @@ export function takeCompanyMail(env: Env2, companyId: string, ts: number): Promi
 }
 
 export interface UsageLine { n: number; limit: number }
+
+/** 관리자 시스템 화면: 오늘(한국 시간) 보낸 조건 알림 메일 수와 한도 (T-10, 읽기 한 번). */
+export async function todayAlertMail(env: Env2, ts: number): Promise<UsageLine> {
+  return { n: await readUsage(env.DB, { scope: SCOPES.alertMailSite, subject: SITE, day: kstDay(ts) }), limit: limitsOf(env).ALERT_MAIL_SITE_DAY };
+}
 export interface TodayUsage { day: string; localize: UsageLine; mail: UsageLine }
 
 /** 관리자 첫 화면의 "오늘 사용량": 사이트 전체 번역 호출·기업 메일 (읽기 두 번). */

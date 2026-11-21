@@ -4,10 +4,11 @@
 // 둘이 어긋나지 않는지 test/public-jobs.test.ts 가 SQLite 메모리 DB 에서 같은 경우들을 비교한다.
 // 게재(published 로 바꾸기) 판단은 여기서 하지 않는다 — rules.publishBlocks 만 한다 (CLAUDE.md 규칙 2).
 // 여기는 "이미 게재된 공고 중 지금 구직자에게 보여도 되는가" 만 정한다.
-import type { Flags } from '../env';
+import type { Flags, Locale } from '../env';
 import { ENTRY_STAGES } from './company';
+import { t } from './i18n';
 import { CHINESE_LEVELS, REPORT_LINES, SALARY_BASES } from './jobs';
-import { activeCodes, type OptionSet } from './options';
+import { activeCodes, labelOf, type OptionSet } from './options';
 
 export const PUBLIC_PAGE_SIZE = 20;
 export const HOME_JOB_COUNT = 5;
@@ -76,6 +77,31 @@ export function filterChoices(set: OptionSet): FilterChoices {
 }
 
 export type JobFilter = Partial<Record<FilterKey, string>>;
+
+// ── 필터 이름·값의 화면 문구 (검색 칸·관리자 설정·조건 알림이 같이 쓴다)
+
+/** 필터 이름 → 칸 이름 문구 키. 공고 작성·기업 정보 화면의 문구를 그대로 쓴다. */
+export const FILTER_LABEL_KEYS: Record<FilterKey, string> = {
+  chinese_level: 'job.f.chinese_level',
+  role_category: 'job.f.role_category',
+  industry: 'job.f.industry',
+  entry_stage: 'co.f.entry_stage',
+  salary_basis: 'job.f.salary_basis',
+  report_line: 'job.f.report_line',
+  location: 'job.f.location',
+};
+
+/** 고정 목록 필터의 값 문구 키 앞부분. 직무·업계·근무지는 job_options 의 이름을 쓴다 (labelOf — 사용 종료된 항목도 이름이 나온다). */
+const FIXED_VALUE_PREFIX: Record<Exclude<FilterKey, 'role_category' | 'industry' | 'location'>, string> = {
+  chinese_level: 'job.chinese_level',
+  entry_stage: 'co.stage',
+  salary_basis: 'job.salary_basis',
+  report_line: 'job.report_line',
+};
+
+/** 필터 값의 이름 (현재 언어). */
+export const filterValueLabel = (locale: Locale, options: OptionSet, k: FilterKey, v: string): string =>
+  isOptionFilter(k) ? labelOf(options, k, v, locale) : t(locale, `${FIXED_VALUE_PREFIX[k]}.${v}`);
 
 // ── 화면에 보일 필터 (T-06d, 관리자 설정 /admin/settings)
 

@@ -127,6 +127,8 @@ export const MySeeker = ({ locale, email }: { locale: Locale; email: string }) =
     <p class="muted">{t(locale, 'my.seeker.resumes_note')}</p>
     <p><a href="/my/applications">{t(locale, 'my.seeker.applications')}</a></p>
     <p class="muted">{t(locale, 'my.seeker.applications_note')}</p>
+    <p><a href="/my/alerts">{t(locale, 'my.seeker.alerts')}</a></p>
+    <p class="muted">{t(locale, 'my.seeker.alerts_note')}</p>
     <p><a href="/my/account">{t(locale, 'my.account')}</a></p>
     <p class="muted">{t(locale, 'my.account_note')}</p>
     <p class="muted">{email}</p>

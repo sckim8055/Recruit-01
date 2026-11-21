@@ -45,6 +45,8 @@
 **Resend 무료 플랜** (https://resend.com/pricing , https://resend.com/docs/knowledge-base/resend-sending-limits , 2026-11 확인): **하루 100통**, 월 3,000통, 도메인 3개, 초당 10건.
 하루 100통을 넘으면 그날은 메일이 나가지 않는다(로그인 코드 포함). 사이트의 하루 기업 메일 한도 `MAIL_SITE_DAY` 기본값은 1000 이라 무료 플랜보다 크다 —
 무료 플랜으로 운영하는 동안은 `wrangler.jsonc` 의 `"MAIL_SITE_DAY": ""` 를 `"60"` 정도로 바꿔 로그인 코드 몫을 남겨 두기를 권한다(README "남용 방지 한도"). 유료(Pro)는 월 20달러, 하루 한도 없음.
+조건 알림 메일(T-10)은 따로 `ALERT_MAIL_SITE_DAY`(기본 40, 0 = 끔)로 센다 — 위 60 과 합치면 100 이 되어 **인증코드 몫이 남지 않을 수 있다.** 무료 플랜 동안은 둘의 합이 70 정도가 되게(예: `MAIL_SITE_DAY` 40 + `ALERT_MAIL_SITE_DAY` 30) 정한다.
+`ALERT_SEND_PER_RUN`(기본 8, 최대 10)은 예약 작업 한 번에 처리하는 알림 수다(무료 플랜 하위 요청 50개 안 — ARCHITECTURE 17-5).
 
 **Claude API:** 공고 현지화 한 번에 호출 2번(초안 + 대조본). 비용은 Anthropic 콘솔에서 본다. 사이트 전체 하루 호출 한도 `LOCALIZE_SITE_DAY`(기본 500)가 비용 차단기다.
 

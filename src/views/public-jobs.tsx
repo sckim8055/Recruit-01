@@ -8,31 +8,15 @@ import type { Locale } from '../env';
 import { fmtDate } from '../lib/company';
 import { t } from '../lib/i18n';
 import { labelOf, type OptionSet } from '../lib/options';
-import { activeFilterCount, FILTER_KEYS, isOptionFilter, jobsHref, type FilterChoices, type FilterKey, type JobFilter } from '../lib/public-jobs';
+import {
+  activeFilterCount, FILTER_KEYS, FILTER_LABEL_KEYS, filterValueLabel, jobsHref, type FilterChoices, type FilterKey, type JobFilter,
+} from '../lib/public-jobs';
 import type { PublicJobDetail, PublicJobListRow } from '../db/public-jobs';
 import { salaryText } from './jobs';
+import { JobsAlertForm } from './alerts';
 
-/** 필터 이름 → 칸 이름 문구 키. 공고 작성·기업 정보 화면의 문구를 그대로 쓴다 (관리자 설정 화면도 쓴다). */
-export const FILTER_LABELS: Record<FilterKey, string> = {
-  chinese_level: 'job.f.chinese_level',
-  role_category: 'job.f.role_category',
-  industry: 'job.f.industry',
-  entry_stage: 'co.f.entry_stage',
-  salary_basis: 'job.f.salary_basis',
-  report_line: 'job.f.report_line',
-  location: 'job.f.location',
-};
-
-/** 고정 목록 필터의 값 문구 키 앞부분. 직무·업계·근무지는 job_options 의 이름을 쓴다 (labelOf). */
-const FIXED_VALUE_PREFIX: Record<Exclude<FilterKey, 'role_category' | 'industry' | 'location'>, string> = {
-  chinese_level: 'job.chinese_level',
-  entry_stage: 'co.stage',
-  salary_basis: 'job.salary_basis',
-  report_line: 'job.report_line',
-};
-
-const filterValueLabel = (locale: Locale, options: OptionSet, k: FilterKey, v: string): string =>
-  isOptionFilter(k) ? labelOf(options, k, v, locale) : t(locale, `${FIXED_VALUE_PREFIX[k]}.${v}`);
+/** 필터 이름 → 칸 이름 문구 키 (lib/public-jobs 의 것을 그대로 — 관리자 설정 화면도 쓴다). */
+export const FILTER_LABELS = FILTER_LABEL_KEYS;
 
 const choice = (locale: Locale, prefix: string, v: string | null): string => (v ? t(locale, `${prefix}.${v}`) : '');
 
@@ -123,6 +107,8 @@ export interface PublicJobListProps {
   /** 직무·업계·근무지 이름 (사용 종료된 항목도 목록 줄에는 이름이 보인다). */
   options: OptionSet;
   rows: PublicJobListRow[];
+  /** 조건 알림 만들기 칸을 그릴까 (로그인한 구직자 + 조건 있음 — routes/jobs). 비로그인 화면에서는 항상 없다. */
+  alertForm?: boolean;
   page: number;
   hasPrev: boolean;
   hasNext: boolean;
@@ -148,6 +134,7 @@ export const PublicJobList = (p: PublicJobListProps) => (
         {p.hasNext ? <a href={jobsHref(p.filter, p.page + 1)} rel="next">{t(p.locale, 'pj.next')}</a> : <span />}
       </nav>
     )}
+    {p.alertForm && <JobsAlertForm locale={p.locale} filter={p.filter} />}
   </section>
 );
 

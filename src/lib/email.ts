@@ -9,6 +9,11 @@ export interface Mail {
   text: string;
   template: string;      // email_log 에 남길 이름 (예: 'auth_code')
   replyTo?: string;      // 기업 → 구직자 메일은 기업 담당자 주소. 운영자 주소를 연락처로 쓰지 않는다
+  /**
+   * 메일 머리글 (선택, T-10). Resend API 의 `headers` (이름 → 문자열) 로 그대로 넘긴다 — 조건 알림의 List-Unsubscribe·List-Unsubscribe-Post.
+   * https://resend.com/docs/dashboard/emails/add-unsubscribe-to-transactional-emails · https://resend.com/docs/api-reference/emails/send-email
+   */
+  headers?: Record<string, string>;
 }
 
 export async function sendMail(env: Env, mail: Mail): Promise<boolean> {
@@ -32,6 +37,7 @@ export async function sendMail(env: Env, mail: Mail): Promise<boolean> {
           subject: mail.subject,
           text: mail.text,
           ...(mail.replyTo ? { reply_to: mail.replyTo } : {}),
+          ...(mail.headers && Object.keys(mail.headers).length ? { headers: mail.headers } : {}),
         }),
       });
       result = res.ok ? 'sent' : `error_${res.status}`;

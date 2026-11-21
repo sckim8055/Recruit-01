@@ -218,6 +218,7 @@ curl "http://localhost:8787/cdn-cgi/local/scheduled?cron=maint:closeJobs"
 curl "http://localhost:8787/__scheduled?cron=maint:closeJobs"
 ```
 
-`maint:` 뒤에는 `closeJobs` · `markApplications` · `purgeApplications` · `dropOldRows` · `purgeVerificationDocs` · `sweepOrphans` · `report` 중 하나를 쓴다.
+`maint:` 뒤에는 `closeJobs` · `markApplications` · `purgeApplications` · `dropOldRows` · `purgeVerificationDocs` · `sweepOrphans` · `report` · `sendAlerts`(조건 알림, T-10) 중 하나를 쓴다.
+조건 알림은 한국 시간 21:00~08:00 에는 보내지 않으므로, 밤에 시험할 때는 시각을 붙인다(밀리초): `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=maint:sendAlerts&time=1795305660000"` (= 2026-11-22 09:01 한국 시간). `/__scheduled` 는 `time` 을 무시한다(wrangler 4.166 에서 확인).
 단계를 고르는 이 방법은 `APP_ENV` 가 `dev` 일 때만 된다. `cron=0+*+*+*+*` 로 보내면 지금 시각(UTC)의 단계가 돌고, `&time=<밀리초>` 를 붙이면 그 시각으로 실행한다.
 결과는 wrangler 창의 `maint:` 줄과 `npx wrangler d1 execute DB --local --command "…"` 로 확인한다. 정리 작업을 실행하는 웹 주소는 없다.

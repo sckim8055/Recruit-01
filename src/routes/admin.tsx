@@ -7,9 +7,10 @@ import { requireRole } from '../lib/auth';
 import { identitySnapshot, parseRevokeAction, parseVerifyAction } from '../lib/company';
 import { serveVerificationDoc } from '../lib/files';
 import { verifyBlocks } from '../lib/rules';
-import { todayUsage } from '../lib/quota';
+import { todayAlertMail, todayUsage } from '../lib/quota';
+import { countAlertsByStatus } from '../db/alerts';
 import { configChecks, secretSummary, worstLevel } from '../lib/config-check';
-import { SCHEDULE } from '../lib/maintenance';
+import { SCHEDULE, SHARED_SLOTS } from '../lib/maintenance';
 import { loadRetention } from '../lib/retention-setting';
 import { SystemPage } from '../views/admin-system';
 import { render, renderError } from '../render';
@@ -43,13 +44,18 @@ admin.get('/', async (c) => {
 });
 
 // ── 시스템 점검 (T-13): 설정 점검 결과·비밀값 유무(값은 보이지 않음)·예약 작업 시간표·오늘 사용량·보관 기간(읽기만).
-// 요청을 막지 않고 보여 주기만 한다. 읽기: 사용량 두 번 + 보관 기간 설정 한 번. 공개 주소(/api/health)에는 점검 결과를 내지 않는다.
+// 요청을 막지 않고 보여 주기만 한다. 읽기: 사용량 두 번 + 보관 기간 설정 한 번 + 조건 알림 개수 한 번·오늘 알림 메일 한 번(T-10).
+// 공개 주소(/api/health)에는 점검 결과를 내지 않는다. 조건 알림은 개수만 — 누가 어떤 조건을 저장했는지는 읽지 않는다.
 admin.get('/system', async (c) => {
   const checks = configChecks(c.env);
-  const [usage, retention] = await Promise.all([todayUsage(c.env, now()), loadRetention(c.env.DB)]);
+  const ts = now();
+  const [usage, retention, alertCounts, alertMail] = await Promise.all([
+    todayUsage(c.env, ts), loadRetention(c.env.DB), countAlertsByStatus(c.env.DB), todayAlertMail(c.env, ts),
+  ]);
   return render(c, (
     <SystemPage locale={c.var.locale} appEnv={c.env.APP_ENV} worst={worstLevel(checks)} checks={checks}
-      secrets={secretSummary(c.env)} schedule={SCHEDULE} usage={usage} retention={retention} />
+      secrets={secretSummary(c.env)} schedule={SCHEDULE} shared={SHARED_SLOTS} usage={usage} retention={retention}
+      alerts={{ ...alertCounts, mail: alertMail }} />
   ), 'sys.title');
 });
 

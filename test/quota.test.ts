@@ -27,7 +27,7 @@ describe('kstDay (한국 시간 0시에 날짜가 바뀐다)', () => {
 describe('limitsOf / parseLimit', () => {
   it('변수가 없으면 기본값 (브리프의 숫자)', () => {
     expect(limitsOf({})).toEqual({
-      LOCALIZE_PER_COMPANY_DAY: 30, LOCALIZE_SITE_DAY: 500, ADMIN_LOCALIZE_TEST_DAY: 50, MAIL_PER_COMPANY_DAY: 100, MAIL_SITE_DAY: 1000, DRAFT_JOBS_PER_COMPANY: 20,
+      LOCALIZE_PER_COMPANY_DAY: 30, LOCALIZE_SITE_DAY: 500, ADMIN_LOCALIZE_TEST_DAY: 50, MAIL_PER_COMPANY_DAY: 100, MAIL_SITE_DAY: 1000, DRAFT_JOBS_PER_COMPANY: 20, ALERT_MAIL_SITE_DAY: 40,
     });
     expect(limitsOf({})).toEqual(DEFAULT_LIMITS);
   });

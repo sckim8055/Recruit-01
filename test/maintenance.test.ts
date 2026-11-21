@@ -11,7 +11,8 @@ import {
 import { renderLegal } from '../src/legal/render';
 import {
   AUTO_CLOSABLE, BUDGET, CAPS, ORPHAN_CURSOR_KEY, REPORT_HOUR_UTC, SCHEDULE, STEP_NAMES, STEPS, autoCloseGroups, closeDateOf, devForcedStep,
-  jobCloseNoticeMail, mergeStats, parseStats, pickOrphans, planNotices, reportText, runMaintenance, statsKey, stepForTime, type StepName,
+  jobCloseNoticeMail, mergeStats, parseStats, pickOrphans, planNotices, reportText, runMaintenance, SHARED_SLOTS, statsKey, stepForTime, stepsForTime,
+  type StepName,
 } from '../src/lib/maintenance';
 import { WITHDRAWABLE } from '../src/lib/application';
 import { USAGE_KEEP_DAYS, kstDay } from '../src/lib/quota';
@@ -266,7 +267,15 @@ describe('시간표', () => {
     expect(SCHEDULE[REPORT_HOUR_UTC]).toBe('report');
     expect(count('closeJobs')).toBeGreaterThanOrEqual(4);
     expect(count('purgeApplications')).toBeGreaterThanOrEqual(4);
-    for (const s of STEP_NAMES) expect(count(s), s).toBeGreaterThan(0);
+    // T-10: 조건 알림은 칸이 없어 SHARED_SLOTS 로 가벼운 단계 뒤에 붙는다 (모든 단계가 하루에 한 번 이상 돈다)
+    const shared = Object.values(SHARED_SLOTS);
+    for (const s of STEP_NAMES) expect(count(s) + shared.filter((x) => x === s).length, s).toBeGreaterThan(0);
+    expect(SHARED_SLOTS).toEqual({ 0: 'sendAlerts', 4: 'sendAlerts', 6: 'sendAlerts', 10: 'sendAlerts' });
+    for (const h of Object.keys(SHARED_SLOTS).map(Number)) {
+      expect(['report', 'dropOldRows', 'purgeVerificationDocs'], `host ${h}`).toContain(SCHEDULE[h]); // 가벼운 단계 뒤에만
+      expect(stepsForTime(day + h * HOUR)).toEqual([SCHEDULE[h], 'sendAlerts']);
+    }
+    expect(stepsForTime(day + 1 * HOUR)).toEqual(['closeJobs']);
   });
 });
 
@@ -280,13 +289,27 @@ describe.skipIf(!hasSqlite)('실행기', () => {
       const out = await runMaintenance(env, day + h * HOUR, { impl });
       expect(out.step).toBe(SCHEDULE[h]);
       expect(out.ok).toBe(true);
+      // T-10: 붙은 단계(sendAlerts)의 결과는 also 에
+      expect(out.also?.map((o) => o.step)).toEqual(SHARED_SLOTS[h] ? [SHARED_SLOTS[h]] : undefined);
     }
-    expect(ran).toEqual([...SCHEDULE]);
-    expect(maintLogs()).toHaveLength(24);
-    expect(maintLogs()[1]).toBe('maint: step=closeJobs ok counts={"x":1}');
+    const expectedRan = SCHEDULE.flatMap((s, h) => (SHARED_SLOTS[h] ? [s, SHARED_SLOTS[h]!] : [s]));
+    expect(ran).toEqual(expectedRan);
+    expect(maintLogs()).toHaveLength(24 + Object.keys(SHARED_SLOTS).length);
+    expect(maintLogs()[1]).toBe('maint: step=sendAlerts ok counts={"x":1}');
+    expect(maintLogs()[2]).toBe('maint: step=closeJobs ok counts={"x":1}');
     const stats = parseStats(one(raw, 'SELECT value FROM site_settings WHERE key = ?', statsKey(day))!.value as string);
     expect(stats.closeJobs).toEqual({ runs: 5, x: 5 });
     expect(stats.report).toEqual({ runs: 1, x: 1 });
+    expect(stats.sendAlerts).toEqual({ runs: 4, x: 4 });
+  });
+  it('붙은 단계가 실패해도 앞 단계 결과는 그대로, 단계를 고르면(force) 그 단계 하나만', async () => {
+    const { env } = setup();
+    const day = Math.floor(NOW / DAY) * DAY;
+    const impl = { report: async () => ({ step: 'report' as const, done: { a: 1 } }), sendAlerts: async () => { throw new Error('x@y.test'); } };
+    const out = await runMaintenance(env, day, { impl });
+    expect(out).toEqual({ step: 'report', ok: true, done: { a: 1 }, also: [{ step: 'sendAlerts', ok: false, done: {} }] });
+    expect(maintLogs()).toEqual(['maint: step=report ok counts={"a":1}', 'maint: step=sendAlerts failed counts={}']);
+    expect((await runMaintenance(env, day, { force: 'report', impl })).also).toBeUndefined();
   });
   it('단계가 예외를 던져도 실행기는 끝나고 failed 로 남긴다 (오류 내용은 로그에 없다)', async () => {
     const { env, raw } = setup();

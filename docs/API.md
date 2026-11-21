@@ -1,11 +1,11 @@
 # 경로 목록
 
 화면은 서버 렌더링 + HTML 폼이다. `✅` 는 구현됨, 나머지는 docs/TASKS.md 의 해당 작업에서 만든다.
-모든 POST 는 같은 출처에서 온 요청만 받는다(`sameOrigin`). `/biz/jobs/:id/applicants*`·`/biz/applications*`·`/admin/applications*`·`/admin/access-log` 는 모든 응답(로그인 리다이렉트·403 포함)이 `private, no-store` 이고 HEAD 는 405 다(T-09a). `/consent`·`/my/account*` 의 모든 응답도 `private, no-store` 다(T-11). `/my/resumes*`·`/my/applications*`·`/jobs/:id/apply` 는 구직자만(비로그인 → /login, 기업·헤드헌터·관리자 403, 남의 이력서·지원 id 는 404), 모든 응답이 `Cache-Control: private, no-store`. "권한" 칸의 판단은 `authz.ts`·`requireRole` 을 쓴다.
+모든 POST 는 같은 출처에서 온 요청만 받는다(`sameOrigin`) — **예외는 하나**: 조건 알림 메일의 RFC 8058 한 번 클릭 해지 `POST /alerts/u/<토큰>`(T-10, 아래). `/biz/jobs/:id/applicants*`·`/biz/applications*`·`/admin/applications*`·`/admin/access-log` 는 모든 응답(로그인 리다이렉트·403 포함)이 `private, no-store` 이고 HEAD 는 405 다(T-09a). `/consent`·`/my/account*` 의 모든 응답도 `private, no-store` 다(T-11). `/my/resumes*`·`/my/applications*`·`/jobs/:id/apply` 는 구직자만(비로그인 → /login, 기업·헤드헌터·관리자 403, 남의 이력서·지원 id 는 404), 모든 응답이 `Cache-Control: private, no-store`. "권한" 칸의 판단은 `authz.ts`·`requireRole` 을 쓴다.
 
-예약 작업(T-12, 공고 자동 마감·보관 기한 삭제·정리)은 cron(`scheduled`)으로만 실행되며 HTTP 경로가 없다 (docs/ARCHITECTURE.md 14절). 기간은 관리자 보관 기간 설정(`/admin/settings`, T-12c)을 따른다.
+예약 작업(T-12, 공고 자동 마감·보관 기한 삭제·정리, T-10 조건 알림 메일)은 cron(`scheduled`)으로만 실행되며 HTTP 경로가 없다 (docs/ARCHITECTURE.md 14·17절). 기간은 관리자 보관 기간 설정(`/admin/settings`, T-12c)을 따른다.
 
-남용 방지 한도(T-05c, docs/ARCHITECTURE.md 15절): 아래 "한도" 라고 적은 경로는 하루 한도(한국 시간)를 먼저 잡는다 — 기업(또는 관리자) 몫 → 사이트 몫. 한도에 걸린 응답에만 안내가 보인다. 한도 숫자는 vars `LOCALIZE_PER_COMPANY_DAY` · `LOCALIZE_SITE_DAY` · `ADMIN_LOCALIZE_TEST_DAY` · `MAIL_PER_COMPANY_DAY` · `MAIL_SITE_DAY` · `DRAFT_JOBS_PER_COMPANY`.
+남용 방지 한도(T-05c, docs/ARCHITECTURE.md 15절): 아래 "한도" 라고 적은 경로는 하루 한도(한국 시간)를 먼저 잡는다 — 기업(또는 관리자) 몫 → 사이트 몫. 한도에 걸린 응답에만 안내가 보인다. 한도 숫자는 vars `LOCALIZE_PER_COMPANY_DAY` · `LOCALIZE_SITE_DAY` · `ADMIN_LOCALIZE_TEST_DAY` · `MAIL_PER_COMPANY_DAY` · `MAIL_SITE_DAY` · `DRAFT_JOBS_PER_COMPANY` (+ T-10 예약 작업의 알림 메일 `ALERT_MAIL_SITE_DAY`·`ALERT_SEND_PER_RUN`, ARCHITECTURE 17절).
 
 ## 공통
 | 경로 | 설명 | 권한 | 상태 |
@@ -31,7 +31,7 @@
 ## 구직자
 | 경로 | 설명 | 권한 | 작업 |
 |---|---|---|---|
-| GET /jobs | 공고 목록 (공개 조건: ARCHITECTURE 9장). 필터 `chinese_level` `role_category` `industry` `entry_stage` `salary_basis` `report_line` `location` 중 관리자가 보이게 한 것만(기본: `chinese_level` `report_line` `location`, `/admin/settings`), `page`(20건씩, 최대 100). 직무·업계·근무지 값은 사용 중인 항목(`job_options`, `/admin/options`)만 받는다. 빈 칸·모르는 조건·숨긴 조건·사용 종료된 항목 값이 붙은 주소는 정규화 주소로 302. 비로그인은 60초 캐시 | 누구나 | ✅ |
+| GET /jobs | 공고 목록 (공개 조건: ARCHITECTURE 9장). T-10: 로그인한 구직자가 조건을 하나 이상 골랐을 때만 목록 아래에 조건 알림 만들기 칸(POST /my/alerts) — 비로그인 캐시 화면에는 없음. 필터 `chinese_level` `role_category` `industry` `entry_stage` `salary_basis` `report_line` `location` 중 관리자가 보이게 한 것만(기본: `chinese_level` `report_line` `location`, `/admin/settings`), `page`(20건씩, 최대 100). 직무·업계·근무지 값은 사용 중인 항목(`job_options`, `/admin/options`)만 받는다. 빈 칸·모르는 조건·숨긴 조건·사용 종료된 항목 값이 붙은 주소는 정규화 주소로 302. 비로그인은 60초 캐시 | 누구나 | ✅ |
 | GET /jobs/:id | 공고 상세 (구조 항목·기업·지원 칸·기업 연락처). 지원 칸: 비로그인은 누구에게나 같은 "지원하기" 링크(캐시되는 화면에 사용자별 내용 없음), 로그인한 구직자는 지원했으면 "이미 지원했습니다", 기업·헤드헌터·관리자는 안내만(버튼 없음). 보이지 않는 공고는 404. 비로그인은 60초 캐시 | 누구나 | ✅ |
 | GET /companies · /companies/:id | 기업 목록·기업 페이지 (검증된 기업만, "기업 제공 정보" 표시. 사업자번호·담당자·서류는 공개하지 않음) | 누구나 | ✅ |
 | GET /my/resumes | 내 이력서 목록 (대표 먼저, 최대 5개). 줄마다 제목·한 줄 소개·수정일·첨부파일 이름·지원 가능 여부, 수정·복사·대표로 지정·삭제. 열 수 없는 이력서(복호화 실패)는 "열 수 없는 이력서" + 삭제만. 결과 표시는 `?ok=created\|saved\|copied\|copied_nofile\|default\|deleted`, `?err=limit` 뿐 | seeker 본인 | ✅ |
@@ -47,7 +47,12 @@
 | GET /my/applications/:id | 내 지원 한 건 (`canViewApplication`): 상태·날짜·국외 이전 동의 여부·보낸 내용(기업이 보는 복사본 그대로)·첨부 링크. 취소한 지원·내용을 열 수 없는 지원은 안내 문구. "열람 기록"(T-09a): 본인 아닌 사람이 지원서·첨부를 연 시각과 역할(기업 채용 담당자·운영자)만, 최근 순. 이름·이메일·사유 없음, 취소한 지원에는 없음. 결과 표시 `?ok=applied\|applied_nofile\|withdrawn` | seeker 본인 | ✅ |
 | GET /my/applications/:id/file | 지원서 첨부 내려받기 (attachment, access_log). `serveApplicationFile` 만 쓴다. 취소한 지원은 404 | seeker 본인 | ✅ |
 | GET·POST /my/applications/:id/withdraw | 지원 취소 확인 화면(내용·첨부 즉시 삭제, 기업이 더 볼 수 없음, 같은 공고 재지원 불가) → 취소(`canWithdraw` → `withdrawApplication`: `withdrawn` 이벤트 + 상태 + 내용·파일 키 삭제 + 동의 철회, 그 뒤 R2 객체 삭제) → `/my/applications/:id?ok=withdrawn`. 끝난 지원·이미 취소한 지원은 400 | seeker 본인 | ✅ |
-| GET·POST /my/alerts | 조건 알림 설정 | seeker | T-10 |
+| GET /my/alerts | 조건 알림 목록 (최대 5개): 조건 요약(지금 항목 이름, 사용 종료 항목 표시, 관리자가 숨긴 조건은 "지금 적용되지 않음", 적용되는 조건이 없으면 "메일을 보내지 않음"), 상태·꺼진 이유, 빈도, 다음 확인 시각(한국 시간), 마지막 메일, "이 조건의 공고 보기", 빈도·끄기·다시 켜기·삭제 폼. `?ok=created\|saved\|paused\|resumed\|deleted`, `?err=consent\|frequency\|notfound`. `private, no-store` (ARCHITECTURE 17절) | seeker 본인 | ✅ T-10 |
+| POST /my/alerts | 만들기 (`/jobs` 의 "이 조건으로 새 공고 알림 받기" 칸): 검색 조건(`/jobs` 와 같은 이름, 같은 파서로 다시 읽음) + `frequency`(daily·weekly) + `optin=1`(알림 메일 수신 동의, 시각·판 저장) → 303 `/my/alerts?ok=created`. 조건 없음·동의 없음·빈도 오류·5개·같은 조건은 400 + 안내(조건을 고른 `/jobs` 로 돌아가는 링크) | seeker | ✅ T-10 |
+| POST /my/alerts/:id/frequency · /pause · /resume · /delete | 빈도 바꾸기(`frequency`, 다음 차례 다시 계산) · 끄기 · 다시 켜기(`optin=1` 필수 — 없으면 400, 실패 수 0, 꺼져 있던 동안의 공고는 보내지 않음) · 삭제(해지 토큰도 함께). 남의 알림·없는 id 는 `?err=notfound`, 아무것도 바뀌지 않음 | seeker 본인 | ✅ T-10 |
+| GET /alerts/u/:token | 메일의 해지 링크: 로그인하지 않음, **아무것도 바꾸지 않음**(메일 검사기가 미리 연다). 그 알림의 조건 요약 + "이 알림 끄기"(POST) + "내 모든 알림 끄기"(POST `/all`). 이메일 등은 보이지 않음. 모르는·만료(180일)·모양이 다른 토큰은 일반 안내 404. 동의 확인 예외(다시 동의하지 않은 회원도 열림). `private, no-store` | 토큰 | ✅ T-10 |
+| POST /alerts/u/:token | 그 알림 하나를 끈다(`paused_reason = unsubscribe`). 본문 `List-Unsubscribe=One-Click`(RFC 8058, 메일 프로그램 — 쿠키·Origin 없음)이면 빈 200(모르는 토큰도 같은 응답), 아니면(확인 화면의 버튼) 안내 화면(모르는 토큰 404). **`sameOrigin` 예외는 정확히 이 경로·이 메서드뿐**(`lib/alerts.isOneClickUnsubscribe`) | 토큰 | ✅ T-10 |
+| POST /alerts/u/:token/all | 그 토큰 주인의 켜진 알림을 모두 끈다 → 안내(N개). 출처 검사를 받는다 | 토큰 | ✅ T-10 |
 
 ## 기업
 | 경로 | 설명 | 권한 | 작업 |
@@ -100,7 +105,7 @@
 | GET /admin/applications/:id | 지원서 정보(공고 제목·기업 id·지원일·상태·동의/첨부 여부 — 개인정보 없음) + "열람 사유" 폼(필수, 300자). 기록하지 않음. 취소된 지원은 안내만 | ✅ T-09a |
 | POST /admin/applications/:id/open | 사유(`reason`) → `openApplication` → 내용은 이 POST 응답에만 그린다(리다이렉트 없음). access_log 에 사유, 상태 변경 없음. 사유 없음·300자 초과는 400 + 오류, 취소됨·열 수 없음은 안내 | ✅ T-09a |
 | POST /admin/applications/:id/file | 사유와 함께 첨부 내려받기 (`downloadApplicationFile`, access_log 에 사유). 안 되면 400 + 지원서 화면 | ✅ T-09a |
-| GET /admin/system | 시스템 점검 (T-13, `private, no-store`, 로그인 리다이렉트·403 포함): 실행 환경, 설정 점검 표(`lib/config-check.configChecks` — ok·확인·문제 + 고치는 법), 비밀값 표(설정됨/없음 + 길이 구간, **값은 없음**), 오늘 사용량, 보관 기간(읽기만), 예약 작업 시간표(UTC·한국 시간), 마이그레이션 확인 방법 안내. 읽기: 사용량 2 + 보관 기간 설정 1. 요청을 막지 않는다. 관리자 첫 화면에서 링크 | ✅ T-13 |
+| GET /admin/system | 시스템 점검 (T-13, `private, no-store`, 로그인 리다이렉트·403 포함): 실행 환경, 설정 점검 표(`lib/config-check.configChecks` — ok·확인·문제 + 고치는 법), 비밀값 표(설정됨/없음 + 길이 구간, **값은 없음**), 오늘 사용량, 보관 기간(읽기만), 예약 작업 시간표(UTC·한국 시간, 붙은 단계 `sendAlerts` 표시), 마이그레이션 확인 방법 안내, T-10 "조건 알림"(켜진·꺼진 알림 수, 오늘 알림 메일 `쓴 수 / 한도` — 개수만, 누구의 어떤 조건인지 없음). 읽기: 사용량 2 + 보관 기간 설정 1 + 알림 개수 1 + 알림 메일 1. 요청을 막지 않는다. 관리자 첫 화면에서 링크 | ✅ T-13 |
 | GET /admin/access-log | 열람 기록: 최근 순 50건씩, `?type=application\|resume\|verification_doc`(그 밖의 값은 무시), `?before=<시각>` 커서. 시각·연 사람(이메일·역할)·대상·사유. 지원서 대상은 관리자 지원서 화면으로 연결 | ✅ T-09a |
 
-관리자에게 **없는** 기능: 개인정보 "영구 보관"·"지우지 않기" 설정(T-12c — 범위 안의 기간만), 공고 내용 수정, 이력서 전달, 구직자·기업에게 추천 발송, 지원자에게 메일 보내기(면접 요청·불합격 통보는 기업 담당자만, T-09b), 지원자 목록·사람 검색, 지원서 수정·일괄 내려받기.
+관리자에게 **없는** 기능: 조건 알림을 보거나 만들거나 보내기(T-10 — 개수만 보인다), 개인정보 "영구 보관"·"지우지 않기" 설정(T-12c — 범위 안의 기간만), 공고 내용 수정, 이력서 전달, 구직자·기업에게 추천 발송, 지원자에게 메일 보내기(면접 요청·불합격 통보는 기업 담당자만, T-09b), 지원자 목록·사람 검색, 지원서 수정·일괄 내려받기.

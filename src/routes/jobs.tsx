@@ -8,7 +8,7 @@ import { listOptions } from '../db/options';
 import { getSetting } from '../db/settings';
 import { buildOptionSet } from '../lib/options';
 import {
-  canonicalJobHref, canonicalJobsHref, filterChoices, HOME_JOB_COUNT, isJobId, pageOf, pageQuery, parseEnabledFilters, parseJobFilter, parsePage,
+  activeFilterCount, canonicalJobHref, canonicalJobsHref, filterChoices, HOME_JOB_COUNT, isJobId, pageOf, pageQuery, parseEnabledFilters, parseJobFilter, parsePage,
   PUBLIC_FILTERS_SETTING,
 } from '../lib/public-jobs';
 import { pageCache, PAGE_VARY, PRIVATE_CACHE_CONTROL } from '../lib/page-cache';
@@ -64,7 +64,10 @@ jobs.get('/', pageCache, async (c) => {
   const { limit, offset } = pageQuery(page);
   const rows = await listPublicJobs(c.env.DB, { flags: flagsOf(c.env), now: now(), filter, limit, offset });
   const pg = pageOf(rows, page);
-  return render(c, <PublicJobList locale={c.var.locale} filter={filter} enabled={enabled} choices={choices} options={options} {...pg} />, 'pj.title');
+  // 조건 알림 만들기 칸 (T-10): 로그인한 구직자에게만, 조건을 하나 이상 골랐을 때만. 로그인한 요청은 page-cache 를 거치지 않으므로(private, no-store)
+  // 비로그인 캐시 화면은 바뀌지 않는다 (누구에게나 같은 HTML). 추가로 읽는 것은 없다.
+  const alertForm = c.var.user?.role === 'seeker' && activeFilterCount(filter) > 0;
+  return render(c, <PublicJobList locale={c.var.locale} filter={filter} enabled={enabled} choices={choices} options={options} alertForm={alertForm} {...pg} />, 'pj.title');
 });
 
 jobs.get('/:id', pageCache, async (c) => {

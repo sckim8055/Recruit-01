@@ -27,6 +27,7 @@
 | `src/db/account.ts` | 회원 탈퇴(T-11): 다른 담당자가 있는 기업의 대표인지 세기, 한 트랜잭션으로 지우기 — applications·application_events·consents·resumes·seeker_profiles·alerts·jobs(혼자 맡던 기업의 게재 중 공고 마감)·company_members·agency_members·company_invites·sessions·admin_totp_pending·auth_codes·users(이메일 익명화, `status = 'deleted'`) |
 | `src/db/maintenance.ts` | 예약 작업(T-12, 데이터를 지운다): jobs(자동 마감·안내 표시), company_members+users(활성 담당자 주소), applications·application_events·consents(보관 기한 붙이기/떼기·자동 종료·내용 삭제·동의 철회·오래된 행 삭제), access_log·email_log·sessions·auth_codes·admin_totp_pending(기간 지난 행 삭제), verification_docs(1년 지난 서류 행 삭제), resumes+applications(R2 키 참조 확인), site_settings(`maint.*` 키: 고아 정리 커서·일별 집계), 개수(users·jobs·applications). 모든 UPDATE·DELETE 에 바인딩한 시각 조건 + 행 수 한도 |
 | `src/db/usage.ts` | usage_counters (T-05c 남용 방지 한도): 한도 안에서만 하루 횟수 더하기(한 문장), 하루 횟수 읽기. subject 는 id 또는 `'site'` — 개인정보 없음 |
+| `src/db/alerts.ts` | alerts · alert_unsub_tokens (T-10 조건 알림, 0012): 내 알림 목록·5개 한도와 같은 조건을 한 문장으로 확인하는 추가·빈도·끄기/켜기·삭제(모두 `seeker_id` 조건), 해지 토큰 해시로 찾기·끄기, 예약 작업의 차례 읽기(users·consents 조건)·새 공고 읽기(`publicJobWhere`·`filterWhere` 재사용, 읽기 batch)·보낸 뒤 기록·실패 수·정리, 관리자 개수 |
 | `src/db/applicant-views.ts` | application_events + applications (기업 지원자 목록 화면, T-09b): 공고 하나의 지원별 면접 요청 메일 수 — `GROUP BY` 한 번, 읽기만. `COUNT(*)` 는 `Number()` 로 바꿔 쓴다 (PostgreSQL bigint 대비) |
 
 - 스키마는 `migrations/` (SQLite 문법). 판단 규칙(`rules.ts`·`authz.ts`)·TTL·횟수 제한은 DB 와 무관하므로 옮길 때 고치지 않는다.
@@ -98,6 +99,11 @@
 | `maintenance.markCloseNoticeSent` | `WHERE (id = ? AND updated_at = ?) OR (…)` — 공고마다 읽은 updated_at 이 그대로일 때만 (10개 이하) | 그대로 된다 |
 | `maintenance.putMaintSetting` | `ON CONFLICT (key) DO UPDATE … excluded`, `updated_by = NULL` | 그대로 된다 |
 | `maintenance.maintenanceCounts` | `COUNT(*)` 가 숫자로 옴 | `COUNT(*)::int` 또는 변환(호출부가 `Number()` 로 감싼다) |
+| `alerts.alertJobsSql` (T-10) | `COUNT(*) OVER () AS total` (창 함수 — LIMIT 전 전체 수, SQLite 3.25+), `CASE WHEN j.company_name_public = 1` | PostgreSQL 도 같다(`count(*) over ()` 는 bigint → 호출부가 `Number()`) |
+| `alerts.recordAlertFailure` (T-10) | `UPDATE … RETURNING status` (SQLite 3.35+) | PostgreSQL 도 같다 |
+| `alerts.insertAlert` (T-10) | `INSERT … SELECT ?,… WHERE (SELECT COUNT(*) …) < ? AND NOT EXISTS (같은 조건)` — 5개 한도·중복을 한 문장으로, meta.changes | 문법은 된다. 동시 두 요청은 4장(한도 + 1 이 될 수 있음, `resumes.insertResume` 과 같음) |
+| `alerts.recordAlertSent` · `pauseAlertByToken` · `sweepAlerts` · `listNewJobsForAlerts` (T-10) | batch = 트랜잭션(읽기 batch 포함). 토큰 추가는 `INSERT … SELECT … WHERE EXISTS (알림)`, 행 수 한도는 `id IN (SELECT … LIMIT ?)` | `BEGIN … COMMIT`, 순서 그대로 |
+| `migrations/0012_job_alerts.sql` (T-10) | `ALTER TABLE … ADD COLUMN … NOT NULL DEFAULT … CHECK`, `alert_unsub_tokens.alert_id REFERENCES alerts(id) ON DELETE CASCADE` — D1 은 외래키를 검사하므로 CASCADE 가 없으면 `account.eraseUser` 의 `DELETE FROM alerts` 가 막힌다 | 그대로 된다 (스키마를 새로 쓸 때 CASCADE 를 꼭 옮긴다) |
 | `migrations/0007_job_options.sql` | 기본 행의 시각 `strftime('%s','now')` | `extract(epoch from now())::bigint` |
 | `companies.listPublicCompanies` | `ORDER BY name_ko` = 바이트 순서 | DB 콜레이션에 따라 한글 정렬이 달라질 수 있음 (`COLLATE "C"` 로 맞춤) |
 

@@ -74,7 +74,10 @@
     "ADMIN_LOCALIZE_TEST_DAY": "",  // 관리자 한 사람당 하루 엔진 비교 (50) — 고른 엔진 하나마다 1
     "MAIL_PER_COMPANY_DAY": "",     // 기업당 하루 메일 (100) — 면접 요청·불합격 통보·담당자 초대
     "MAIL_SITE_DAY": "",            // 사이트 전체 하루 기업 메일 (1000) — 로그인 인증코드는 세지 않는다. Resend 무료 플랜은 하루 100통 (docs/DEPLOY.md 1장)
-    "DRAFT_JOBS_PER_COMPANY": ""    // 기업당 작성 중인 공고 수 (20) — 게재 중·마감이 아닌 공고(초안·차단)
+    "DRAFT_JOBS_PER_COMPANY": "",   // 기업당 작성 중인 공고 수 (20) — 게재 중·마감이 아닌 공고(초안·차단)
+    // 조건 알림 (T-10, docs/ARCHITECTURE.md 17절). 비워 두면 괄호 안의 기본값.
+    "ALERT_MAIL_SITE_DAY": "",      // 사이트 전체 하루 알림 메일 (40) — Resend 무료 플랜 하루 100통을 로그인 코드와 같이 쓴다. 0 = 알림 메일 끔
+    "ALERT_SEND_PER_RUN": ""        // 예약 작업 한 번에 처리하는 알림 수 (8, 최대 10 — 무료 플랜 하위 요청 50개 안에 맞춘 값). 0 = 알림 메일 끔
   },
 
   "env": {
@@ -125,7 +128,9 @@
         "ADMIN_LOCALIZE_TEST_DAY": "",
         "MAIL_PER_COMPANY_DAY": "",
         "MAIL_SITE_DAY": "",
-        "DRAFT_JOBS_PER_COMPANY": ""
+        "DRAFT_JOBS_PER_COMPANY": "",
+        "ALERT_MAIL_SITE_DAY": "",
+        "ALERT_SEND_PER_RUN": ""
       }
     }
   }

@@ -47,13 +47,15 @@ src/
     account.ts       회원 탈퇴: 막는 경우 판단 → 파일 키 모으기 → DB 지우기 → R2 지우기 (13절)
     static-files.ts  public/ 의 파일 주소 (동의 확인에서 건너뜀)
     quota.ts         남용 방지 한도: 한도 숫자(한 곳)·변수 해석·한국 시간 날짜·기업 몫 → 사이트 몫 잡기 (15절)
+    alerts.ts        조건 알림: 보낼 시각(한국 시간 09:00·월요일·야간 제한)·조건 정규화(/jobs 파서)·요약·해지 경로·메일 — 순수 함수 (17절)
+    alert-send.ts    조건 알림 보내기 = 예약 작업 단계 sendAlerts (17절)
     retention.ts     보관 기간: 기본값·범위(RETENTION_SPEC)·설정 해석·관리자 폼 검사·저장 계획(rev)·변경 기록 — 순수 함수 (14절, T-12c)
     retention-setting.ts  보관 기간 설정 한 행 읽기(loadRetention)
     localize/        현지화 엔진 층 (7절)
   db/                SQL 과 D1 호출은 여기에만 (T-05d). users · sessions(인증코드·세션·TOTP 대기) · companies(기업·담당자·초대·서류 행)
                      · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수) · settings(site_settings) · options(job_options) · resumes(이력서)
                      · applications(지원·동의·취소) · application-views(지원 현황 화면용 읽기) · applicants(기업·관리자 쪽: 내용 없는 지원자 목록·개수·지원 한 건·viewed·열람 기록 읽기)
-                     · consents(이용약관·개인정보 동의 읽기·쓰기) · account(탈퇴 트랜잭션) · usage(하루 사용량 한도, 15절). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
+                     · consents(이용약관·개인정보 동의 읽기·쓰기) · account(탈퇴 트랜잭션) · usage(하루 사용량 한도, 15절) · alerts(조건 알림·해지 토큰, 17절). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
                      PostgreSQL 로 옮길 때 고칠 곳과 SQLite 전용 문법 목록은 docs/DB-PORTING.md
   legal/             이용약관(terms.ts)·개인정보처리방침(privacy.ts) 본문, 운영자 정보(types.ts OPERATOR). 한국어 기준 + 중국어 참고 번역 (13절)
                      render.ts: 본문·문구의 보관 기간 자리표시자({application_keep_days} 등)를 지금 설정으로 채운다 (14-1, T-12c)
@@ -120,7 +122,8 @@ docs/                이 문서, API.md, TASKS.md
 | 핵심기술 R&D·특정 기업 출신 겨냥 공고 | `rules.techLeakFlag` → 관리자 검토 |
 | 이력서 발송 대행·추천 금지 | 그런 기능을 만들지 않는다 (CLAUDE.md 규칙 1) |
 | 연봉 표기에 퇴직금 포함/별도 명시 | `publishBlocks` → `salary_basis_missing` |
-| 광고성 메일은 동의자에게만 | `consents.type = 'marketing'` 확인 후 발송 |
+| 광고성 메일은 동의자에게만 | `consents.type = 'marketing'` 확인 후 발송 (아직 그런 메일 없음) |
+| 조건 알림 메일: 본인이 고른 조건·명시적 수신 동의·해지 링크·야간 미발송 | `lib/alerts.ts` · `lib/alert-send.ts` (17절). 광고성 정보 해당 여부는 **전문가 확인 필요** |
 
 ### 기능 플래그 (기본값 모두 off)
 
@@ -425,6 +428,10 @@ cron 은 **매시 정각 한 번**(`wrangler.jsonc` `"0 * * * *"`, `scheduledTim
 | 11 | 20 | sweepOrphans | | 23 | 08 | purgeApplications |
 
 하루: closeJobs 5 · markApplications 4 · purgeApplications 5 · dropOldRows 3 · sweepOrphans 4 · purgeVerificationDocs 2 · report 1.
+
+**같은 실행에 붙는 단계 (T-10, `SHARED_SLOTS`):** 24칸이 모두 차 있어 조건 알림(`sendAlerts`)은 가벼운 단계 **뒤에** 같은 실행에서 돈다 —
+00 UTC(09 KST, report 뒤 — 매일 알림 시각) · 04(13 KST, dropOldRows 뒤) · 06(15 KST, purgeVerificationDocs 뒤) · 10(19 KST, dropOldRows 뒤). 앞 단계의 동작은 그대로다.
+실행기는 보관 기간 설정을 한 번 읽고, 단계마다 따로 try·로그 한 줄, 집계는 한 번에 기록한다. `force`(dev 의 `maint:<단계>`)는 그 단계 하나만. 계산은 17절.
 상한(`CAPS`, 한 번 실행): 공고 마감 10 · 안내 공고 10 · 안내 메일 10 · 지원 기한 붙이기/떼기/자동 종료 각 50 · 내용 삭제 10 · 표마다 행 삭제 200 · 서류 5 · R2 목록 100 · 고아 삭제 10 · 참조 확인 IN 50개.
 → 하루 처리량 최대: 공고 마감 50, 안내 메일 50, 지원 내용 삭제 50, 표마다 600행, 서류 10, 고아 40. 남은 것은 다음 차례에 이어서 한다 (기한보다 늦어질 수 있다 — 규모가 커지면 상한을 올리거나 유료 플랜).
 
@@ -520,3 +527,71 @@ D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다)
 - 지원서는 지원한 기업만 열람·기록·삭제: `authz.canViewApplication`, `lib/applicants.openApplication`(access_log), 구직자 화면 열람 기록(12절), 보관 기한 삭제(14절), 취소 시 즉시 삭제(11절).
 - 이용료: 이용약관 제9조. 추천·전달 없음: CLAUDE.md 규칙 1. 탈퇴: 13절.
 기능 플래그(`FLAG_HEADHUNTER_POSTING` 등)를 켜거나 위 근거가 바뀌면 이 문구도 함께 고친다. 문의처(운영자 이메일)는 `src/legal/types.ts` 의 【확인 필요】를 채운 뒤 질문을 추가한다.
+
+## 17. 조건 알림 (T-10)
+
+코드: `src/lib/alerts.ts`(순수 함수), `src/lib/alert-send.ts`(예약 작업 단계 `sendAlerts`), `src/db/alerts.ts`(SQL), `src/routes/alerts.tsx`, `src/views/alerts.tsx`, 마이그레이션 0012.
+
+**무엇이고 무엇이 아닌가 (CLAUDE.md 규칙 1):** 구직자가 `/jobs` 에서 **직접 고른 검색 조건**을 저장하고, 그 조건으로 `/jobs` 에 보이는 **새로 게재된 공고**를 메일로 받는다.
+정보 전달이지 추천·알선이 아니다 — 이력서·지원 기록·행동을 쓰지 않고, "잘 맞는" 순위·점수·"관심 있을 만한 공고"·운영자가 고른 공고·유료 노출이 없다.
+순서는 게재 최신 순(`published_at DESC, id DESC`, `/jobs` 와 같음)뿐이다. 기업이 구직자에게 알림을 보내게 하는 길, 관리자가 고른 구직자에게 공고를 보내는 길, 관리자가 남의 알림을 보거나 만드는 길은 없다(관리자에게는 개수만).
+
+### 17-1. 데이터 (0012)
+
+- **0001 의 `alerts` 표를 그대로 쓰고 컬럼을 더했다** — `db/account.eraseUser`(보호 파일)가 이미 `DELETE FROM alerts WHERE seeker_id = ?` 를 하므로 탈퇴 때 알림이 지워진다. 새 표를 만들었다면 eraseUser 를 고쳐야 했다.
+  더한 컬럼: `status`(active·paused) · `paused_reason`(user·unsubscribe·failures) · `next_due_at` · `checked_until`(여기까지 게재된 공고는 확인함) · `fail_count` · `optin_at`·`optin_version`(수신 동의 시각·문구 판) · `updated_at`.
+  인덱스 `idx_alerts_due(status, next_due_at)`, `idx_alerts_seeker(seeker_id, created_at)`.
+- **해지 토큰 `alert_unsub_tokens(token_hash PK, alert_id → alerts ON DELETE CASCADE, created_at)`:** 메일마다 새 토큰(32바이트 무작위, base64url 43자)을 만들어 메일에만 넣고 **SHA-256 해시만** 저장한다.
+  한 알림에 토큰이 여럿이라 예전 메일의 링크도 180일 동안 쓸 수 있다. CASCADE 라 알림을 지우면(탈퇴 포함) 같이 지워지고, 외래키가 eraseUser 의 DELETE 를 막지 않는다(테스트).
+- **조건(`filter_json`):** `/jobs` 의 검색 조건과 **같은 것**(`parseJobFilter` 결과)을 FILTER_KEYS 순서의 JSON 객체로. 다른 조건 문법을 만들지 않았다. `/jobs` 에 검색어 칸이 없으므로 검색어는 없다.
+  같은 사람·같은 글자의 조건은 하나만(`insertAlert` 한 문장 가드), **한 사람 5개**까지.
+
+### 17-2. 화면
+
+- `/jobs`: **로그인한 구직자 + 조건이 하나 이상**일 때만 목록 아래에 "이 조건으로 새 공고 알림 받기"(지금 조건을 숨은 칸으로, 빈도 매일/매주, "알림 메일 수신에 동의합니다" 체크 — 미리 체크 없음).
+  비로그인(캐시되는 화면)·기업·관리자에게는 그리지 않는다 → 비로그인 HTML 은 바뀌지 않는다(테스트). 추가 읽기 없음.
+- `POST /my/alerts`: 폼을 **`/jobs` 와 같은 파서**로 다시 읽는다(숨긴 필터·사용 종료 항목·모르는 값은 버려짐). 조건 없음·수신 동의 없음·5개·같은 조건은 400 + 안내. 동의 시각·판(`ALERT_OPTIN_VERSION`) 저장.
+- `/my/alerts`: 조건 요약(지금 항목 이름, 사용 종료 항목은 "(사용 종료된 항목)"), 상태·이유, 빈도, 다음 확인 시각, 마지막 메일, "이 조건의 공고 보기", 빈도 바꾸기·끄기·다시 켜기(수신 동의 다시 체크, 꺼져 있던 동안의 공고는 보내지 않음 — `checked_until` = 지금)·삭제.
+- 해지 링크 `/alerts/u/:token`: 로그인하지 않는다. 조건 요약 말고는 보이지 않는다(이메일 없음). **GET 은 아무것도 바꾸지 않는다**(메일 검사기의 미리 열기) → 확인 화면의 POST 버튼(그 알림만) 또는 "내 모든 알림 끄기"(`/all`, 출처 검사 받음).
+  메일 머리글 `List-Unsubscribe: <…/alerts/u/<토큰>>` + `List-Unsubscribe-Post: List-Unsubscribe=One-Click`(RFC 8058) → 메일 프로그램이 쿠키·Origin 없이 `POST /alerts/u/<토큰>` 을 보내면 빈 200.
+  **출처 검사(`sameOrigin`)에서 빠지는 요청은 정확히 이 모양 하나**(`lib/alerts.isOneClickUnsubscribe`: POST + `/alerts/u/` + 43자, 뒤에 아무것도 없음)이고, 토큰이 권한이다(그 알림 하나를 끄는 일만 한다). 모르는 토큰은 일반 안내(404), 한 번 클릭은 같은 빈 200.
+  동의 확인(13절)도 이 경로는 건너뛴다(다시 동의하지 않은 회원도 메일을 끌 수 있게). 점검 모드(6-2)에서는 503 이라 그동안 알림 메일도 보내지 않는다.
+- 관리자 `/admin/system`: 켜진·꺼진 알림 수, 오늘 알림 메일 `쓴 수 / 한도`, 시간표의 붙은 단계. 누가 어떤 조건인지는 없다.
+
+### 17-3. 관리자가 숨긴 필터·사용 종료 항목
+
+- 숨긴 필터(`/admin/settings`, 9절): 보낼 때 **`/jobs` 가 무시하는 것과 똑같이 무시**한다(`effectiveFilter`). 알림 화면에 "지금 적용되지 않습니다: …" 로 알린다. 메일 요약에도 실제로 쓴 조건만.
+  남는 조건이 없으면 **메일을 보내지 않고** 차례만 넘긴다(`checked_until` 은 그대로 — 다시 보이면 이어서). 조건 없는 "모든 새 공고" 메일이 되지 않게.
+- 사용 종료된 직무·업계·근무지: 만들 때는 고를 수 없지만(`/jobs` 와 같음), **이미 저장된 값은 버리지 않는다** — 버리면 조건이 넓어져 고르지 않은 공고까지 보내게 된다. 그 항목의 공고만 계속 찾는다("외 N건" 의 `/jobs` 주소는 그 값을 뺀 정규화 주소로 302 될 수 있다).
+
+### 17-4. 보내기 (`sendAlerts`, 17-5 의 시각에)
+
+1. 정리(한 batch, 각 50행): 탈퇴 계정의 알림 · **12개월** 동안 바꾸지 않았고 그동안 메일이 없었거나 꺼져 있는 알림 · 180일 지난 토큰. (밤·점검 중에도 한다.)
+2. 점검 모드면 끝. **한국 시간 21:00~08:00 이면 끝**(차례 그대로 — 정보통신망법 제50조 제3항의 야간 광고성 정보 전송 제한. 이 메일이 광고성 정보인지는 **정해지지 않았다 — 전문가 확인 필요**. 보수적으로 지킨다).
+3. 차례가 된 알림을 오래된 차례부터 최대 `ALERT_SEND_PER_RUN`(기본 8, 최대 10, 0 = 끔): 켜짐 + 수신 동의 있음 + 계정 `active` 인 구직자 + 지금 판의 약관·방침 동의(철회 안 됨). 정지·탈퇴·동의 전 회원의 알림은 읽지 않는다(차례 그대로).
+4. 보일 필터 설정 + 항목 목록 → 알림마다 실제 조건 → 새 공고(읽기 batch 한 번): `publicJobWhere` + `filterWhere` + `checked_until < published_at <= 지금 - 1초`, 최신 순 10건 + 전체 수(`COUNT(*) OVER ()`).
+   "지금 - 1초" 까지만 보고 `checked_until` 을 거기로 옮긴다 → 이번 초에 게재된 공고는 다음 차례에(두 번 보내거나 빠뜨리지 않는다).
+5. 새 공고가 없음 · 적용되는 조건이 없음 → 메일 없이 `next_due_at` 만(새 공고 없음은 `checked_until` 도) 넘긴다(batch 한 번). 메일 몫·email_log 를 쓰지 않는다.
+6. **메일 몫을 보내기 전에** 잡는다: `usage_counters` `alert_mail_site`/`site`/한국 날짜, 한도 `ALERT_MAIL_SITE_DAY`(기본 40) — 오늘 쓴 수를 읽고 보낼 수만큼 `takeQuota(cost = n)` 한 번.
+   모자라면 앞에서부터 남은 만큼만 보내고 나머지는 차례 그대로(`quota_stopped`). 실패한 메일도 쓴 것으로 센다(15절과 같다). 기업 메일 몫(`MAIL_SITE_DAY`)과는 다른 몫이다.
+7. 한 통씩: 토큰 → `sendMail`(+ List-Unsubscribe 머리글) → **보낸 뒤에** `recordAlertSent`(한 batch: 토큰 해시 + `checked_until`·`next_due_at`·`last_sent_at`, `fail_count = 0`).
+   못 보내면 아무것도 넘기지 않고 `fail_count + 1`, **5번 연속이면 꺼짐**(`failures`). 기록이 실패하면(보낸 뒤 끊김) 다음 실행에 같은 내용이 다시 갈 수 있다 — 안 가는 것보다 낫게(14절과 같은 원칙).
+- **다음 차례:** 매일 = 처리한 때보다 뒤의 첫 한국 시간 09:00, 매주 = 첫 월요일 09:00 (`nextDueAt`). 늦게(13·15·19시) 처리돼도 하루(한 주)에 한 번.
+- **메일 내용**(`buildAlertMail`, 받는 사람의 언어 `users.locale`, 없으면 한국어): 제목 "조건에 맞는 새 공고 N건"("(광고)" 를 붙이지 않음 — 열린 질문), 조건 요약, 공고마다 제목·기업(비공개면 "기업명 비공개")·근무지·마감일·주소, 더 있으면 "외 N건" + `/jobs?…`,
+  받는 이유, 알림 관리 주소, 해지 주소, 운영자 줄(`src/legal/types.ts` OPERATOR — 상호·번호에 【확인 필요】 가 남아 있으면 넣지 않는다). **받는 이메일 말고는 개인정보가 없다**(이름·이력서·지원 기록 없음, 테스트). 로그·집계에는 숫자만.
+
+### 17-5. 시각·한도·하위 요청
+
+- 시각: 14-2 의 `SHARED_SLOTS` — 00 UTC(09 KST, report 뒤) · 04(13 KST) · 06(15 KST) · 10(19 KST). 모두 08~21시 안(테스트). → 하루 최대 4 × 8 = **32통**(기본값), 메일 몫 40 보다 작다. 알림이 이보다 많으면 밀린다(남은 일).
+- **왜 실행당 8(최대 10)인가 — 브리프의 기본 20 은 무료 플랜에서 되지 않는다:** Workers Free 는 실행당 하위 요청 50개(D1·R2 호출과 fetch 포함, 14-2). 메일 한 통 = Resend fetch 1 + `email_log` 1(sendMail 안) + 기록 1 = 3.
+  고정 = 정리 1 + 차례 1 + 설정·항목 2 + 공고 1 + 넘기기 1 + 몫 2 = 8 → 알림 단계 최대 8 + 3n. 붙는 앞 단계(report 5 · purgeVerificationDocs 7(R2 5 포함) · dropOldRows 1) + 실행기 3 을 더하면
+  n = 8 → 최대 42(측정: 00 UTC 39 · 04 35 · 06 41), n = 10 → 48, n = 20 → 78(초과). 테스트가 상한보다 많은 후보로 실행당 45 이하인지 센다.
+  이 단계는 14-2 의 "D1 문장 25개(batch 안 문장도 하나씩)" 기준 대신 **하위 요청 수**(batch = 1)로 맞췄다 — 문장 기준이면 8통도 넘는다(8통 = 문장 약 40).
+- CPU: 메일 한 통마다 토큰·SHA-256·글 만들기 정도. 10ms 한도는 배포 뒤 대시보드에서 확인(T-12b 와 같이).
+- 변수: `ALERT_MAIL_SITE_DAY`(40, `lib/quota.DEFAULT_LIMITS`), `ALERT_SEND_PER_RUN`(8, 최대 10, `lib/alerts.alertRunCap`). 둘 다 0 이면 알림 메일을 보내지 않는다.
+  Resend 무료 플랜은 하루 100통을 로그인 인증코드와 같이 쓴다 — `MAIL_SITE_DAY` 를 60 으로 낮춘 상태(DEPLOY.md 1장)에서 알림 40 을 더하면 인증코드 몫이 남지 않을 수 있다(DEPLOY.md).
+
+### 17-6. 개인정보처리방침
+
+알림은 새 처리 목적(저장한 검색 조건 + 메일 발송)이다. `src/legal/` 은 이 작업에서 고치지 않았다 — 넣을 문장은 TASKS.md T-10 에 있다(운영자가 넣고 `PRIVACY_VERSION` 을 올린다).
+

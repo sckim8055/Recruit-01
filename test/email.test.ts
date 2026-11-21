@@ -66,3 +66,23 @@ describe.skipIf(!hasSqlite)('sendMail: 키가 없을 때 (T-13)', () => {
     expect(s.results()).toEqual(['no_api_key']);
   });
 });
+
+describe.skipIf(!hasSqlite)('sendMail: 머리글 (T-10, 선택 항목 headers)', () => {
+  const bodyOf = (m: ReturnType<typeof vi.fn>) => JSON.parse(String((m.mock.calls[0] as unknown as [string, RequestInit])[1].body)) as Record<string, unknown>;
+  it('headers 가 있으면 Resend 요청 본문의 headers 로 그대로 넘긴다', async () => {
+    const s = setup('test', 'fake-key');
+    const headers = { 'List-Unsubscribe': '<https://x.test/alerts/u/abc>', 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' };
+    expect(await sendMail(s.env, { ...MAIL, template: 'job_alert', headers })).toBe(true);
+    expect(bodyOf(s.fetchMock).headers).toEqual(headers);
+  });
+  it('headers 가 없거나 비었으면 본문에 headers 키가 없다 (기존 메일은 그대로)', async () => {
+    for (const extra of [{}, { headers: {} }]) {
+      const s = setup('test', 'fake-key');
+      expect(await sendMail(s.env, { ...MAIL, ...extra })).toBe(true);
+      const b = bodyOf(s.fetchMock);
+      expect('headers' in b).toBe(false);
+      expect(Object.keys(b).sort()).toEqual(['from', 'subject', 'text', 'to']);
+      vi.restoreAllMocks(); vi.unstubAllGlobals();
+    }
+  });
+});

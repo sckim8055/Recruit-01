@@ -25,13 +25,17 @@ import { homeCache } from './routes/jobs';
 import { devForcedStep, runMaintenance } from './lib/maintenance';
 import { MAINTENANCE_RETRY_AFTER, maintenanceBlocks } from './lib/pause';
 import { MaintenancePage } from './views/pages';
+import { isOneClickUnsubscribe, isUnsubscribePath } from './lib/alerts';
+import { alerts, unsubscribe } from './routes/alerts';
 
 const app = new Hono<AppEnv>();
 
 // Referrer-Policy 는 same-origin 으로 둔다. 기본값(no-referrer)이면 브라우저가 같은 사이트의 폼 전송에도
 // Origin 을 "null" 로 보내서 아래 sameOrigin 검사(CSRF 방어)가 모든 폼을 막는다. same-origin 은 바깥 사이트로는 여전히 아무것도 보내지 않는다.
 app.use('*', secureHeaders({ referrerPolicy: 'same-origin' }));
-app.use('*', sameOrigin);
+// 출처 검사(CSRF 방어). 빠지는 요청은 하나뿐이다: 조건 알림 메일의 RFC 8058 한 번 클릭 해지 `POST /alerts/u/<토큰>` (T-10) —
+// 메일 프로그램이 쿠키·Origin 없이 보내므로 출처를 확인할 수 없고, 토큰이 권한이다(그 알림 하나를 멈추는 일만 한다). lib/alerts.isOneClickUnsubscribe.
+app.use('*', (c, next) => (isOneClickUnsubscribe(c.req.method, c.req.path) ? next() : sameOrigin(c, next)));
 app.use('*', loadUser);
 app.use('*', async (c, next) => {
   c.set('locale', detectLocale(c));
@@ -56,7 +60,8 @@ app.use('*', async (c, next) => {
 app.use('*', async (c, next) => {
   const u = c.var.user;
   const path = c.req.path;
-  if (!u || PUBLIC_FILES.has(path) || !needsConsentCheck(u.role, path)) return next();
+  // 조건 알림의 해지 링크(/alerts/u/…, T-10)는 동의를 다시 하지 않은 회원도 열 수 있어야 한다 (메일을 끌 수 있게).
+  if (!u || PUBLIC_FILES.has(path) || !needsConsentCheck(u.role, path) || isUnsubscribePath(path)) return next();
   const [rows, retention] = await Promise.all([listRequiredConsents(c.env.DB, u.id), loadRetention(c.env.DB)]);
   if (!missingConsents(rows, requiredConsents(retention)).length) return next();
   c.header('Cache-Control', NO_STORE);
@@ -74,6 +79,8 @@ app.get('/', homeCache, homePage);
 app.get('/api/health', (c) => c.json({ ok: true, env: c.env.APP_ENV }));
 app.route('/my/resumes', resumes);
 app.route('/my/applications', applications);
+app.route('/my/alerts', alerts);
+app.route('/alerts/u', unsubscribe);
 app.route('/', auth);
 app.route('/', legal);
 app.route('/', account);

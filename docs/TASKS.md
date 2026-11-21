@@ -249,6 +249,38 @@
       **확인하지 못한 것 (Cloudflare 계정 없음):** 실제 배포·Custom Domain 자동 연결·인증서, `secrets.required` 로 배포가 막히는지와 아직 없는 Worker 에 `secret put`, `wrangler d1 export --remote` 와 백업 파일을 새 D1 에 넣는 복구,
       Time Travel 명령, 롤백, Workers Logs 에 cron 의 console 줄이 보이는지, `--var MAINTENANCE:on` 배포, Resend 도메인 인증·발송, Cloudflare Access, Workers AI 운영 호출.
       남은 일: 복구 연습(O-7) 뒤 DEPLOY.md 5-3 표시 지우기, R2 파일 백업 여부 결정(지금은 하지 않음 — DEPLOY.md 5-4), 운영 전 약관 표시를 채우면 `test/config-check.test.ts`·`test/deploy-checks.test.ts` 의 "> 0" 줄도 0 기준으로
+- [x] T-10 조건 알림 (docs/ARCHITECTURE.md 17절). 구직자가 `/jobs` 에서 직접 고른 조건을 저장하고 그 조건의 **새 공고**를 메일로 받는다 — 추천·알선이 아니다
+      (이력서·지원 기록 안 씀, 순위·점수 없음, 게재 최신 순뿐, `publicJobWhere` 로 `/jobs` 에 보이는 공고만, 관리자·기업이 보내는 길 없음, 관리자에게는 개수만).
+      **데이터(0012):** 0001 의 `alerts` 표에 컬럼을 더함(`status`·`paused_reason`·`next_due_at`·`checked_until`·`fail_count`·`optin_at`·`optin_version`·`updated_at`, 인덱스 2) —
+      `db/account.eraseUser` 가 이미 `DELETE FROM alerts WHERE seeker_id = ?` 를 하므로 **탈퇴 때 알림이 지워지고 보호 파일을 고칠 필요가 없다.** 해지 토큰 `alert_unsub_tokens`(SHA-256 해시만, 메일마다 새 토큰, ON DELETE CASCADE — 탈퇴 DELETE 를 막지 않음을 테스트).
+      조건은 `/jobs` 파서(`parseJobFilter`) 결과를 FILTER_KEYS 순서 JSON 으로(다른 문법 없음, 검색어 칸이 없어 검색어 없음), 한 사람 5개, 같은 조건 하나.
+      **화면:** `/jobs` 목록 아래 "이 조건으로 새 공고 알림 받기"(로그인한 구직자 + 조건 있음일 때만 — 비로그인 캐시 HTML 은 그대로), `/my/alerts`(요약·상태·빈도·끄기·다시 켜기(수신 동의 다시)·삭제), 마이페이지 링크,
+      해지 `/alerts/u/:token`(GET 은 바꾸지 않음 → POST 버튼, "내 모든 알림 끄기", RFC 8058 한 번 클릭 POST — `sameOrigin` 예외는 그 경로 하나, 동의 확인 예외), 관리자 `/admin/system` 에 개수만.
+      **보내기:** 예약 작업 단계 `sendAlerts` — SCHEDULE 24칸이 모두 차 있어 **가벼운 단계 뒤에 같은 실행으로 붙임**(`SHARED_SLOTS`: 00 UTC=09 KST report 뒤, 04·10 UTC dropOldRows 뒤, 06 UTC purgeVerificationDocs 뒤; 앞 단계 동작 그대로, 실행기는 단계마다 로그 한 줄·집계 한 번).
+      매일 = 다음 09:00 KST, 매주 = 다음 월요일 09:00 KST, 21:00~08:00 KST·점검 모드에는 보내지 않음. 한 번에 `ALERT_SEND_PER_RUN`(기본 8, 최대 10), 메일 몫 `ALERT_MAIL_SITE_DAY`(기본 40)를 보내기 전에 잡고 모자라면 그만큼만,
+      새 공고 없음 → 메일 없이 차례만, 보낸 뒤에 기록, 실패 5번 연속 → 자동으로 꺼짐, 정리(탈퇴 계정의 알림·12개월 안 쓴 알림·180일 지난 토큰). 메일(한·중): 조건 요약, 최대 10건 + "외 N건" `/jobs?…`, 받는 이유, 관리·해지 링크,
+      운영자 줄(【확인 필요】 면 뺌), `List-Unsubscribe`·`List-Unsubscribe-Post` 머리글(`lib/email.ts` 의 `Mail` 에 선택 항목 `headers` 를 더함 — 유일한 email.ts 변경, 테스트).
+      새 변수 `ALERT_MAIL_SITE_DAY`·`ALERT_SEND_PER_RUN`(wrangler.jsonc 두 곳). 공통 문구 정리: 필터 이름·값 문구(`FILTER_LABEL_KEYS`·`filterValueLabel`)를 views 에서 `lib/public-jobs` 로 옮김(동작 같음).
+      테스트 66개 추가(`test/alerts.test.ts` 20 · `alert-send.test.ts` 26 · `alert-routes.test.ts` 17 · email 2 · maintenance 1) + 기계적 변경 2(시간표·실행기: 붙은 단계, quota 기본값 객체). 604 → 670.
+      wrangler dev(4.166) + Chromium(Playwright)으로 가짜 기업·공고·구직자 → `/jobs` 에서 알림 만들기 → 새 공고(맞는 것 1·조건 다른 것 2) → `cdn-cgi/handler/scheduled?cron=maint:sendAlerts&time=…`(09:01 KST) → 콘솔 메일에 맞는 새 공고 1건만,
+      정시 cron(00 UTC)에서 report 다음 sendAlerts 두 줄, 해지 링크 GET(바뀌지 않음) → POST(꺼짐 `unsubscribe`), curl 한 번 클릭 POST 빈 200, Origin 없는 `/all`·`/my/alerts` POST 403, 360px 가로 넘침 없음, 외부 요청 없음.
+      **열린 법적 질문 (운영 전에 전문가 확인 필요):**
+        1) 이 메일이 정보통신망법 제50조의 "영리목적의 광고성 정보" 인가 — 그렇다면 제목 앞 "(광고)", 수신 동의 2년마다 확인, 수신 거부 처리 결과 통지, 전송자 명칭·연락처 표시 등이 필요하다. 지금은 "(광고)" 를 붙이지 않았고(브리프),
+           야간(21~08시) 미발송·명시적 수신 동의·해지 링크·전송자 표시(운영자 정보가 채워지면)만 보수적으로 지킨다. 개인정보처리방침 2항의 "광고 목적으로 쓰지 않습니다" 와 함께 판단해야 한다.
+        2) 운영자가 공고를 고르지 않는 조건 알림이 직업정보제공사업의 범위 안인지(알선·소개로 보지 않는지) — 1350 문의(O-10) 때 함께 묻는다.
+        3) 개인정보처리방침에 새 처리 목적(저장한 검색 조건·알림 메일)을 넣어야 한다 — `src/legal/` 은 이 작업에서 고치지 않았다. 아래 문장을 넣고 `PRIVACY_VERSION` 을 올린다(운영자).
+           한국어 1항: "조건 알림을 만든 구직자: 저장한 검색 조건(필요한 중국어 수준·직무·업계·진출 단계·퇴직금 기준·보고 라인·근무지 중 고른 값), 알림 빈도, 알림 메일 수신 동의 일시, 알림 메일 발송 일시"
+           한국어 2항: "구직자가 직접 저장한 검색 조건에 맞는 새 공고를 알림 메일로 보내는 일(이력서와 지원 기록은 쓰지 않으며, 운영자가 공고를 고르거나 추천하지 않습니다)"
+           한국어 3항: "조건 알림: 구직자가 삭제하거나 탈퇴할 때까지. 12개월 동안 알림 메일이 나가지 않았거나 꺼져 있고 그동안 바꾸지 않은 알림은 자동으로 삭제합니다. 메일의 수신 거부 링크에 쓰는 값은 발송 후 180일이 지나면 삭제합니다."
+           한국어 8항: "조건 알림 메일은 마이페이지의 "조건 알림" 화면이나 메일마다 있는 수신 거부 링크로 언제든지 끄거나 삭제할 수 있습니다."
+           중국어(같은 자리): 1항 "创建条件提醒的求职者：保存的搜索条件（在所需中文水平、职能、行业、进入阶段、离职金标准、汇报对象、工作地点中所选的值）、提醒频率、同意接收提醒邮件的时间、提醒邮件的发送时间" ·
+           2항 "按求职者本人保存的搜索条件，通过提醒邮件发送新发布的职位（不使用简历和应聘记录，运营方不挑选或推荐职位）" ·
+           3항 "条件提醒：保存至求职者删除或注销为止。12个月内未发送过提醒邮件或处于关闭状态且期间未作修改的提醒将被自动删除。邮件中退订链接所用的值在发送180天后删除。" ·
+           8항 "可随时在“我的页面”的“条件提醒”或通过每封邮件中的退订链接关闭或删除条件提醒邮件。"
+      **남은 일:** 알림이 하루 32통(4회 × 8)을 넘게 쌓이면 밀린다 → 유료 플랜이면 `ALERT_RUN_MAX` 를 올리고 시각을 늘린다(하위 요청 계산 17-5 다시),
+      Resend 하루 100통 안에서 `MAIL_SITE_DAY` + `ALERT_MAIL_SITE_DAY` + 인증코드 몫 나누기(DEPLOY.md 1장), 보낸 뒤 기록이 실패하면 같은 메일이 한 번 더 갈 수 있음(Resend `Idempotency-Key` 를 쓰려면 `sendMail` 을 더 고쳐야 함),
+      해지 링크는 180일 뒤 만료(로그인해서 끌 수 있음), 사용 종료 항목의 "외 N건" `/jobs` 주소는 정규화 302 로 그 조건이 빠진 목록이 된다, 점검 모드 동안 해지 화면은 503(그동안 알림 메일도 멈춤),
+      테스트 서버에 Resend 키가 없으면 모든 알림 발송이 실패해 5번 뒤 꺼진다(키를 넣은 뒤 켤 것), 실제 Resend 로 머리글이 Gmail 등에서 "구독 취소" 로 보이는지 확인(O-4 뒤), CPU 10ms 실측(T-12b)
 ## 운영자 설정 (사람이 하는 일 — 순서와 방법은 docs/DEPLOY.md)
 - [ ] O-1 GitHub 저장소에 이 폴더 올리기 (`predeploy:prod` 는 main 브랜치·저장하지 않은 변경 없음을 확인한다)
 - [ ] O-2 테스트 서버 준비: `wrangler login`, D1 `recruit-test` 생성 → `database_id` 교체, R2 `recruit-test-files` 생성 — DEPLOY.md 2-2 · 2-3
@@ -269,7 +301,6 @@
 - [ ] T-06c 공개 화면 보완: 생산직 플래그를 켤 때 목록 질의 계획 다시 확인(`job_family IN (...)` 이면 정렬용 임시 B-tree 가 전체 게재 공고를 읽을 수 있음),
       공고가 수천 건을 넘으면 필터별 인덱스 필요 여부 확인(D1 대시보드의 rows read), 캐시를 우회하는 임의 검색 조건(홈 `/?x=`) 처리,
       마감·차단 직후 캐시 즉시 지우기(지금은 최대 60초 남음 — 배포 환경의 Cache API purge 는 zone 단위라 확인 필요)
-- [ ] T-10 조건 알림: 필터 저장, 일간·주간 메일(제목 "조건에 맞는 새 공고"). 무료 플랜 CPU 한도를 넘지 않게 한 번에 보내는 수를 제한
 - [ ] T-04c 국세청 사업자 상태조회 (공공데이터포털 키 발급 후)
 - [ ] T-12b 정리 작업 남은 일: 탈퇴 계정(`users.status = 'deleted'`) 행 삭제 — jobs.created_by·access_log.actor_id·application_events.actor_id·consents.user_id 가 외래키로 가리켜 지금은 지우지 않는다
       (가리키는 행이 모두 기간이 지나 지워진 뒤에 지우거나, 가리키는 컬럼을 NULL 로 바꾸는 마이그레이션이 필요). R2 삭제에 실패한 `vdocs/` 객체 정리(지금은 `rfiles/` 만 고아 정리).
