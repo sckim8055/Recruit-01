@@ -4,10 +4,11 @@ import type { Locale } from '../env';
 import type { LegalDoc } from '../legal/types';
 import { t } from '../lib/i18n';
 
-export const LegalPage = ({ locale, doc, other }: { locale: Locale; doc: LegalDoc; other: 'terms' | 'privacy' }) => (
+export const LegalPage = ({ locale, doc, other, note }: { locale: Locale; doc: LegalDoc; other: 'terms' | 'privacy'; note?: string }) => (
   <article class="wide doc">
     <h1>{doc.title}</h1>
     <p class="muted">{doc.effective}</p>
+    {note && <p class="muted">{note}</p>}
     {doc.intro.map((p) => <p>{p}</p>)}
     {doc.sections.map((s) => (
       <section>

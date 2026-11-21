@@ -5,6 +5,13 @@
 export interface LegalSection { h: string; items: string[] }
 export interface LegalDoc { title: string; effective: string; intro: string[]; sections: LegalSection[] }
 
+/**
+ * 본문에 넣는 자리표시자 (T-12c). 관리자가 바꾸는 보관 기간은 숫자를 글에 직접 쓰지 않고 `{이름}` 으로 두고,
+ * 화면에 내보낼 때 src/legal/render.ts 의 renderLegal 이 지금 설정값으로 채운다 (단위까지: "180일" / "180天", "1년" / "1年").
+ */
+export const LEGAL_PARAMS = ['application_keep_days', 'application_auto_close_days', 'vdoc_keep', 'access_log_keep', 'stale_days'] as const;
+export type LegalParam = (typeof LEGAL_PARAMS)[number];
+
 /** 운영자 정보. 실제 값은 운영자가 확인해 채운다. */
 export const OPERATOR = {
   name: 'NextHub 【확인 필요: 상호】',

@@ -3,10 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { confirmMatches, deleteAccount, deletedMarker, deletionBlocks } from '../src/lib/account';
 import { CROSS_BORDER_VERSION, WITHDRAWABLE } from '../src/lib/application';
 import {
-  consentExempt, missingConsents, needsConsentCheck, readConsentForm, safeNext, PRIVACY_VERSION, TERMS_VERSION,
+  consentExempt, missingConsents as missingFor, needsConsentCheck, readConsentForm, requiredConsents, safeNext, PRIVACY_VERSION, TERMS_VERSION,
+  type ConsentRow,
 } from '../src/lib/consent';
+import { DEFAULT_RETENTION } from '../src/lib/retention';
+
+// T-12c: 필수 동의의 판은 보관 기간 설정에 따라 정해진다. 이 파일의 판단 테스트는 설정이 없을 때(기본값)의 판으로 본다.
+const missingConsents = (rows: ConsentRow[]) => missingFor(rows, requiredConsents(DEFAULT_RETENTION));
 import { t } from '../src/lib/i18n';
 import { PRIVACY } from '../src/legal/privacy';
+import { renderLegal, tRetention } from '../src/legal/render';
 import { TERMS } from '../src/legal/terms';
 import { countOwnedCompaniesWithOthers, eraseUser } from '../src/db/account';
 import { insertConsents, listRequiredConsents } from '../src/db/consents';
@@ -200,15 +206,16 @@ describe('문서 본문', () => {
     expect(JSON.stringify(TERMS.ko)).toContain('추천하지 않');
   });
   it('보관 기간·국외 이전 내용이 지원 화면의 동의 문구와 같다 (180일, 중국, 취소하면 철회)', () => {
-    const p = JSON.stringify(PRIVACY.ko);
+    // T-12c: 기간은 자리표시자 → 설정이 없을 때(기본값)로 채운 글로 비교한다
+    const p = JSON.stringify(renderLegal(PRIVACY, DEFAULT_RETENTION).ko);
     expect(p).toContain('180일');
     expect(p).toContain('Cloudflare');
     expect(p).toContain('Resend');
     for (const k of ['apply.consent.optional.text', 'apply.consent.required.text']) {
-      expect(t('ko', k)).toContain('180일');
+      expect(tRetention('ko', k, DEFAULT_RETENTION)).toContain('180일');
       expect(t('ko', k)).toContain('국외 이전');
       expect(t('ko', k)).toContain('철회');
-      expect(t('zh', k)).toContain('180天');
+      expect(tRetention('zh', k, DEFAULT_RETENTION)).toContain('180天');
       expect(t('zh', k)).toContain('跨境转移');
     }
   });

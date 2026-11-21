@@ -190,6 +190,38 @@
       남은 일: 초안을 지우거나 마감하는 길이 없다(마감은 게재 중 공고만) — 게재할 수 없는 기업(미검증)은 초안 20개에서 멈춘다. 초안 삭제·보관 기능이 필요한지 운영자 판단,
       기업 화면에 "오늘 남은 번역 N회" 표시(지금은 걸렸을 때만), 메일 핵심 함수가 거절할 때(끝난 지원 등)도 메일 몫이 하나 줄어듦(게이트가 대부분 먼저 거른다),
       PostgreSQL 이전 때 UPSERT 동시성 확인(docs/DB-PORTING.md)
+- [x] T-12c 보관 기간을 관리자가 설정 + 쓰지 않은 초안 삭제. **운영자와 정한 법적 원칙:** 개인정보(지원서·첨부·사업자 서류·열람 기록)는 기간이 끝나면 반드시 지운다 —
+      "영구 보관"·"지우지 않고 비활성화" 는 없다(개인정보 기간에는 0 이 없고 위아래 한도). 개인정보가 아닌 공고 무수정 자동 마감만 끌 수 있다. 방침·동의 문구는 항상 지금 숫자를 보이고, 늘린 기간은 소급하지 않는다.
+
+      | 설정 (`site_settings.retention`, JSON 한 줄) | 기본 | 범위 |
+      |---|---|---|
+      | `application_keep_days` 지원서 보관: 공고 마감(확인) 후 | 180 | 30~365 |
+      | `application_auto_close_days` 결과 미정 지원 → "채용 종료" | 30 | 7~90, 보관보다 짧게 |
+      | `vdoc_keep_days` 사업자 서류: 확인 후 | 365 | 90~1095 |
+      | `access_log_keep_days` 열람 기록 | 730 | 365~1825 |
+      | `job_stale_days` 마감일 없는 공고 자동 마감 | 30 | 14~180 또는 0(끔) |
+
+      바꿀 수 없는 것(상수): 내용 없는 행·철회된 동의 2년, 메일 기록 1년, 고아 24시간, 마감 안내 3일 전, 하루 사용량 35일.
+      `lib/retention.ts`(RETENTION_SPEC·parseRetention: 잘못된·범위 밖 값은 **그 칸의 기본값**, 자동 종료 ≥ 보관이면 min(기본, 보관 - 1) · validateRetentionForm · planRetentionSave · 변경 기록),
+      `lib/retention-setting.loadRetention`(기본 키 한 행), `legal/render.ts`(renderLegal·tRetention: 자리표시자 → "N일"/"N天", 서류·열람 기록은 365 배수면 "N년"/"N年").
+      **예약 작업:** `runMaintenance` 가 실행마다 설정을 한 번 읽어 단계에 넘김(읽기 실패 = 실행 안 함·failed, 기본값으로 대신 지우지 않음, 문장 예산에 셈 — 단계별 최대 18). `job_stale_days = 0` 이면 무수정 마감·그 안내를 건너뜀(마감일 마감은 그대로).
+      **지원서 MIN 규칙:** 0011 `applications.keep_days`(지원할 때의 설정, NULL = 이전 지원 = 180). 실제 보관 = MIN(COALESCE(keep_days, 180), 지금 설정), 자동 종료 = MIN(설정, 실제 보관 - 1) — SQL(`db/maintenance` effKeep).
+      줄이면 이미 붙은 기한도 `lowerPurgeAfter` 가 "지금 + 실제 보관" 으로 **당김**(늦추지 않음, 마감 확인 시각을 저장하지 않으므로 줄인 기간은 그 단계가 본 때부터 셈 — 보수적, 50건씩, 시간 가드·LIMIT·주석).
+      지원 화면은 숨은 칸으로 보인 기간을 보내고 지원에는 MIN(보인 값, 지금 설정) 을 남김(화면을 연 뒤 늘어도 읽은 것보다 길게 붙지 않음).
+      **다시 동의:** 설정의 `rev` 는 개인정보 기간(지원서·서류·열람 기록)이 하나라도 **늘 때만** +1 → 방침 판 `PRIVACY_VERSION+r<rev>`(`lib/consent.privacyVersion`·`requiredConsents(설정)`, `missingConsents(rows, required)`).
+      동의 확인 미들웨어는 로그인한 요청마다 동의 + 설정 한 행(동시에, 캐시 없음). 줄이기·자동 종료·자동 마감 변경은 다시 묻지 않음. 국외 이전 동의 판은 `CROSS_BORDER_VERSION/k<일>`.
+      **문구:** `privacy.ts` 의 설정 기간 숫자 8곳(한·중)과 locales `consent.privacy.keep`·`apply.consent.*.text`·`mail.job_close.reason.stale`·새 `mail.job_close.stale_line` 을 자리표시자로(글은 그대로). `/privacy`(비로그인 캐시 60초)·`/consent`·계정·지원 화면이 지금 숫자로 채움.
+      **관리자 화면** `/admin/settings` "보관 기간": 범위·안내(반드시 삭제, 줄이면 되돌릴 수 없음, 늘리면 새 지원서에만 + 모두 다시 동의, 방침 자동 반영) → 확인 화면(old → new, 결과, "확인했습니다" 필수, 숨은 `base` 로 그사이 변경 감지) → 저장(`updated_by`) +
+      `retention.log`(최근 20줄, 시각·관리자 id·숫자만, 같은 트랜잭션). 마지막 변경 누가·언제, 최근 변경 5줄.
+      **초안 삭제:** `GET·POST /biz/jobs/:id/delete` — 초안 + 게재된 적 없음(`published_at IS NULL`) + 지원 없음(취소 포함)일 때만(`lib/jobs.draftDeletable`), `db/jobs.deleteUnusedDraft` 한 문장이 세 조건과 기업을 다시 확인.
+      목록·공고 화면의 "삭제" 는 그런 초안에만. 게재 중·마감·차단·예전에 게재된 공고는 지울 수 없음. 초안 한도 안내에 삭제를 적음.
+      **일부러 안 되게 한 것과 이유:** 개인정보 영구 보관·삭제 대신 숨기기(법적 원칙), 범위 밖 값(오입력으로 대량 삭제·무기한 보관 방지), 늘린 기간의 소급(더 짧은 약속으로 받은 지원서),
+      당긴 기한 되돌리기(지운 뒤 되돌릴 수 없고 약속보다 길어짐), 게재된 적 있는 공고 삭제(공개 기록·지원 보존), 화면 없는 설정 변경(HTTP 경로는 관리자 두 단계뿐).
+      테스트: `test/retention.test.ts`(19), `test/retention-routes.test.ts`(15), `test/maintenance.test.ts` "보관 기간 설정"(10), apply-routes 1. 기존 테스트 변경은 기계적(동의 판 인자·렌더 후 비교·keepDays 인자·`/k180`·집계 실패 정규식).
+      wrangler dev + Chromium(Playwright)으로 180 → 90(줄이기, 확인 화면) → `/privacy` 한·중 90·지원 동의 문구 90·기존 회원 다시 묻지 않음 → 90 → 120(늘리기) → 구직자·기업 `/consent`, `+r1` 개인정보 동의만 새로 →
+      자동 마감 끔 + closeJobs(무수정 공고 그대로, 마감일 지난 공고 마감) → keep_days 가 다른 지원의 markApplications·purgeApplications(MIN 규칙·당기기·늦추지 않음) → 초안 삭제·게재 공고 거절 확인.
+      남은 일: 사업자 서류·열람 기록은 자료마다 기간을 남기지 않아 늘린 기간이 이미 있는 자료에도 적용됨(운영자·전문가 판단 — 필요하면 지원서처럼 행마다 기간 저장),
+      늘린 뒤 다시 동의를 거부한 회원의 처리(지금은 탈퇴 외에 쓸 수 없음 — 설계대로), 자동 마감을 끄기 전에 보낸 무수정 마감 안내 메일은 그대로 나간 상태(마감은 되지 않음)
 ## 운영자 설정 (사람이 하는 일 — 안내 문서를 먼저 써서 건넨다)
 - [ ] O-1 GitHub 저장소에 이 폴더 올리기
 - [ ] O-2 Cloudflare: D1 `recruit-test` 생성 → `wrangler.jsonc` 의 `database_id` 교체, R2 `recruit-test-files` 생성

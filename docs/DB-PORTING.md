@@ -13,11 +13,11 @@
 | `src/db/users.ts` | users (로그인 시 조회·생성, TOTP 확정) |
 | `src/db/sessions.ts` | auth_codes, sessions, admin_totp_pending |
 | `src/db/companies.ts` | companies, company_members, company_invites, verification_docs(행), agency_members |
-| `src/db/jobs.ts` | jobs |
+| `src/db/jobs.ts` | jobs (+ 초안 삭제 전 지원 여부 읽기, T-12c) |
 | `src/db/public-jobs.ts` | jobs + companies (공개 공고 목록·상세, 읽기만) |
 | `src/db/logs.ts` | access_log, email_log |
 | `src/db/admin.ts` | 관리자 첫 화면 개수 (companies·agencies·jobs·reports) |
-| `src/db/settings.ts` | site_settings (사이트 설정 이름 → 값, upsert) |
+| `src/db/settings.ts` | site_settings (사이트 설정 이름 → 값, upsert, 여러 키를 한 트랜잭션으로 저장, 바꾼 관리자 이메일과 함께 읽기 — 보관 기간 설정 T-12c) |
 | `src/db/resumes.ts` | resumes (내 이력서 목록·한 개·개수, 5개 한도 안에서 추가, 버전 비교 수정, 대표 지정, 삭제 + 대표 승계, 파일 키 목록). 모든 문장에 `user_id` 조건 |
 | `src/db/options.ts` | job_options (직무·업계·근무지 선택 항목: 전체 읽기·추가·이름/순서 수정·사용 종료/다시 사용) + 항목별 공고 수 |
 | `src/db/applications.ts` | applications · application_events · consents(cross_border): 지원 여부, 기업 담당자 수(본사/그 밖)·알림 주소(활성 계정), 공개 조건·중복을 다시 확인하는 조건부 추가(+ 동의), 내 지원 한 건·목록, 취소(이벤트 + 상태 + 내용 삭제 + 동의 철회), 파일 키 목록. 구직자 쪽 문장은 모두 `seeker_id` 조건 |
@@ -85,6 +85,9 @@
 | `consents.insertConsents` | batch(종류마다 `INSERT … SELECT ?,… WHERE NOT EXISTS (같은 판의 유효한 동의)`) | `BEGIN … COMMIT`. FROM 없는 SELECT 의 매개변수 형 지정이 필요할 수 있다(확인 필요). 동시 두 요청은 4장 — 같은 판 동의가 두 줄 생길 수 있지만 판단(`missingConsents`)에는 영향 없음 |
 | `account.eraseUser` | batch 14문장 = 한 트랜잭션. 이벤트 id 를 **`lower(hex(randomblob(16)))`** 로 SQL 안에서 만든다(다른 곳의 UUID 와 모양이 다르다: 하이픈 없는 32자). 세션·2단계 대기 삭제를 뺀 모든 문장이 "아직 탈퇴 전"(`EXISTS … status != 'deleted'`)을 조건으로 하고 `users` 갱신이 맨 마지막 — 순서를 바꾸면 앞 문장들이 실행되지 않는다. 판단은 마지막 문장의 영향 행 수 | `gen_random_uuid()::text`(또는 앱에서 id 를 만들어 바인딩), `BEGIN … COMMIT`, 순서 그대로 |
 | `account.countOwnedCompaniesWithOthers` | `COUNT(*)` 가 숫자로 옴 | `COUNT(*)::int` 또는 변환(호출부가 `Number()` 로 감싼다) |
+| `maintenance.ts` 의 `effKeep`·`purgeAtSql`·`autoCloseBeforeSql` (T-12c) | 지원서 실제 보관 일수 `MIN(COALESCE(keep_days, ?), ?)` — SQLite 의 **여러 인자 MIN 은 스칼라 최솟값**. `markPurgeAfter`·`lowerPurgeAfter` 는 `UPDATE applications SET purge_after = (? + MIN(COALESCE(applications.keep_days, ?), ?) * 86400)` 처럼 갱신하는 표 이름으로 컬럼을 가리킨다 | `LEAST(COALESCE(keep_days, $1), $2)` (PostgreSQL 의 `MIN` 은 집계 함수뿐). SET 식 안의 `applications.keep_days` 는 그대로 되거나 이름 없이 `keep_days` |
+| `jobs.deleteUnusedDraft` (T-12c) | `DELETE FROM jobs WHERE … AND NOT EXISTS (SELECT 1 FROM applications WHERE job_id = jobs.id)` — 한 문장 가드, meta.changes | 그대로 된다. 동시에 지원이 들어오는 경우는 없다(초안은 공개되지 않아 지원할 수 없음) |
+| `settings.setSettings` (T-12c) | batch(키마다 `ON CONFLICT … DO UPDATE`) = 한 트랜잭션 | `BEGIN … COMMIT` |
 | `maintenance.ts` (전체) | 행 수 한도를 `WHERE id IN (SELECT id … LIMIT ?)` 로 건다 — SQLite 는 `DELETE/UPDATE … LIMIT` 을 기본 빌드에서 지원하지 않는다. `auth_codes` 는 기본 키가 email 이라 `email IN (SELECT email … LIMIT ?)` | 문법은 그대로 된다. 잠금 범위는 4장 |
 | `maintenance.autoCloseApplications` · `erasePurgedApplications` | batch: 상태별로 이벤트 `INSERT … SELECT lower(hex(randomblob(16))), …` → `UPDATE … WHERE … AND EXISTS (그 지원의 auto_closed 이벤트, at = 지금, actor NULL)`. 이벤트 id 를 SQL 안에서 만든다(하이픈 없는 32자, `account.eraseUser` 와 같음). 판단은 문장별 영향 행 수의 합 | `gen_random_uuid()::text`, `BEGIN … COMMIT`, 순서 그대로 (상태 문장이 이벤트 문장 뒤여야 한다) |
 | `maintenance.dropOldRows` | batch 9문장, **자식 먼저**(application_events → applications(이벤트가 남지 않은 것만) → consents → access_log → email_log → sessions → auth_codes → admin_totp_pending → usage_counters). D1 은 외래키를 검사한다. usage_counters 는 기본 키가 세 컬럼이라 행 값 `(scope, subject, day) IN (SELECT … LIMIT ?)` 로 한도를 건다(SQLite 3.15+), `day < ?` 는 고정 형식 'YYYY-MM-DD' 글자 비교 | `BEGIN … COMMIT`, 순서 그대로. 행 값 IN 은 PostgreSQL 도 된다. day 를 `date` 형으로 바꾸면 바인딩도 date 로 |

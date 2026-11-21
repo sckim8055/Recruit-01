@@ -5,6 +5,8 @@ import type { Locale } from '../env';
 import type { ConsentNeed } from '../lib/application';
 import { fmtDate, fmtDateTime } from '../lib/company';
 import { t } from '../lib/i18n';
+import type { RetentionValues } from '../lib/retention';
+import { tRetention } from '../legal/render';
 import type { ResumeBody, ResumeFieldError, ResumeFileMeta, ResumeInput } from '../lib/resume';
 import type { ApplicationRow, OwnApplicationListRow } from '../db/applications';
 import { Flash } from './company';
@@ -96,6 +98,8 @@ export interface ApplyFormProps {
   includeFile: boolean;
   need: ConsentNeed;
   consentGiven: boolean;
+  /** 지금 보관 기간 설정 (동의 문구의 "공고 마감 후 N일", T-12c). application_keep_days 는 숨은 칸으로 제출에 함께 간다. */
+  retention: RetentionValues;
   error?: string;                  // 화면 위 한 줄 (locales 키)
 }
 
@@ -111,6 +115,7 @@ export const ApplyForm = (p: ApplyFormProps) => {
       <FieldErrors locale={l} errors={p.errors.filter((e) => e.field !== 'title')} />
       <form method="post" action={`/jobs/${p.job.id}/apply`} class="box">
         <input type="hidden" name="resume_id" value={p.resumeId} />
+        <input type="hidden" name="keep_days" value={String(p.retention.application_keep_days)} />
         <p class="warn">{t(l, 'apply.edit_note')}</p>
         <ResumeFieldInputs locale={l} input={p.input} errors={p.errors} />
         <fieldset>
@@ -138,14 +143,14 @@ export const ApplyForm = (p: ApplyFormProps) => {
         {p.need === 'optional' && (
           <fieldset>
             <legend>{t(l, 'apply.consent.optional.title')}</legend>
-            <p>{t(l, 'apply.consent.optional.text')}</p>
+            <p>{tRetention(l, 'apply.consent.optional.text', p.retention)}</p>
             <label class="check"><input type="checkbox" name="consent" value="1" checked={p.consentGiven} />{t(l, 'apply.consent.optional.label')}</label>
           </fieldset>
         )}
         {p.need === 'required' && (
           <fieldset>
             <legend>{t(l, 'apply.consent.required.title')} *</legend>
-            <p>{t(l, 'apply.consent.required.text')}</p>
+            <p>{tRetention(l, 'apply.consent.required.text', p.retention)}</p>
             <label class="check"><input type="checkbox" name="consent" value="1" required checked={p.consentGiven} />{t(l, 'apply.consent.required.label')}</label>
           </fieldset>
         )}

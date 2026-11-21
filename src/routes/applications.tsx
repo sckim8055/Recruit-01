@@ -13,7 +13,7 @@ import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { flagsOf, now, type AppEnv, type SessionUser } from '../env';
 import { loadActor } from '../lib/actor';
 import {
-  CROSS_BORDER_VERSION, WITHDRAWABLE, applyBlocks, buildSnapshot, canWithdraw, consentAt, consentNeed, newApplicantMail,
+  WITHDRAWABLE, applyBlocks, buildSnapshot, canWithdraw, consentAt, consentNeed, crossBorderVersion, newApplicantMail,
   type ApplyBlock, type ConsentNeed,
 } from '../lib/application';
 import { serveApplicationFile } from '../lib/application-files';
@@ -29,6 +29,8 @@ import {
 } from '../lib/resume';
 import { copyResumeFile, deleteResumeFile } from '../lib/resume-files';
 import { nextStatus, type AppStatus } from '../lib/rules';
+import { inRange, type RetentionValues } from '../lib/retention';
+import { loadRetention } from '../lib/retention-setting';
 import { render, renderError } from '../render';
 import {
   ApplicationList, ApplicationPage, ApplyChooseResume, ApplyForm, ApplyNeedResume, WithdrawConfirm,
@@ -119,13 +121,14 @@ apply.use('/:id/apply', noStore, requireRole('seeker'));
 
 interface StepTwo {
   job: ApplyJobCtx; row: ResumeRow; body: ResumeBody; input: ResumeInput; errors: ResumeFieldError[];
-  includeFile: boolean; need: ConsentNeed; consentGiven: boolean; error?: string;
+  includeFile: boolean; need: ConsentNeed; consentGiven: boolean; retention: RetentionValues; error?: string;
 }
 
 const stepTwo = (c: Context<AppEnv>, s: StepTwo, status: 200 | 400 = 200) =>
   render(c, (
     <ApplyForm locale={c.var.locale} job={s.job} resumeId={s.row.id} input={s.input} errors={s.errors}
-      file={s.row.file_r2_key ? s.body.file : null} includeFile={s.includeFile} need={s.need} consentGiven={s.consentGiven} error={s.error} />
+      file={s.row.file_r2_key ? s.body.file : null} includeFile={s.includeFile} need={s.need} consentGiven={s.consentGiven}
+      retention={s.retention} error={s.error} />
   ), 'apply.title', status);
 
 /** 1단계 목록: 열 수 있는 이력서만 (열 수 없는 것은 이력서 화면에서 지우도록 안내되어 있다). 지원 가능 여부는 resumeReadyToApply. */
@@ -173,10 +176,11 @@ apply.get('/:id/apply', async (c) => {
   if (!choices.find((r) => r.id === own.row.id)?.ready) {
     return render(c, <ApplyChooseResume locale={c.var.locale} job={job} items={choices} selected={ready[0]!.id} error="apply.err.resume_not_ready" />, 'apply.title', 400);
   }
-  const need = consentNeed(await memberCounts(c.env.DB, job.companyId));
+  const [counts, retention] = await Promise.all([memberCounts(c.env.DB, job.companyId), loadRetention(c.env.DB)]);
+  const need = consentNeed(counts);
   return stepTwo(c, {
     job, row: own.row, body: own.body, input: inputFromResume(own.row.title, own.body), errors: [],
-    includeFile: true, need, consentGiven: false,
+    includeFile: true, need, consentGiven: false, retention,
   });
 });
 
@@ -207,10 +211,15 @@ apply.post('/:id/apply', async (c) => {
   const include = hasFile && f.include_file === '1';
 
   // (c) 국외 이전 동의: 필요 여부는 지금의 담당자 구성으로 정한다. 체크값은 필요할 때만 저장된다(consentAt).
-  const need = consentNeed(await memberCounts(c.env.DB, job.companyId));
+  const [counts, retention] = await Promise.all([memberCounts(c.env.DB, job.companyId), loadRetention(c.env.DB)]);
+  const need = consentNeed(counts);
   const given = f.consent === '1';
+  // 지원서 보관 일수 (T-12c): 지금 설정과 화면에 보였던 값(숨은 칸) 중 짧은 쪽. 화면을 연 뒤 관리자가 기간을 늘렸어도
+  // 구직자가 읽은 것보다 긴 기간이 이 지원에 붙지 않게 한다. 숨은 칸이 없거나 이상하면 지금 설정.
+  const shown = typeof f.keep_days === 'string' && /^\d{1,4}$/.test(f.keep_days) ? Number(f.keep_days) : NaN;
+  const keepDays = inRange('application_keep_days', shown) ? Math.min(shown, retention.application_keep_days) : retention.application_keep_days;
   const again = (error: string | undefined, errors: ResumeFieldError[] = []) =>
-    stepTwo(c, { job, row, body, input, errors, includeFile: include, need, consentGiven: given, error }, 400);
+    stepTwo(c, { job, row, body, input, errors, includeFile: include, need, consentGiven: given, retention, error }, 400);
   if (!v.ok) return again(undefined, v.errors);
 
   const blocksFor = async (copied: boolean) => applyBlocks({
@@ -256,7 +265,7 @@ apply.post('/:id/apply', async (c) => {
   try {
     inserted = await insertApplication(c.env.DB, {
       id, jobId: job.id, seekerId: user.id, resumeId: row.id, snapshot: await sealResume(await key(c), snapshot), fileKey,
-      consentAt: consentAt(need, given, ts), consentVersion: CROSS_BORDER_VERSION, ts,
+      consentAt: consentAt(need, given, ts), consentVersion: crossBorderVersion(keepDays), ts, keepDays,
     }, flagsOf(c.env));
   } catch (e) {
     await cleanup(c, fileKey);

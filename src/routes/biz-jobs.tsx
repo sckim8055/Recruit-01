@@ -7,7 +7,7 @@ import { Hono, type Context } from 'hono';
 import { flagsOf, now, type AppEnv } from '../env';
 import { canEditJob } from '../lib/authz';
 import {
-  EMPTY_JOB_INPUT, digitDiff, inputFromJob, planJobSave, publishInputOf, readJobForm, readKoreanForm, readRev, reviewAfterSave,
+  EMPTY_JOB_INPUT, digitDiff, draftDeletable, inputFromJob, planJobSave, publishInputOf, readJobForm, readKoreanForm, readRev, reviewAfterSave,
   validateJob, type JobFieldError, type JobInput, type JobText,
 } from '../lib/jobs';
 import { availableEngines, localizeJob } from '../lib/localize';
@@ -16,11 +16,12 @@ import { buildOptionSet, selectableAll, type OptionKind, type OptionSet } from '
 import { parseOperatorDomains, publishBlocks } from '../lib/rules';
 import { QUOTA_MSG, limitsOf, quotaText, takeLocalize } from '../lib/quota';
 import { render, renderError } from '../render';
-import { JobFormPage, JobList, JobReview } from '../views/jobs';
+import { JobDeleteConfirm, JobFormPage, JobList, JobReview } from '../views/jobs';
 import type { CompanyCtx } from './biz-ctx';
 import { requireCompany } from './biz-company';
 import {
-  approveJob, claimLocalize, closeJob, insertJob, jobFieldsOf, listCompanyJobs, loadJob, publishJob, saveKorean, saveLocalized,
+  approveJob, claimLocalize, closeJob, deleteUnusedDraft, insertJob, jobFieldsOf, jobHasApplications, listCompanyJobs, loadJob, publishJob,
+  saveKorean, saveLocalized,
   updateJobSource, type JobRow,
 } from '../db/jobs';
 import { listOptions } from '../db/options';
@@ -62,7 +63,11 @@ async function reviewPage(
   status: 200 | 400 = 200,
 ) {
   const blocks = publishBlocks(publishInputOf(job, publishCtx(c, ctx)));
-  const options = await loadOptions(c);
+  // 지울 수 있는 초안인지는 초안이고 게재된 적이 없을 때만 지원 여부를 읽어 정한다 (그 밖의 공고는 읽기 없이 false).
+  const [options, deletable] = await Promise.all([
+    loadOptions(c),
+    draftDeletable(job, false) ? jobHasApplications(c.env.DB, job.id).then((has) => !has) : Promise.resolve(false),
+  ]);
   const digits = job.title_ko || job.body_ko
     ? digitDiff(`${job.title_zh ?? ''}\n${job.source_zh ?? ''}`, `${job.title_ko ?? ''}\n${job.body_ko ?? ''}`)
     : { missing: [], extra: [] };
@@ -70,7 +75,7 @@ async function reviewPage(
     c,
     <JobReview
       locale={c.var.locale} job={job} options={options} blocks={blocks} digits={digits} notes={translatorNoteLines(job.body_ko ?? '')}
-      enginesAvailable={availableEngines(c.env).length > 0}
+      enginesAvailable={availableEngines(c.env).length > 0} deletable={deletable}
       ok={msg.ok} error={msg.error} koErrors={msg.koErrors ?? []} koInput={msg.koInput} highlightBlocks={msg.showBlocks}
     />,
     'job.title',
@@ -84,7 +89,8 @@ bizJobs.get('/jobs', async (c) => {
   const ctx = await requireCompany(c);
   if (ctx instanceof Response) return ctx;
   const [rows, counts] = await Promise.all([listCompanyJobs(c.env.DB, ctx.company.id), countApplicationsByJob(c.env.DB, ctx.company.id)]);
-  return render(c, <JobList locale={c.var.locale} rows={rows} counts={counts} verified={ctx.company.verify_status === 'verified'} />, 'job.list.title');
+  const ok = c.req.query('ok') === 'deleted' ? 'job.ok.deleted' : undefined;
+  return render(c, <JobList locale={c.var.locale} rows={rows} counts={counts} verified={ctx.company.verify_status === 'verified'} ok={ok} />, 'job.list.title');
 });
 
 // ── 새 공고
@@ -292,4 +298,32 @@ bizJobs.post('/jobs/:id/close', async (c) => {
   const closed = await closeJob(c.env.DB, job.id);
   if (!closed) return reviewPage(c, ctx, job, { error: 'job.err.stale' }, 400);
   return c.redirect(`/biz/jobs/${job.id}?ok=closed`);
+});
+
+// ── 쓰지 않은 초안 삭제 (T-12c): 확인 화면(GET) → POST. 초안이고 게재된 적이 없고 지원이 없는 공고만 (lib/jobs.draftDeletable).
+// 게재 중·마감·차단 공고와 한 번이라도 게재됐던 공고는 지울 수 없다. DB 문장이 세 조건과 기업을 다시 확인한다.
+
+async function requireDeletable(c: Context<AppEnv>): Promise<{ ctx: CompanyCtx; job: JobRow } | Response> {
+  const x = await requireJob(c);
+  if (x instanceof Response) return x;
+  if (!draftDeletable(x.job, await jobHasApplications(c.env.DB, x.job.id))) return reviewPage(c, x.ctx, x.job, { error: 'job.err.not_deletable' }, 400);
+  return x;
+}
+
+bizJobs.get('/jobs/:id/delete', async (c) => {
+  const x = await requireDeletable(c);
+  if (x instanceof Response) return x;
+  return render(c, <JobDeleteConfirm locale={c.var.locale} job={x.job} />, 'job.delete.title');
+});
+
+bizJobs.post('/jobs/:id/delete', async (c) => {
+  const x = await requireDeletable(c);
+  if (x instanceof Response) return x;
+  const deleted = await deleteUnusedDraft(c.env.DB, { id: x.job.id, companyId: x.ctx.company.id });
+  if (!deleted) {
+    const fresh = await loadJob(c.env.DB, x.job.id);
+    if (!fresh) return c.redirect('/biz/jobs?ok=deleted', 303); // 다른 창에서 이미 지웠다
+    return reviewPage(c, x.ctx, fresh, { error: 'job.err.not_deletable' }, 400);
+  }
+  return c.redirect('/biz/jobs?ok=deleted', 303);
 });

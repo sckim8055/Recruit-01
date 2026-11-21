@@ -6,21 +6,36 @@
 // - 국외 이전 동의(cross_border)는 지원할 때 따로 받는다 (lib/application.ts).
 // - 문서 본문은 src/legal/ 에 있다. 본문을 바꾸면 아래 판을 올린다.
 
-/** 문서의 판. consents.version 에 남는다. 본문(src/legal/terms.ts · privacy.ts)을 고치면 올린다. */
+/** 문서의 판. consents.version 에 남는다. 본문(src/legal/terms.ts · privacy.ts)을 고치면 올린다. 개인정보처리방침의 실제 판은 privacyVersion(). */
 export const TERMS_VERSION = '2026-11-1';
 export const PRIVACY_VERSION = '2026-11-1';
 
 export type RequiredConsent = 'terms' | 'privacy';
-export const REQUIRED_CONSENTS: Array<{ type: RequiredConsent; version: string }> = [
-  { type: 'terms', version: TERMS_VERSION },
-  { type: 'privacy', version: PRIVACY_VERSION },
-];
+export type RequiredConsentItem = { type: RequiredConsent; version: string };
+export const REQUIRED_CONSENT_TYPES: readonly RequiredConsent[] = ['terms', 'privacy'];
+
+/**
+ * 지금 개인정보처리방침의 판 (T-12c). 관리자가 개인정보 보관 기간을 한 번도 늘린 적이 없으면 PRIVACY_VERSION 그대로,
+ * 늘린 적이 있으면 `${PRIVACY_VERSION}+r<n>` (n = 보관 기간 설정의 rev — 개인정보 기간을 늘릴 때만 오른다, lib/retention.planRetentionSave).
+ * 판이 바뀌면 회원은 다음 요청에서 /consent 로 가서 개인정보 동의만 다시 한다. 줄이기·자동 마감·자동 종료를 바꾸는 것은 판을 바꾸지 않는다.
+ */
+export function privacyVersion(retention: { rev: number }): string {
+  return retention.rev > 0 ? `${PRIVACY_VERSION}+r${retention.rev}` : PRIVACY_VERSION;
+}
+
+/** 지금 받아야 하는 필수 동의(종류·판). 판은 보관 기간 설정에 따라 바뀐다. */
+export function requiredConsents(retention: { rev: number }): RequiredConsentItem[] {
+  return [
+    { type: 'terms', version: TERMS_VERSION },
+    { type: 'privacy', version: privacyVersion(retention) },
+  ];
+}
 
 export interface ConsentRow { type: string; version: string; withdrawn_at: number | null; agreed_at?: number }
 
-/** 아직 받지 않은 필수 동의. 빈 배열이면 통과. 철회한 동의·옛 판의 동의는 세지 않는다. */
-export function missingConsents(rows: ConsentRow[]): RequiredConsent[] {
-  return REQUIRED_CONSENTS
+/** 아직 받지 않은 필수 동의. 빈 배열이면 통과. 철회한 동의·옛 판의 동의는 세지 않는다. required = requiredConsents(지금 보관 기간 설정). */
+export function missingConsents(rows: ConsentRow[], required: RequiredConsentItem[]): RequiredConsent[] {
+  return required
     .filter((r) => !rows.some((x) => x.type === r.type && x.version === r.version && x.withdrawn_at === null))
     .map((r) => r.type);
 }
@@ -40,7 +55,7 @@ export function needsConsentCheck(role: string | null, path: string): boolean {
 /** 동의 폼: 두 항목 모두 체크해야 한다. */
 export function readConsentForm(f: Record<string, unknown>): { ok: true } | { ok: false; missing: RequiredConsent[] } {
   const on = (v: unknown) => v === '1' || v === 'on';
-  const missing = REQUIRED_CONSENTS.map((r) => r.type).filter((t) => !on(f[t]));
+  const missing = REQUIRED_CONSENT_TYPES.filter((t) => !on(f[t]));
   return missing.length ? { ok: false, missing } : { ok: true };
 }
 

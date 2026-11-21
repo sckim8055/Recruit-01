@@ -45,6 +45,8 @@ src/
     account.ts       회원 탈퇴: 막는 경우 판단 → 파일 키 모으기 → DB 지우기 → R2 지우기 (13절)
     static-files.ts  public/ 의 파일 주소 (동의 확인에서 건너뜀)
     quota.ts         남용 방지 한도: 한도 숫자(한 곳)·변수 해석·한국 시간 날짜·기업 몫 → 사이트 몫 잡기 (15절)
+    retention.ts     보관 기간: 기본값·범위(RETENTION_SPEC)·설정 해석·관리자 폼 검사·저장 계획(rev)·변경 기록 — 순수 함수 (14절, T-12c)
+    retention-setting.ts  보관 기간 설정 한 행 읽기(loadRetention)
     localize/        현지화 엔진 층 (7절)
   db/                SQL 과 D1 호출은 여기에만 (T-05d). users · sessions(인증코드·세션·TOTP 대기) · companies(기업·담당자·초대·서류 행)
                      · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수) · settings(site_settings) · options(job_options) · resumes(이력서)
@@ -52,6 +54,7 @@ src/
                      · consents(이용약관·개인정보 동의 읽기·쓰기) · account(탈퇴 트랜잭션) · usage(하루 사용량 한도, 15절). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
                      PostgreSQL 로 옮길 때 고칠 곳과 SQLite 전용 문법 목록은 docs/DB-PORTING.md
   legal/             이용약관(terms.ts)·개인정보처리방침(privacy.ts) 본문, 운영자 정보(types.ts OPERATOR). 한국어 기준 + 중국어 참고 번역 (13절)
+                     render.ts: 본문·문구의 보관 기간 자리표시자({application_keep_days} 등)를 지금 설정으로 채운다 (14-1, T-12c)
   locales/ko.ts zh.ts  화면 문구
   routes/            화면·API 라우트 (기능별 파일)
   views/             JSX 화면 조각
@@ -101,7 +104,8 @@ docs/                이 문서, API.md, TASKS.md
 - **지원서(`applications.resume_snapshot`)** 는 지원 시점의 이력서 복사본이다. 지원 화면에서 이번 지원에만 쓸 내용으로 고쳐서 낼 수 있고, 이후 이력서를 고치거나 지워도 지원서는 바뀌지 않는다.
 - **상태(`applications.status`)** 는 `application_events` 에서 `rules.nextStatus()` 로 계산해 저장한다.
 - **`translations`** 는 공고 번역 캐시 전용이다. 개인정보를 넣지 않는다.
-- **보관:** 지원서는 공고 마감(을 확인한 때) 후 180일(`purge_after`), 검증 서류 원본은 확인 후 1년, 열람 기록은 2년. 숫자는 `lib/retention.ts` 한 곳에 있고 개인정보처리방침 3항과 같아야 한다 — 지우는 작업은 14절(T-12).
+- **보관:** 지원서는 공고 마감(을 확인한 때) 후 (기본) 180일(`purge_after`), 검증 서류 원본은 확인 후 1년, 열람 기록은 2년. 관리자가 정한 범위 안에서 바꿀 수 있고(T-12c),
+  지원서마다 낼 때의 기간(`applications.keep_days`, 0011)을 남겨 늘린 기간을 소급하지 않는다. 개인정보처리방침 3항은 설정값으로 채워 보인다 — 14절.
 
 ## 5. 법적 규칙이 코드에 있는 위치
 
@@ -234,7 +238,8 @@ docs/                이 문서, API.md, TASKS.md
 - **한 공고에 한 번:** `UNIQUE (job_id, seeker_id)` + `insertApplication` 의 `NOT EXISTS`. 취소한 지원도 행이 남으므로 **같은 공고에 다시 지원할 수 없다** (`applyBlocks` → `already_applied`, 화면은 기존 지원으로 보낸다).
 - **국외 이전 동의 (`lib/application.consentNeed`, 지원할 때의 담당자 구성으로 정한다):**
   본사 소속(`is_hq = 1`) 담당자가 없으면 칸이 없고 체크값이 와도 저장하지 않는다. 본사 + 한국 담당자가 있으면 **선택**(기본 해제, 해제하면 한국 담당자만 열람 — `authz.canViewApplication`).
-  본사 담당자만 있으면 **필수**(없으면 아무도 볼 수 없으므로 제출 불가). 동의하면 `applications.cross_border_consent_at` 과 `consents(type='cross_border', version=CROSS_BORDER_VERSION, ref_id=지원 id)`.
+  본사 담당자만 있으면 **필수**(없으면 아무도 볼 수 없으므로 제출 불가). 동의하면 `applications.cross_border_consent_at` 과 `consents(type='cross_border', version=crossBorderVersion(보관 일수) = "CROSS_BORDER_VERSION/k<일>", ref_id=지원 id)` (T-12c).
+  동의 문구의 "공고 마감 후 N일" 은 지금 보관 기간 설정으로 채우고, 지원에는 `keep_days` = MIN(화면에 보였던 값(숨은 칸, 범위 밖이면 무시), 지금 설정)을 남긴다 — 화면을 연 뒤 기간이 늘어도 구직자가 읽은 것보다 긴 기간이 붙지 않게.
   문구는 locales `apply.consent.*` 의 초안이고 판(版)은 화면에 보이지 않는다. 확정은 T-11.
   알려진 점: 지원한 뒤 기업이 본사 담당자를 추가해도 예전 지원에는 동의가 없으므로 그 담당자는 볼 수 없다(설계대로).
 - **기업 알림:** 그 기업의 활성 담당자(`users.status = 'active'`) 최대 10명에게 `new_applicant` 메일(`newApplicantMail`: 공고 제목과 `/biz` 주소, 한국어+중국어). 구직자 정보는 넣지 않는다.
@@ -291,14 +296,16 @@ docs/                이 문서, API.md, TASKS.md
 - **문서:** `src/legal/terms.ts`·`privacy.ts`(한국어 기준, 중국어 참고 번역, `【확인 필요】` 표시는 운영자가 채운다), 화면 `/terms`·`/privacy`(누구나, 비로그인은 page-cache 60초, JSX 로만 출력, 주소는 글자 그대로).
   모든 화면 바닥글과 로그인 화면에서 연결한다. 본문을 고치면 `lib/consent.ts` 의 `TERMS_VERSION`·`PRIVACY_VERSION` 을 올린다 → 회원에게 다시 묻는다.
 - **동의 확인 (`src/index.tsx`, 세션·언어 미들웨어 뒤, 라우트 앞):** 로그인한 회원 중 관리자가 아닌 사람(`needsConsentCheck`)은 요청마다 `db/consents.listRequiredConsents` 한 번(작은 색인 읽기,
-  `idx_consents_user`)으로 지금 판의 `terms`·`privacy` 동의(철회되지 않은 것)를 확인한다(`missingConsents`). 따로 캐시하지 않는다.
+  `idx_consents_user`)과 보관 기간 설정 한 행(`lib/retention-setting.loadRetention`, 기본 키, T-12c)을 동시에 읽어 지금 판의 `terms`·`privacy` 동의(철회되지 않은 것)를 확인한다
+  (`missingConsents(rows, requiredConsents(설정))`). 개인정보처리방침의 지금 판은 `privacyVersion(설정)` = 설정의 rev 가 0 이면 `PRIVACY_VERSION`, 아니면 `PRIVACY_VERSION+r<rev>`. 따로 캐시하지 않는다.
   빠졌으면 GET·HEAD 는 `/consent?next=<원래 경로+검색 조건>`(`safeNext` 가 받는 경로일 때만, 아니면 `next` 없이)으로 302, 그 밖의 메서드는 403(처리하지 않음, 동의 화면 링크). 모두 `private, no-store`.
   - 확인하지 않는 것: **비로그인 요청**(아무것도 읽지 않는다 — 캐시되는 공개 화면이 D1 을 읽지 않게), 관리자, 예외 주소(`consentExempt`: `/consent` `/terms` `/privacy` `/logout` `/login*` `/lang/*` `/my/account*` `/api/health`),
     `public/` 의 파일(`lib/static-files.PUBLIC_FILES`; 배포 환경에서는 정적 파일이 Worker 앞에서 나가므로 원래 여기까지 오지 않는다).
   - 동의하지 않은 회원도 문서 읽기·언어 바꾸기·로그아웃·계정 화면·**탈퇴**는 할 수 있다 (거부한 사람이 나갈 수 있어야 한다).
 - **동의 화면 `/consent`:** 비로그인 → `/login`, 관리자 → `/admin`, 빠진 것이 없으면 `safeNext(next)` 로. 빠진 종류의 체크 칸만 보이고(미리 체크하지 않음, 오류로 다시 그릴 때도),
   개인정보 칸에는 수집 항목·목적·보유 기간·국외 보관(Cloudflare·Resend, 방침 6항)을 요약한다. 지금 판에 이미 동의한 종류는 "이미 동의함" 으로만 보이고 폼 검사(`readConsentForm`)에서 체크된 것으로 본다.
-  POST 는 빠진 종류만 `insertConsents`(같은 판의 유효한 동의가 있으면 건너뛴다) → 303 `safeNext(next)`. 하나라도 빠지면 400 + 아무것도 기록하지 않는다. **동의는 이 POST 에서만 기록한다.**
+  POST 는 빠진 종류만 `insertConsents`(같은 판의 유효한 동의가 있으면 건너뛴다 — 판은 이 POST 에서 다시 읽은 설정의 판) → 303 `safeNext(next)`. 하나라도 빠지면 400 + 아무것도 기록하지 않는다. **동의는 이 POST 에서만 기록한다.**
+  보관 기간 요약(`consent.privacy.keep`)은 지금 설정으로 채운다.
 - **계정 `/my/account`:** 모든 로그인 회원(관리자 포함). 로그인 이메일·유형·동의 내역(종류별 판 — `listRequiredConsents` 가 동의 시각을 돌려주지 않아 시각은 보이지 않는다)·문서 링크·회원 탈퇴 입구.
   막히는 경우(`deletionBlocksFor`): 관리자(화면에서 탈퇴 불가), 다른 담당자가 있는 기업의 대표 담당자(먼저 담당자를 내보내거나 운영자에게 대표 변경 요청 — 대표를 넘기는 화면은 아직 없다).
 - **탈퇴 `/my/account/delete`:** 확인 화면(무엇이 지워지고 남는지 + 로그인 이메일 입력) → POST `confirmMatches`(대소문자·앞뒤 공백 무시) → `deleteAccount` → 막히면 400 + 계정 화면,
@@ -314,29 +321,62 @@ docs/                이 문서, API.md, TASKS.md
 
 ## 14. 예약 작업: 자동 마감·보관 기한 삭제·정리 (T-12)
 
-코드: `src/lib/retention.ts`(기간 상수, 한 곳), `src/lib/maintenance.ts`(단계·시간표·상한·실행기), `src/db/maintenance.ts`(SQL), `src/index.tsx` 의 `scheduled`.
+코드: `src/lib/retention.ts`(기본값·범위·설정 해석, 한 곳), `src/lib/retention-setting.ts`(설정 읽기), `src/lib/maintenance.ts`(단계·시간표·상한·실행기), `src/db/maintenance.ts`(SQL), `src/index.tsx` 의 `scheduled`.
 **이 작업은 데이터를 지운다.** 모든 UPDATE·DELETE 는 호출부가 넘긴 시각으로 거는 시간 조건 + 행 수 한도 + "아직 처리 전" 조건을 가지며, 두 번 실행해도 더 바뀌지 않는다.
 
-### 14-1. 보관 기간 = 상수 = 개인정보처리방침 3항
+### 14-1. 보관 기간 = 관리자 설정 = 개인정보처리방침 3항 (T-12c)
 
-| 대상 | 상수 (`lib/retention.ts`) | 방침 3항 (`src/legal/privacy.ts`) | 하는 단계 |
+**운영자와 정한 법적 원칙**
+- 개인정보(지원서 내용·첨부, 사업자 서류, 열람 기록)는 **기간이 끝나면 반드시 지운다.** "영구 보관" 이나 "지우지 않고 비활성화" 는 고를 수 없다 — 개인정보 기간에는 0(끄기)이 없고 위아래 한도가 있다.
+- 개인정보가 아닌 것만 끌 수 있다: 마감일 없는 공고의 무수정 자동 마감(`job_stale_days = 0`).
+- 공개된 개인정보처리방침과 동의 문구는 **항상 지금 적용되는 숫자**를 보인다(`src/legal/render.ts` 가 자리표시자를 설정값으로 채운다).
+- 늘린 기간은 **소급하지 않는다:** 더 짧은 약속으로 낸 지원서에 더 긴 기간을 붙이지 않는다.
+
+**설정** — `site_settings` 의 `retention` 한 줄(JSON). 행이 없으면 기본값(= T-12 의 숫자). 해석은 `parseRetention`: JSON 이 아니면 기본값, 칸마다 범위 밖·정수 아님이면 **그 칸의 기본값**
+(한도 없는 값으로 가지 않는다), 자동 종료 ≥ 보관이면 자동 종료 = min(기본값, 보관 - 1). 관리자 화면 `/admin/settings` "보관 기간"(두 단계 저장, API.md).
+
+| 키 | 뜻 | 기본 | 범위 | 방침 3항 자리표시자 | 하는 단계 |
+|---|---|---|---|---|---|
+| `application_keep_days` | 지원서 내용(복사본·첨부·요약): 공고 마감(확인) 후 | 180 | 30~365 | `{application_keep_days}` ("180일"/"180天") | markApplications → purgeApplications |
+| `application_auto_close_days` | 결과 미정(진행 중) 지원을 "채용 종료" 로 | 30 | 7~90, 보관보다 짧게 | `{application_auto_close_days}` | markApplications |
+| `vdoc_keep_days` | 사업자 서류: 확인 후 | 365 | 90~1095 | `{vdoc_keep}` (365 배수면 "1년"/"1年") | purgeVerificationDocs |
+| `access_log_keep_days` | 열람 기록 `access_log` | 730 | 365~1825 | `{access_log_keep}` ("2년"/"2年") | dropOldRows |
+| `job_stale_days` | 마감일 없는 공고 자동 마감: 마지막 저장 후 | 30 | 14~180, **0 = 끔** | (방침 항목 아님, 안내 메일 `{stale_days}`) | closeJobs |
+
+바꿀 수 없는 기간(상수 그대로):
+
+| 대상 | 상수 | 방침 3항 | 하는 단계 |
 |---|---|---|---|
-| 지원서 내용(복사본·첨부·요약) | `APPLICATION_KEEP_AFTER_CLOSE` = 180일 | "공고 마감 후 180일까지 보관한 뒤 삭제" (취소하면 바로 — T-08) | markApplications → purgeApplications |
-| 진행 중 지원의 자동 종료 | `APPLICATION_AUTO_CLOSE_AFTER` = 30일 | (방침 항목 아님, 상태 "채용 종료") | markApplications |
-| 사업자 서류 | `VDOC_KEEP_AFTER_REVIEW` = 365일 | "확인 후 1년" | purgeVerificationDocs |
-| 열람 기록 `access_log` | `ACCESS_LOG_KEEP` = 730일 | "2년" | dropOldRows |
-| 동의 기록(철회된 것)·지원했다는 사실(내용 없는 행·이벤트) | `ERASED_ROW_KEEP` = 730일 | "탈퇴 후에도 2년간 보관할 수 있습니다 【확인 필요: 기간】" | dropOldRows |
-| 메일 발송 기록 `email_log`(주소 해시) | `EMAIL_LOG_KEEP` = 365일 | (방침에 따로 없음) | dropOldRows |
+| 동의 기록(철회된 것)·지원했다는 사실(내용 없는 행·이벤트) | `ERASED_ROW_KEEP` = 730일 | "2년간 보관할 수 있습니다 【확인 필요: 기간】" (글자 그대로) | dropOldRows |
+| 메일 발송 기록 `email_log`(주소 해시) | `EMAIL_LOG_KEEP` = 365일 | "1년" | dropOldRows |
 | 만료된 세션·인증코드·2단계 대기 | 만료 시각 | — | dropOldRows |
-| 하루 사용량 `usage_counters`(id·날짜·횟수, 15절) | `lib/quota.USAGE_KEEP_DAYS` = 35일 | (개인정보 아님) | dropOldRows |
-| 마감일 없는 공고 | `JOB_STALE_AFTER` = 30일, 안내 `JOB_CLOSE_NOTICE_BEFORE` = 3일 | — | closeJobs |
+| 하루 사용량 `usage_counters`(15절) | `lib/quota.USAGE_KEEP_DAYS` = 35일 | (개인정보 아님) | dropOldRows |
+| 마감 안내 | `JOB_CLOSE_NOTICE_BEFORE` = 3일 전 | — | closeJobs |
 | R2 고아 객체 | `ORPHAN_MIN_AGE` = 24시간 | — | sweepOrphans |
 
-`test/maintenance.test.ts` 가 상수로 만든 숫자("180일"·"1년"·"2년", 중국어 "180天"·"1年"·"2年")가 방침 3항 글(한·중)에 있는지 확인한다. 하나를 바꾸면 다른 쪽과 `PRIVACY_VERSION` 을 같이 바꾼다.
+**실행기:** `runMaintenance` 는 실행마다 설정을 한 번(기본 키 한 행) 읽어 단계에 넘긴다(문장 예산에 셈). **읽지 못하면 그 실행은 아무것도 하지 않고 failed** — 기본값으로 대신 지우지 않는다.
 
-**"공고 마감 후 180일" 의 기준 시각:** 마감 시각을 따로 저장하지 않는다 (수동 마감 `db/jobs.closeJob` 은 시각을 찍지 않고, 그 문장의 가드는 바꾸지 않았다).
-`markApplications` 가 공고가 `closed`·`blocked` 인 것을 **발견한 때** `purge_after = 그때 + 180일` 을 붙인다 → "마감 확인 후 180일" 이며 실제 마감보다 최대 한 주기(markApplications 사이 간격, 최대 8시간) 늦다.
-자동 종료도 같은 기준이다: `purge_after - 180일 + 30일 < 지금` 이면 진행 중 지원에 `auto_closed`.
+**지원서: 늘린 기간은 소급하지 않는다** — 지원할 때 그때의 `application_keep_days` 를 `applications.keep_days`(0011)에 남긴다. NULL = 0011 이전 지원 = 그때 약속한 180일(`LEGACY_APPLICATION_KEEP_DAYS`).
+예약 작업의 **실제 보관 일수 = MIN(COALESCE(keep_days, 180), 지금 설정)**, 실제 자동 종료 일수 = MIN(지금 설정, 실제 보관 - 1). 그래서 줄이면 모두에게(더 일찍 지움), 늘리면 그 뒤에 낸 지원에만 적용된다.
+- markApplications 가 기한을 붙일 때 `purge_after = 지금 + 실제 보관 일수`.
+- **이미 붙은 기한 당기기(`lowerPurgeAfter`):** 기간을 줄이면 `purge_after > 지금 + 실제 보관 일수` 인 지원(내용이 남은 것, 취소 제외)의 기한을 그 값으로 **당긴다. 늦추지는 않는다.**
+  마감 확인 시각을 저장하지 않으므로 줄인 기간은 **이 단계가 본 때부터** 센다 — 원래 마감 확인 시각부터 센 것보다 늦거나 같다(보수적: 약속보다 일찍 지우지 않는다). 정상적으로 붙은 기한은 (확인 시각 ≤ 지금) + 실제 기간 이라 걸리지 않는다(기본값이면 아무것도 바뀌지 않는다).
+  나중에 다시 늘려도 당긴 기한은 그대로다.
+- 자동 종료 기준: `purge_after < 지금 + (실제 보관 - 실제 자동 종료)일` (기본값이면 T-12 와 같은 `지금 + 150일`). 기한을 당긴 지원은 당긴 때를 기준으로 계산된다.
+
+**사업자 서류·열람 기록은 자료마다 기간을 남기지 않는다** — 늘리면 이미 있는 자료에도 적용된다(관리자 화면·README 에 적음). 줄이면 다음 차례에 더 일찍 지운다.
+
+**다시 동의:** 설정에 `rev`(개인정보 기간을 늘린 횟수)가 있다. 저장할 때 `application_keep_days`·`vdoc_keep_days`·`access_log_keep_days` 중 **하나라도 늘면** rev +1 → 개인정보처리방침의 판이 `PRIVACY_VERSION+r<rev>` 가 되어
+모든 회원(관리자 제외)이 다음 요청에서 `/consent` 로 가 **개인정보 동의만** 다시 한다(13절). 줄이기·자동 종료·자동 마감 변경은 판을 바꾸지 않는다. 방침 본문을 고칠 때는 지금처럼 `PRIVACY_VERSION` 을 올린다.
+
+**변경 기록:** 저장할 때 같은 트랜잭션에서 `site_settings` `retention.log` 에 한 줄(시각·관리자 id·바뀐 칸 old → new, 숫자만)을 더한다. 최근 20줄. 관리자 화면에 최근 5줄과 "마지막 변경: 누가(관리자 이메일), 언제".
+
+**반영 시간:** `/privacy` 는 비로그인 page-cache 60초 → 저장 뒤 최대 60초 예전 숫자가 보일 수 있다. 동의 화면·지원 화면·로그인한 요청은 바로 바뀐다.
+
+`test/retention.test.ts` 가 기본값으로 채운 글 = 예전 숫자, 사용자 설정 숫자(한·중), 어떤 설정으로 채워도 자리표시자가 남지 않음을 확인한다. `test/maintenance.test.ts` "보관 기간 설정" 이 MIN 규칙을 SQLite 에서 확인한다.
+
+**"공고 마감 후 N일" 의 기준 시각:** 마감 시각을 따로 저장하지 않는다 (수동 마감 `db/jobs.closeJob` 은 시각을 찍지 않고, 그 문장의 가드는 바꾸지 않았다).
+`markApplications` 가 공고가 `closed`·`blocked` 인 것을 **발견한 때** `purge_after = 그때 + 실제 보관 일수` 를 붙인다 → "마감 확인 후 N일" 이며 실제 마감보다 최대 한 주기(markApplications 사이 간격, 최대 8시간) 늦다.
 차단이 풀려 초안·게재 중으로 돌아간 공고(마감된 공고는 다시 열 수 없다 — 다시 여는 경로 없음)는, 기한이 아직 오지 않았고 내용이 남은 **진행 중** 지원의 `purge_after` 를 다시 NULL 로 한다(끝난 지원·기한이 지난 지원은 그대로).
 
 ### 14-2. 시간표와 상한
@@ -364,23 +404,23 @@ cron 은 **매시 정각 한 번**(`wrangler.jsonc` `"0 * * * *"`, `scheduledTim
 
 **플랫폼 한도 (2026-11 Cloudflare 문서 확인):** Workers Free 는 cron 실행당 CPU 10ms, 실행당 하위 요청 50개(D1·R2 호출과 fetch 포함), cron 계정당 5개, cron 벽시계 15분.
 D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다), 문장당 바인딩 100개. 이 작업은 보수적으로 batch 안 문장도 하나씩 세어 **실행당 D1 문장 25개 이하, R2 호출 15개 이하**로 맞췄다
-(계산상 단계별 최대: closeJobs 17(메일 10통 포함) · purgeApplications 15 · markApplications 13 · 나머지 10 이하, 집계 기록 2 포함. 테스트가 상한보다 많은 후보로 단계마다 25·15 이하인지 센다). CPU 10ms 는 테스트로 확인할 수 없다 — 배포 뒤 대시보드에서 확인한다.
+(계산상 단계별 최대: closeJobs 18(메일 10통 포함) · purgeApplications 16 · markApplications 15 · 나머지 11 이하, 집계 기록 2 + 보관 기간 설정 읽기 1 포함 (T-12c). 테스트가 상한보다 많은 후보로 단계마다 25·15 이하인지 센다). CPU 10ms 는 테스트로 확인할 수 없다 — 배포 뒤 대시보드에서 확인한다.
 
 ### 14-3. 단계마다 하는 일 (src/db/maintenance.ts 의 문장 주석에 무엇을 지우는지 적혀 있다)
 
-1. **closeJobs** — (a) 게재 중 + `closes_at <= 지금` → `closed`(updated_at = 지금). (b) 게재 중 + 마감일 없음 + `updated_at < 지금 - 30일` + **안내를 3일 전 이전에 보냄**(`close_notice_at <= 지금 - 3일`) → `closed`.
-   (c) 안내: 게재 중 + `close_notice_at IS NULL` + (마감일이 (지금, 지금+3일] 안 또는 마감일 없음 + `updated_at < 지금 - 27일`) → 그 기업의 활성 담당자에게 `job_close_notice` 메일(한국어+중국어: 공고 제목·날짜·`/biz/jobs` 주소, 계속 게재하는 방법, 개인정보 없음)
+1. **closeJobs** — (a) 게재 중 + `closes_at <= 지금` → `closed`(updated_at = 지금). (b) 게재 중 + 마감일 없음 + `updated_at < 지금 - 무수정 기간(기본 30일)` + **안내를 3일 전 이전에 보냄**(`close_notice_at <= 지금 - 3일`) → `closed`.
+   (c) 안내: 게재 중 + `close_notice_at IS NULL` + (마감일이 (지금, 지금+3일] 안 또는 마감일 없음 + `updated_at < 지금 - (무수정 기간 - 3일)`). **`job_stale_days = 0`(끔)이면 (b) 와 마감일 없는 공고의 (c) 를 하지 않는다**(마감일 공고의 (a)·(c) 는 그대로, 메일에서 "다시 저장하면 N일" 줄을 뺀다) → 그 기업의 활성 담당자에게 `job_close_notice` 메일(한국어+중국어: 공고 제목·날짜·`/biz/jobs` 주소, 계속 게재하는 방법, 개인정보 없음)
    → 보낸 뒤 `close_notice_at = 지금` (읽을 때의 `updated_at` 이 그대로인 공고만). 기업이 저장하면(`updateJobSource`·`saveLocalized`·`saveKorean`) `close_notice_at = NULL`.
    담당자가 없는 공고는 메일 없이 안내 완료로 표시한다(그래야 (b) 가 진행된다). 초안·차단 공고는 건드리지 않고, **게재는 절대 하지 않는다.**
-2. **markApplications** — 차단이 풀린 공고의 진행 중 지원 기한 떼기 → 마감·차단 공고의 지원(취소 제외, 기한 없음)에 `purge_after = 지금 + 180일` → 마감 확인 후 30일이 지난 진행 중 지원(`submitted`·`viewed`·`reviewing`·`interview` = `rules.nextStatus(s, 'auto_closed')` 가 바꾸는 상태)에 `auto_closed`.
+2. **markApplications** — 차단이 풀린 공고의 진행 중 지원 기한 떼기 → 기간을 줄였으면 이미 붙은 기한 당기기(`lowerPurgeAfter`, 50건, 14-1) → 마감·차단 공고의 지원(취소 제외, 기한 없음)에 `purge_after = 지금 + 실제 보관 일수` → 마감 확인 후 실제 자동 종료 일수가 지난 진행 중 지원(`submitted`·`viewed`·`reviewing`·`interview` = `rules.nextStatus(s, 'auto_closed')` 가 바꾸는 상태)에 `auto_closed`.
    규칙 3: 상태별로 묶어 `nextStatus` 를 TypeScript 에서 계산하고, 한 batch 에서 이벤트(`auto_closed`, actor 없음)를 넣은 뒤 **그 지원에 방금 넣은 이벤트가 있을 때만** 상태를 바꾼다.
 3. **purgeApplications** — `purge_after < 지금` 이고 내용·파일이 남은 지원 10건: **D1 먼저**(한 batch: 진행 중이면 `auto_closed` + 상태, `resume_snapshot = ''`·`file_r2_key = NULL`·`summary_zh = NULL`, 그 지원의 국외 이전 동의 `withdrawn_at`)
    → 아직 어떤 행이 그 키를 가리키는지 다시 확인 → 아무도 가리키지 않는 `rfiles/` 객체만 R2 에서 삭제. R2 삭제 실패는 세어 두고(행은 이미 지워짐) 고아 정리가 치운다. 공고 상태는 보지 않는다(기한이 지났으면 지운다).
 4. **dropOldRows** — 표마다 200행, 자식 먼저, 한 batch: 내용이 지워진(`resume_snapshot = ''`·파일 키 없음) 지원 중 `purge_after < 지금 - 2년` 의 이벤트 → 이벤트가 남지 않은 그 지원 행,
-   철회된 지 2년 지난 동의, 2년 지난 열람 기록, 1년 지난 메일 기록, 만료된 세션·인증코드·관리자 2단계 대기, 35일(한국 시간 날짜)보다 오래된 하루 사용량(T-05c).
+   철회된 지 2년 지난 동의, 열람 기록 보관 기간(기본 2년)이 지난 열람 기록, 1년 지난 메일 기록, 만료된 세션·인증코드·관리자 2단계 대기, 35일(한국 시간 날짜)보다 오래된 하루 사용량(T-05c).
    `company_invites` 와 `users` 는 건드리지 않는다. (batch 9문장 + 집계 2 = 11문장, 상한 25 안.)
    지원 행이 지워지면 그 공고에 같은 구직자가 다시 지원할 수 있게 된다(취소 후 2년 — UNIQUE 가 풀림).
-5. **purgeVerificationDocs** — 확인(`approved`·`rejected`)이 1년 전에 끝난 서류 5건(`vdocs/` 키만): **행을 먼저**(행마다 한 문장) 지우고, 지워진 행의 `vdocs/` 객체만 R2 에서 지운다. 확인 대기(`pending`) 서류는 건드리지 않는다.
+5. **purgeVerificationDocs** — 확인(`approved`·`rejected`)이 서류 보관 기간(기본 1년) 전에 끝난 서류 5건(`vdocs/` 키만): **행을 먼저**(행마다 한 문장) 지우고, 지워진 행의 `vdocs/` 객체만 R2 에서 지운다. 확인 대기(`pending`) 서류는 건드리지 않는다.
    서류가 모두 지워진 검증 완료 기업은 **검증 완료 그대로**다(검증 상태는 서류 행으로 다시 계산하지 않는다. `verifyBlocks` 의 "서류 없음" 은 검증 대기 기업의 승인 버튼에만 쓰인다 — 관리자 화면·공개 화면이 그대로 그려지는지 테스트).
    승인 취소 후 다시 승인받으려면 새 서류를 올려야 한다(지금도 같다). R2 삭제가 실패한 `vdocs/` 객체는 자동으로 치우지 않는다(남은 일).
 6. **sweepOrphans** — R2 `rfiles/` 목록 한 쪽(100개, 커서 `site_settings` `maint.rfiles_cursor`, 목록이 끝나면 커서 삭제)에서 (a) 올라온 지 24시간 이상(`uploaded`) (b) `resumes.file_r2_key`·`applications.file_r2_key` 어디에도 없는(IN 50개씩 확인) 객체를 10개까지 지운다.
@@ -408,7 +448,7 @@ D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다)
 | `ADMIN_LOCALIZE_TEST_DAY` = 50 / 관리자·하루 | 엔진 비교. 고른 엔진 하나마다 1 (cost = 엔진 수) | `POST /admin/localize-test` (입력 검사·엔진 선택 뒤) | 400 + 안내, 엔진을 부르지 않음 |
 | `MAIL_PER_COMPANY_DAY` = 100 / 기업·하루 | 기업이 보내는 메일: 면접 요청·불합격 통보(한 통마다)·담당자 초대 | `…/interview/send`, `…/applicants/reject/send`(한 통마다), `POST /biz/members/invite`(검증된 기업이라 실제로 보낼 때만) — 모두 메일 핵심 함수를 부르기 **전** | 보내지 않음, 기록·상태 변화 없음. 면접: 400 + 글을 지닌 미리 보기. 불합격 묶음: 처음 걸린 곳에서 멈추고 `?limited=K&pool=` 로 보낸 수·못 보낸 수 안내. 초대: 초대는 저장, `?mail=limit_company\|limit_site` "직접 알려 주세요" |
 | `MAIL_SITE_DAY` = 1000 / 사이트·하루 | 위 세 가지의 사이트 합계 | 위와 같음 (기업 몫 다음) | 위와 같음 |
-| `DRAFT_JOBS_PER_COMPANY` = 20 / 기업 (개수) | 작성 중인 공고 = `status NOT IN ('published','closed')`(초안·차단), 헤드헌터 공고 제외 | `POST /biz/jobs/new` — `db/jobs.insertJob` 이 개수 확인과 추가를 한 문장으로 | 400 + 입력 유지 + 안내. 기존 초안은 고칠 수 있고, 게재·마감되면 한도에서 빠진다 |
+| `DRAFT_JOBS_PER_COMPANY` = 20 / 기업 (개수) | 작성 중인 공고 = `status NOT IN ('published','closed')`(초안·차단), 헤드헌터 공고 제외 | `POST /biz/jobs/new` — `db/jobs.insertJob` 이 개수 확인과 추가를 한 문장으로 | 400 + 입력 유지 + 안내. 기존 초안은 고칠 수 있고, 게재·마감되면 한도에서 빠진다. 쓰지 않은 초안은 지울 수 있다(아래) |
 
 - **세지 않는 것:** 로그인 인증코드 메일(로그인 흐름은 바꾸지 않았다 — 이메일당 60초 제한만), 새 지원자 알림 메일(구직자의 지원이 보내는 것), 예약 작업 메일(마감 안내·운영 보고).
 - **하루:** 한국 시간(UTC+9) 날짜 `YYYY-MM-DD`(`kstDay`). 0시에 새 행으로 시작한다.
@@ -420,4 +460,7 @@ D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다)
 - **보이는 곳:** 기업 화면에는 그 요청에서 한도에 걸렸을 때만 안내가 보인다(숫자는 `{n}` 으로 넣는다, 한국어·중국어). 관리자 첫 화면의 "오늘 사용량" 상자에 사이트 번역 호출·기업 메일 `쓴 수 / 한도`(읽기 두 번).
 - **변수:** 같은 이름의 vars(`wrangler.jsonc` 에 빈 값으로 적어 둠). 앞뒤 공백을 뺀 0~1,000,000 의 정수만 받고, 비었거나 그 밖의 값은 기본값(`limitsOf`). 0 은 "그 기능을 쓰지 않음".
 - **개인정보 없음:** `usage_counters` 의 subject 는 기업 id·관리자 user id·`'site'` 뿐(이메일·IP 없음). 35일 지난 행은 14절 dropOldRows 가 지운다.
+- **쓰지 않은 초안 삭제 (T-12c):** 게재할 수 없는 기업(미검증)이 초안 한도에서 멈추지 않게, 기업 담당자는 **초안이고 한 번도 게재된 적이 없고(`published_at IS NULL`) 지원이 하나도 없는**(취소 포함) 공고만 지울 수 있다
+  (`lib/jobs.draftDeletable`, 확인 화면 `GET /biz/jobs/:id/delete` → POST). `db/jobs.deleteUnusedDraft` 한 문장이 세 조건과 기업을 다시 확인한다. 게재 중·마감·차단 공고, 차단이 풀려 초안으로 돌아온 예전 게재 공고는 지울 수 없다
+  (공개된 기록·지원이 남아야 하므로). jobs 를 가리키는 표는 applications 뿐이라 지원이 없으면 다른 행이 남지 않는다. 삭제 기록은 따로 남기지 않는다(개인정보 없는 기업의 초안).
 

@@ -6,8 +6,9 @@ import type { Env } from '../src/env';
 import { PRIVACY } from '../src/legal/privacy';
 import {
   ACCESS_LOG_KEEP, APPLICATION_AUTO_CLOSE_AFTER, APPLICATION_KEEP_AFTER_CLOSE, DAY, EMAIL_LOG_KEEP, ERASED_ROW_KEEP, HOUR,
-  JOB_CLOSE_NOTICE_BEFORE, JOB_STALE_AFTER, ORPHAN_MIN_AGE, PRIVACY_TEXT_NUMBERS, VDOC_KEEP_AFTER_REVIEW,
+  JOB_CLOSE_NOTICE_BEFORE, JOB_STALE_AFTER, ORPHAN_MIN_AGE, VDOC_KEEP_AFTER_REVIEW, DEFAULT_RETENTION,
 } from '../src/lib/retention';
+import { renderLegal } from '../src/legal/render';
 import {
   AUTO_CLOSABLE, BUDGET, CAPS, ORPHAN_CURSOR_KEY, REPORT_HOUR_UTC, SCHEDULE, STEP_NAMES, STEPS, autoCloseGroups, closeDateOf, devForcedStep,
   jobCloseNoticeMail, mergeStats, parseStats, pickOrphans, planNotices, reportText, runMaintenance, statsKey, stepForTime, type StepName,
@@ -115,13 +116,13 @@ function job(raw: Raw, co: string, by: string, o: { status?: string; closes_at?:
   ).run(j, co, by, o.title ?? `공고 ${j}`, '본문', o.status ?? 'published', o.closes_at ?? null, o.notice ?? null, o.updated_at ?? NOW);
   return j;
 }
-function app(raw: Raw, jobId: string, o: { status?: string; purge?: number | null; snapshot?: string; file?: string | null; seeker?: string } = {}): string {
+function app(raw: Raw, jobId: string, o: { status?: string; purge?: number | null; snapshot?: string; file?: string | null; seeker?: string; keep?: number | null } = {}): string {
   const a = id('app');
   const s = o.seeker ?? user(raw);
   raw.prepare(
-    `INSERT INTO applications (id, job_id, seeker_id, resume_snapshot, file_r2_key, status, status_changed_at, created_at, purge_after, summary_zh)
-     VALUES (?,?,?,?,?,?,0,0,?,?)`,
-  ).run(a, jobId, s, o.snapshot ?? 'v1.cipher', o.file ?? null, o.status ?? 'submitted', o.purge ?? null, o.snapshot === '' ? null : 'v1.zh');
+    `INSERT INTO applications (id, job_id, seeker_id, resume_snapshot, file_r2_key, status, status_changed_at, created_at, purge_after, summary_zh, keep_days)
+     VALUES (?,?,?,?,?,?,0,0,?,?,?)`,
+  ).run(a, jobId, s, o.snapshot ?? 'v1.cipher', o.file ?? null, o.status ?? 'submitted', o.purge ?? null, o.snapshot === '' ? null : 'v1.zh', o.keep ?? null);
   return a;
 }
 const appRow = (raw: Raw, a: string) => one(raw, 'SELECT * FROM applications WHERE id = ?', a)!;
@@ -152,14 +153,22 @@ describe('보관 기간 상수', () => {
     expect(JOB_CLOSE_NOTICE_BEFORE).toBe(3 * DAY);
     expect(ORPHAN_MIN_AGE).toBe(24 * HOUR);
   });
-  it('개인정보처리방침 3항(한국어·중국어)에 같은 숫자가 있다', () => {
-    const sec = (l: 'ko' | 'zh') => PRIVACY[l].sections.find((s) => s.h.startsWith('3.'))!.items;
+  // T-12c: 방침 글의 설정 기간은 자리표시자이고 renderLegal 이 채운다. 설정이 없을 때(기본값) 채운 글이 예전 글의 숫자와 같아야 한다.
+  // (사용자 설정 값·자리표시자 남김 검사는 test/retention.test.ts)
+  it('기본값으로 채운 개인정보처리방침 3항(한국어·중국어)에 예전과 같은 숫자가 있다', () => {
+    const doc = renderLegal(PRIVACY, DEFAULT_RETENTION);
+    const sec = (l: 'ko' | 'zh') => doc[l].sections.find((s) => s.h.startsWith('3.'))!.items;
     const ko = sec('ko'), zh = sec('zh');
     const find = (items: string[], word: string) => items.find((x) => x.startsWith(word)) ?? '';
     // 숫자를 상수에서 만들어 글과 비교한다
     expect(find(ko, '지원서(')).toContain(`중단된 뒤 ${APPLICATION_KEEP_AFTER_CLOSE / DAY}일`);
     expect(find(ko, '지원서(')).toContain(`마감 후 ${APPLICATION_AUTO_CLOSE_AFTER / DAY}일`);
-    expect(`${APPLICATION_KEEP_AFTER_CLOSE / DAY}일`).toBe(PRIVACY_TEXT_NUMBERS.ko.application);
+    expect(find(ko, '지원서(')).toContain('중단된 뒤 180일까지 보관한 뒤 삭제합니다');
+    expect(find(ko, '기업의 사업자 서류')).toBe('기업의 사업자 서류: 확인 후 1년');
+    expect(find(ko, '지원서·서류의 열람 기록')).toBe('지원서·서류의 열람 기록: 2년(개인정보의 안전한 관리를 위한 기록)');
+    expect(find(zh, '企业的营业资料')).toBe('企业的营业资料：确认后1年');
+    expect(find(zh, '应聘资料（')).toContain('停止发布后180天再删除');
+    expect(find(zh, '应聘资料（')).toContain('截止后30天仍未有结果');
     expect(find(ko, '기업의 사업자 서류')).toContain(`확인 후 ${VDOC_KEEP_AFTER_REVIEW / (365 * DAY)}년`);
     expect(find(ko, '지원서·서류의 열람 기록')).toContain(`${ACCESS_LOG_KEEP / (365 * DAY)}년`);
     expect(find(ko, '동의 기록')).toContain(`${ERASED_ROW_KEEP / (365 * DAY)}년간`);
@@ -289,7 +298,7 @@ describe.skipIf(!hasSqlite)('실행기', () => {
   });
   it('집계 저장이 실패해도 예외가 나가지 않는다', async () => {
     const { env, cnt } = setup();
-    cnt.c.failOn = /site_settings/;
+    cnt.c.failOn = /INSERT INTO site_settings/; // T-12c: 실행 전에 보관 기간 설정을 읽으므로(읽기 실패 = 실행 안 함) 집계 쓰기만 막는다
     const out = await runMaintenance(env, NOW, { force: 'dropOldRows' });
     expect(out.ok).toBe(true);
   });
@@ -901,5 +910,199 @@ describe.skipIf(!hasSqlite)('한 번 실행의 D1·R2 상한', () => {
     expect(seen.purgeApplications!.d1).toBeGreaterThanOrEqual(1 + 4 * 2 + 2 + 2 + 2); // 진행 중 상태 4개가 모두 섞인 경우
     expect(seen.purgeApplications!.r2).toBe(CAPS.purgeApplications);
     expect(seen.sweepOrphans!.r2).toBe(1 + CAPS.orphanDeletes);
+  });
+});
+
+// ───────────────────────── T-12c 보관 기간 설정
+
+describe.skipIf(!hasSqlite)('보관 기간 설정 (T-12c)', () => {
+  const R = (p: Partial<typeof DEFAULT_RETENTION> = {}) => ({ ...DEFAULT_RETENTION, ...p });
+  const putRetention = (raw: Raw, v: Record<string, unknown>) =>
+    raw.prepare("INSERT INTO site_settings (key, value, updated_at) VALUES ('retention', ?, 0) ON CONFLICT (key) DO UPDATE SET value = excluded.value").run(JSON.stringify(v));
+  function world(raw: Raw) {
+    const { co, members } = company(raw);
+    return { closed: job(raw, co, members[0]!, { status: 'closed' }), published: job(raw, co, members[0]!) };
+  }
+
+  it('기한 붙이기 = 지금 + MIN(낼 때의 기간(NULL=180), 지금 설정)', async () => {
+    const { raw, env } = setup();
+    const w = world(raw);
+    const old = app(raw, w.closed);                  // 0011 이전 지원 (keep_days NULL → 180)
+    const k90 = app(raw, w.closed, { keep: 90 });
+    const k180 = app(raw, w.closed, { keep: 180 });
+    const k365 = app(raw, w.closed, { keep: 365 });
+    expect((await STEPS.markApplications(env, NOW, R())).done.marked).toBe(4);
+    expect(appRow(raw, old).purge_after).toBe(NOW + 180 * DAY);
+    expect(appRow(raw, k90).purge_after).toBe(NOW + 90 * DAY);     // 90 으로 낸 지원은 설정이 180 이어도 90
+    expect(appRow(raw, k180).purge_after).toBe(NOW + 180 * DAY);
+    expect(appRow(raw, k365).purge_after).toBe(NOW + 180 * DAY);   // 설정보다 길게 붙지 않는다
+  });
+
+  it('설정을 줄이면 모두에게, 늘리면 그 뒤에 낸 지원에만', async () => {
+    const { raw, env } = setup();
+    const w = world(raw);
+    const a = { old: app(raw, w.closed), k180: app(raw, w.closed, { keep: 180 }), k90: app(raw, w.closed, { keep: 90 }), k365: app(raw, w.closed, { keep: 365 }) };
+    await STEPS.markApplications(env, NOW, R({ application_keep_days: 60 }));
+    for (const x of Object.values(a)) expect(appRow(raw, x).purge_after).toBe(NOW + 60 * DAY); // 180 으로 낸 지원도 60 (줄이기는 모두에게)
+    raw.exec('UPDATE applications SET purge_after = NULL');
+    await STEPS.markApplications(env, NOW, R({ application_keep_days: 365, application_auto_close_days: 30 }));
+    expect(appRow(raw, a.old).purge_after).toBe(NOW + 180 * DAY);   // 늘려도 예전 지원은 180
+    expect(appRow(raw, a.k180).purge_after).toBe(NOW + 180 * DAY);
+    expect(appRow(raw, a.k90).purge_after).toBe(NOW + 90 * DAY);
+    expect(appRow(raw, a.k365).purge_after).toBe(NOW + 365 * DAY);  // 365 일 때 낸 지원만 365
+  });
+
+  it('줄인 뒤: 이미 붙은 기한을 "지금 + 실제 기간" 으로 당긴다 — 늦추지 않는다, 1초 경계, 내용 없는 행·취소는 그대로', async () => {
+    const { raw, env } = setup();
+    const w = world(raw);
+    const far = app(raw, w.closed, { purge: NOW + 100 * DAY });            // 180 일 때 80일 전에 붙은 기한
+    const plus1 = app(raw, w.closed, { purge: NOW + 60 * DAY + 1 });
+    const exact = app(raw, w.closed, { purge: NOW + 60 * DAY });
+    const near = app(raw, w.closed, { purge: NOW + 50 * DAY });
+    const k30 = app(raw, w.closed, { purge: NOW + 40 * DAY, keep: 30 });  // 30 으로 낸 지원: 실제 기간 30
+    const onOpen = app(raw, w.published, { purge: NOW + 100 * DAY, status: 'rejected' }); // 공고 상태와 관계없이
+    const erased = app(raw, w.closed, { purge: NOW + 100 * DAY, snapshot: '', status: 'rejected' });
+    const wd = app(raw, w.closed, { purge: NOW + 100 * DAY, snapshot: '', status: 'withdrawn' });
+    const r = await STEPS.markApplications(env, NOW, R({ application_keep_days: 60 }));
+    expect(r.done.lowered).toBe(4);
+    expect(appRow(raw, far).purge_after).toBe(NOW + 60 * DAY);
+    expect(appRow(raw, plus1).purge_after).toBe(NOW + 60 * DAY);
+    expect(appRow(raw, exact).purge_after).toBe(NOW + 60 * DAY);
+    expect(appRow(raw, near).purge_after).toBe(NOW + 50 * DAY);      // 더 이른 기한은 그대로 (늦추지 않는다)
+    expect(appRow(raw, k30).purge_after).toBe(NOW + 30 * DAY);
+    expect(appRow(raw, onOpen).purge_after).toBe(NOW + 60 * DAY);
+    expect(appRow(raw, erased).purge_after).toBe(NOW + 100 * DAY);   // 내용 없는 행의 기한은 dropOldRows(2년) 기준이라 건드리지 않는다
+    expect(appRow(raw, wd).purge_after).toBe(NOW + 100 * DAY);
+    // 두 번째 실행: 바뀌는 것 없음
+    expect((await STEPS.markApplications(env, NOW, R({ application_keep_days: 60 }))).done.lowered).toBe(0);
+    // 다시 늘려도 당긴 기한을 늦추지 않는다
+    expect((await STEPS.markApplications(env, NOW + 1, R({ application_keep_days: 365 }))).done.lowered).toBe(0);
+    expect(appRow(raw, far).purge_after).toBe(NOW + 60 * DAY);
+    expect(appRow(raw, near).purge_after).toBe(NOW + 50 * DAY);
+    // 당긴 기한이 지나면 삭제된다 (정각은 아직, 1초 뒤 삭제)
+    expect((await STEPS.purgeApplications(env, NOW + 60 * DAY)).done.erased).toBe(2); // near(50일)·k30(30일)
+    expect(appRow(raw, far).resume_snapshot).toBe('v1.cipher');
+    expect((await STEPS.purgeApplications(env, NOW + 60 * DAY + 1)).done.erased).toBe(4);
+    expect(appRow(raw, far).resume_snapshot).toBe('');
+  });
+
+  it('기본값이면 당기는 문장이 아무것도 바꾸지 않는다 (정상적으로 붙은 기한)', async () => {
+    const { raw, env } = setup();
+    const w = world(raw);
+    const a = app(raw, w.closed);
+    await STEPS.markApplications(env, NOW);
+    expect((await STEPS.markApplications(env, NOW + 8 * HOUR)).done.lowered).toBe(0);
+    expect(appRow(raw, a).purge_after).toBe(NOW + 180 * DAY);
+  });
+
+  it('자동 종료 = 마감 확인 후 MIN(설정, 실제 보관 - 1일) — 1초 경계', async () => {
+    const { raw, env } = setup();
+    const w = world(raw);
+    // 설정 보관 60·자동 종료 30, keep NULL → 실제 60/30: purge_after < now + 30일 이면 자동 종료
+    const over = app(raw, w.closed, { purge: NOW + 30 * DAY - 1 });
+    const exact = app(raw, w.closed, { purge: NOW + 30 * DAY });
+    // 30 으로 낸 지원: 실제 보관 30 → 자동 종료 min(30, 29) = 29 → purge_after < now + 1일
+    const short = app(raw, w.closed, { purge: NOW + DAY - 1, keep: 30 });
+    const shortNot = app(raw, w.closed, { purge: NOW + DAY, keep: 30 });
+    const r = await STEPS.markApplications(env, NOW, R({ application_keep_days: 60, application_auto_close_days: 30 }));
+    expect(r.done.auto_closed).toBe(2);
+    expect(appRow(raw, over).status).toBe('closed');
+    expect(appRow(raw, short).status).toBe('closed');
+    expect(appRow(raw, exact).status).toBe('submitted');
+    expect(appRow(raw, shortNot).status).toBe('submitted');
+    expect(events(raw, over)).toEqual([{ event: 'auto_closed', actor_id: null, at: NOW }]);
+    // 설정 보관 180·자동 종료 90, 90 으로 낸 지원 → 실제 90/89 → purge_after < now + 1일
+    const { raw: raw2, env: env2 } = setup();
+    const w2 = world(raw2);
+    const b = app(raw2, w2.closed, { purge: NOW + DAY - 1, keep: 90 });
+    const c = app(raw2, w2.closed, { purge: NOW + 90 * DAY - 1 }); // keep NULL → 실제 180/90 → now + 90일
+    expect((await STEPS.markApplications(env2, NOW, R({ application_auto_close_days: 90 }))).done.auto_closed).toBe(2);
+    expect([appRow(raw2, b).status, appRow(raw2, c).status]).toEqual(['closed', 'closed']);
+  });
+
+  it('무수정 자동 마감 끄기(0): 마감일 없는 공고의 마감·안내를 하지 않고, 마감일 지난 공고는 마감한다', async () => {
+    const { raw, env } = setup();
+    const { co, members } = company(raw);
+    const by = members[0]!;
+    const stale = job(raw, co, by, { updated_at: NOW - 100 * DAY, notice: NOW - 10 * DAY }); // 켜져 있으면 마감될 공고
+    const staleNoNotice = job(raw, co, by, { updated_at: NOW - 100 * DAY });                 // 켜져 있으면 안내받을 공고
+    const past = job(raw, co, by, { closes_at: NOW - 1 });
+    const soon = job(raw, co, by, { closes_at: NOW + DAY });
+    putRetention(raw, { job_stale_days: 0 });
+    const out = await runMaintenance(env, NOW, { force: 'closeJobs' });
+    expect(out.ok).toBe(true);
+    expect(out.done).toMatchObject({ closed_deadline: 1, closed_stale: 0, noticed: 1, mails_sent: 1 });
+    const st = (j: string) => one(raw, 'SELECT status, close_notice_at FROM jobs WHERE id = ?', j)!;
+    expect(st(stale).status).toBe('published');
+    expect(st(staleNoNotice)).toEqual({ status: 'published', close_notice_at: null });
+    expect(st(past).status).toBe('closed');
+    expect(st(soon).close_notice_at).toBe(NOW);
+    // 안내 메일(마감일 공고)에는 "다시 저장하면 N일" 줄이 없다
+    expect(mailLogs().join('\n')).not.toContain('동안 게재됩니다');
+    // 다시 켜면 (45일) 그 기간으로 마감·안내한다
+    putRetention(raw, { job_stale_days: 45 });
+    logs = [];
+    const again = await runMaintenance(env, NOW + 1, { force: 'closeJobs' });
+    expect(again.done).toMatchObject({ closed_stale: 1, noticed: 1 });
+    expect(st(stale).status).toBe('closed');
+    expect(mailLogs().join('\n')).toContain('45일 동안 저장');
+    expect(mailLogs().join('\n')).toContain('45天未保存');
+  });
+
+  it('무수정 기간 설정: 그 기간으로 마감 (1초 경계)', async () => {
+    const { raw, env } = setup();
+    const { co, members } = company(raw, []);
+    const by = user(raw, 'company');
+    void members;
+    const ok = job(raw, co, by, { updated_at: NOW - 14 * DAY - 1, notice: NOW - 3 * DAY });
+    const notYet = job(raw, co, by, { updated_at: NOW - 14 * DAY, notice: NOW - 3 * DAY });
+    expect((await STEPS.closeJobs(env, NOW, R({ job_stale_days: 14 }))).done.closed_stale).toBe(1);
+    expect(one(raw, 'SELECT status FROM jobs WHERE id = ?', ok)!.status).toBe('closed');
+    expect(one(raw, 'SELECT status FROM jobs WHERE id = ?', notYet)!.status).toBe('published');
+  });
+
+  it('열람 기록·사업자 서류 기간 설정 (1초 경계)', async () => {
+    const { raw, env } = setup();
+    const { co, members } = company(raw);
+    const acc = (at: number) => { const x = id('al'); raw.prepare("INSERT INTO access_log (id, actor_id, actor_role, target_type, target_id, at) VALUES (?,?, 'company', 'application', 'x', ?)").run(x, members[0]!, at); return x; };
+    acc(NOW - 365 * DAY - 1); const keepA = acc(NOW - 365 * DAY);
+    expect((await STEPS.dropOldRows(env, NOW, R({ access_log_keep_days: 365 }))).done.access_log).toBe(1);
+    expect(num(raw, 'SELECT COUNT(*) FROM access_log WHERE id = ?', keepA)).toBe(1);
+    const doc = (reviewed: number) => { const d = id('doc'); raw.prepare("INSERT INTO verification_docs (id, owner_type, owner_id, doc_type, r2_key, review_status, reviewed_at, created_at) VALUES (?, 'company', ?, 'biz_cert', ?, 'approved', ?, 0)").run(d, co, `vdocs/company/${co}/${d}.pdf`, reviewed); return d; };
+    doc(NOW - 90 * DAY - 1); const keepD = doc(NOW - 90 * DAY);
+    expect((await STEPS.purgeVerificationDocs(env, NOW, R({ vdoc_keep_days: 90 }))).done.rows_deleted).toBe(1);
+    expect(num(raw, 'SELECT COUNT(*) FROM verification_docs WHERE id = ?', keepD)).toBe(1);
+  });
+
+  it('실행기: 설정을 실행마다 한 번 읽어 넘긴다, 잘못된 값은 칸마다 기본값, 읽기 실패면 아무것도 하지 않는다', async () => {
+    const { raw, env, cnt } = setup();
+    const w = world(raw);
+    const a = app(raw, w.closed);
+    putRetention(raw, { application_keep_days: 60, vdoc_keep_days: 'x' });
+    const seen: unknown[] = [];
+    await runMaintenance(env, NOW, { force: 'dropOldRows', impl: { dropOldRows: async (_e, _n, r) => { seen.push(r); return { step: 'dropOldRows', done: {} }; } } });
+    expect(seen).toEqual([{ ...DEFAULT_RETENTION, application_keep_days: 60 }]);
+    expect((await runMaintenance(env, NOW, { force: 'markApplications' })).ok).toBe(true);
+    expect(appRow(raw, a).purge_after).toBe(NOW + 60 * DAY);
+    // 설정 읽기 실패 → 단계를 실행하지 않는다 (기본값으로 대신 지우지 않는다)
+    const b = app(raw, w.closed);
+    cnt.c.failOn = /SELECT value FROM site_settings WHERE key = \?/;
+    const out = await runMaintenance(env, NOW, { force: 'markApplications' });
+    expect(out).toEqual({ step: 'markApplications', ok: false, done: {} });
+    expect(appRow(raw, b).purge_after).toBeNull();
+  });
+
+  it('안내 메일의 무수정 일수 (기본 30, 설정 45)', () => {
+    const st = jobCloseNoticeMail({ title_ko: 'x', closes_at: null, updated_at: NOW - 43 * DAY }, NOW, ORIGIN, (l, k) => t(l, k), 45);
+    expect(st.text).toContain('45일 동안 저장');
+    expect(st.text).toContain('저장한 날부터 45일 동안 게재됩니다');
+    expect(st.text).toContain('自保存之日起继续发布45天');
+    expect(st.text).toContain('2027-01-18 이후'); // 마지막 저장 + 45일 = NOW + 2일 < NOW + 3일 → 3일 뒤
+    expect(st.text).not.toMatch(/\{[a-z_]+\}/);
+    const def = jobCloseNoticeMail({ title_ko: 'x', closes_at: NOW + DAY, updated_at: 0 }, NOW, ORIGIN, (l, k) => t(l, k));
+    expect(def.text).toContain('저장한 날부터 30일 동안 게재됩니다');
+    const off = jobCloseNoticeMail({ title_ko: 'x', closes_at: NOW + DAY, updated_at: 0 }, NOW, ORIGIN, (l, k) => t(l, k), 0);
+    expect(off.text).not.toContain('동안 게재됩니다');
+    expect(off.text).not.toMatch(/\{[a-z_]+\}/);
   });
 });

@@ -67,18 +67,22 @@ export async function companyMemberEmails(db: D1Database, companyId: string): Pr
  */
 export async function insertApplication(
   db: D1Database,
-  a: { id: string; jobId: string; seekerId: string; resumeId: string; snapshot: string; fileKey: string | null; consentAt: number | null; consentVersion: string; ts: number },
+  a: {
+    id: string; jobId: string; seekerId: string; resumeId: string; snapshot: string; fileKey: string | null; consentAt: number | null; consentVersion: string; ts: number;
+    /** 지원할 때의 지원서 보관 일수 (보관 기간 설정 application_keep_days, T-12c). 나중에 기간을 늘려도 이 지원에는 소급하지 않는다. */
+    keepDays: number;
+  },
   flags: Flags,
 ): Promise<boolean> {
   const vis = publicJobWhere(flags, a.ts);
   const stmts = [
     db.prepare(
-      `INSERT INTO applications (id, job_id, seeker_id, resume_id, resume_snapshot, file_r2_key, cross_border_consent_at, status, status_changed_at, created_at)
-       SELECT ?, j.id, ?, ?, ?, ?, ?, 'submitted', ?, ?
+      `INSERT INTO applications (id, job_id, seeker_id, resume_id, resume_snapshot, file_r2_key, cross_border_consent_at, status, status_changed_at, created_at, keep_days)
+       SELECT ?, j.id, ?, ?, ?, ?, ?, 'submitted', ?, ?, ?
        FROM jobs j JOIN companies c ON c.id = j.company_id
        WHERE j.id = ? AND ${vis.sql}
          AND NOT EXISTS (SELECT 1 FROM applications WHERE job_id = j.id AND seeker_id = ?)`,
-    ).bind(a.id, a.seekerId, a.resumeId, a.snapshot, a.fileKey, a.consentAt, a.ts, a.ts, a.jobId, ...vis.binds, a.seekerId),
+    ).bind(a.id, a.seekerId, a.resumeId, a.snapshot, a.fileKey, a.consentAt, a.ts, a.ts, a.keepDays, a.jobId, ...vis.binds, a.seekerId),
   ];
   if (a.consentAt !== null) {
     stmts.push(

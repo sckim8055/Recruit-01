@@ -6,7 +6,8 @@ import { Hono } from 'hono';
 import { now, type AppEnv } from '../env';
 import { confirmMatches, deleteAccount, deletionBlocksFor, type DeletionBlock } from '../lib/account';
 import { logout, requireRole } from '../lib/auth';
-import { missingConsents, readConsentForm, REQUIRED_CONSENTS, safeNext, type RequiredConsent } from '../lib/consent';
+import { missingConsents, readConsentForm, REQUIRED_CONSENT_TYPES, requiredConsents, safeNext, type RequiredConsent } from '../lib/consent';
+import { loadRetention } from '../lib/retention-setting';
 import { insertConsents, listRequiredConsents } from '../db/consents';
 import { render } from '../render';
 import { AccountPage, ConsentPage, DeleteConfirm } from '../views/account';
@@ -19,7 +20,14 @@ account.use('/consent', noStore);
 account.use('/my/account', noStore);
 account.use('/my/account/*', noStore);
 
-const ALL: RequiredConsent[] = REQUIRED_CONSENTS.map((r) => r.type);
+const ALL: readonly RequiredConsent[] = REQUIRED_CONSENT_TYPES;
+
+/** 그 회원의 동의 + 지금 받아야 하는 판(보관 기간 설정의 rev 로 정해진다, T-12c). 읽기 두 번을 동시에. */
+async function consentState(c: Context<AppEnv>, userId: string) {
+  const [rows, retention] = await Promise.all([listRequiredConsents(c.env.DB, userId), loadRetention(c.env.DB)]);
+  const required = requiredConsents(retention);
+  return { rows, retention, required, missing: missingConsents(rows, required) };
+}
 
 /** 동의 화면은 로그인한 관리자 아닌 회원만. 비로그인 → /login, 관리자 → /admin (관리자는 동의 확인 대상이 아니다). */
 function consentUser(c: Context<AppEnv>) {
@@ -33,9 +41,9 @@ account.get('/consent', async (c) => {
   const r = consentUser(c);
   if ('redirect' in r) return r.redirect;
   const next = safeNext(c.req.query('next'));
-  const missing = missingConsents(await listRequiredConsents(c.env.DB, r.user.id));
+  const { missing, retention } = await consentState(c, r.user.id);
   if (!missing.length) return c.redirect(next);
-  return render(c, <ConsentPage locale={c.var.locale} missing={missing} agreed={ALL.filter((x) => !missing.includes(x))} next={next} />, 'consent.title');
+  return render(c, <ConsentPage locale={c.var.locale} missing={missing} agreed={ALL.filter((x) => !missing.includes(x))} next={next} retention={retention} />, 'consent.title');
 });
 
 account.post('/consent', async (c) => {
@@ -43,15 +51,16 @@ account.post('/consent', async (c) => {
   if ('redirect' in r) return r.redirect;
   const f = await c.req.parseBody();
   const next = safeNext(f.next);
-  const missing = missingConsents(await listRequiredConsents(c.env.DB, r.user.id));
+  const { missing, retention, required } = await consentState(c, r.user.id);
   if (!missing.length) return c.redirect(next, 303);
   // 화면에는 아직 받지 않은 항목의 체크 칸만 있다. 지금 판에 이미 동의한 항목은 폼 검사에서 체크된 것으로 보고, 기록은 하지 않는다.
   const agreed = Object.fromEntries(ALL.filter((x) => !missing.includes(x)).map((x) => [x, '1']));
   const form = readConsentForm({ ...f, ...agreed });
   if (!form.ok) {
-    return render(c, <ConsentPage locale={c.var.locale} missing={missing} agreed={ALL.filter((x) => !missing.includes(x))} next={next} error={form.missing} />, 'consent.title', 400);
+    return render(c, <ConsentPage locale={c.var.locale} missing={missing} agreed={ALL.filter((x) => !missing.includes(x))} next={next} error={form.missing} retention={retention} />, 'consent.title', 400);
   }
-  await insertConsents(c.env.DB, r.user.id, REQUIRED_CONSENTS.filter((x) => missing.includes(x.type)), now());
+  // 기록하는 판은 화면을 그린 때가 아니라 지금(이 요청에서 읽은) 판이다 — 그사이 관리자가 기간을 늘렸으면 새 판으로 남는다.
+  await insertConsents(c.env.DB, r.user.id, required.filter((x) => missing.includes(x.type)), now());
   return c.redirect(next, 303);
 });
 
@@ -61,8 +70,8 @@ account.use('/my/account/*', requireRole('seeker', 'company', 'headhunter', 'adm
 
 async function accountPage(c: Context<AppEnv>, blocks?: DeletionBlock[], status: 200 | 400 = 200) {
   const u = c.var.user!;
-  const [consents, b] = await Promise.all([listRequiredConsents(c.env.DB, u.id), blocks ? Promise.resolve(blocks) : deletionBlocksFor(c.env, u)]);
-  return render(c, <AccountPage locale={c.var.locale} email={u.email} role={u.role} consents={consents} blocks={b} />, 'acct.title', status);
+  const [st, b] = await Promise.all([consentState(c, u.id), blocks ? Promise.resolve(blocks) : deletionBlocksFor(c.env, u)]);
+  return render(c, <AccountPage locale={c.var.locale} email={u.email} role={u.role} consents={st.rows} required={st.required} blocks={b} />, 'acct.title', status);
 }
 
 account.get('/my/account', (c) => accountPage(c));

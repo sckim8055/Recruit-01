@@ -8,6 +8,10 @@
 // (rfiles/ 는 고아 객체 정리가 치운다), 반대 순서로 하다 끊기면 DB 가 없는 파일을 가리키게 된다.
 //
 // 기록: 실행마다 콘솔에 한 줄 `maint: step=<이름> ok|failed counts=<숫자 JSON>` 만 남긴다. 키·이메일·id·오류 내용은 남기지 않는다.
+//
+// 기간 (T-12c): 실행마다 보관 기간 설정(site_settings 'retention', 기본 키 한 행)을 한 번 읽어 단계에 넘긴다 (lib/retention).
+// 설정을 읽지 못하면 그 실행은 아무것도 하지 않고 failed 로 남긴다 — 기본값으로 대신 지우지 않는다 (설정과 다른 기간으로 지우지 않게).
+// 단계 함수의 세 번째 인자를 빼면 기본값(= T-12 의 숫자)을 쓴다 (테스트용).
 import type { Env } from '../env';
 import { nextStatus, type AppStatus } from './rules';
 import { sendMail } from './email';
@@ -15,14 +19,16 @@ import { t } from './i18n';
 import { kstDate } from './jobs';
 import { deleteResumeFile } from './resume-files';
 import {
-  ACCESS_LOG_KEEP, APPLICATION_AUTO_CLOSE_AFTER, APPLICATION_KEEP_AFTER_CLOSE, DAY, EMAIL_LOG_KEEP, ERASED_ROW_KEEP,
-  JOB_CLOSE_NOTICE_BEFORE, JOB_STALE_AFTER, ORPHAN_MIN_AGE, VDOC_KEEP_AFTER_REVIEW,
+  DAY, DEFAULT_RETENTION, EMAIL_LOG_KEEP, ERASED_ROW_KEEP, JOB_CLOSE_NOTICE_BEFORE, JOB_STALE_AFTER, LEGACY_APPLICATION_KEEP_DAYS,
+  ORPHAN_MIN_AGE, retentionSeconds, type RetentionValues,
 } from './retention';
+import { loadRetention } from './retention-setting';
+import { legalParams } from '../legal/render';
 import {
   autoCloseApplications, closeJobsPastDeadline, closeStaleJobs, deleteMaintSetting, deleteOldMaintStats, deleteVerificationDocRows,
   dropOldRows, erasePurgedApplications, findReferencedFileKeys, listActiveMemberEmails, listAutoCloseCandidates,
-  listExpiredVerificationDocs, listJobsNeedingCloseNotice, listPurgeCandidates, maintenanceCounts, markCloseNoticeSent, markPurgeAfter,
-  putMaintSetting, unmarkPurgeAfter, type AutoCloseGroup, type CloseNoticeJobRow, type MaintCounts,
+  listExpiredVerificationDocs, listJobsNeedingCloseNotice, listPurgeCandidates, lowerPurgeAfter, maintenanceCounts, markCloseNoticeSent,
+  markPurgeAfter, putMaintSetting, unmarkPurgeAfter, type AutoCloseGroup, type CloseNoticeJobRow, type MaintCounts,
 } from '../db/maintenance';
 import { getSetting } from '../db/settings';
 import { USAGE_KEEP_DAYS, kstDay } from './quota';
@@ -34,7 +40,8 @@ export const STEP_NAMES = [
 ] as const;
 export type StepName = (typeof STEP_NAMES)[number];
 export interface StepResult { step: StepName; done: Record<string, number> }
-export type StepFn = (env: Env, nowSec: number) => Promise<StepResult>;
+/** 단계 함수. r = 이번 실행의 보관 기간 설정 (빼면 기본값). */
+export type StepFn = (env: Env, nowSec: number, r?: RetentionValues) => Promise<StepResult>;
 
 /**
  * UTC 시각(0~23) → 그 시각에 하는 단계. 한국 시간은 +9.
@@ -132,22 +139,31 @@ export const chunk = <T>(xs: T[], n: number): T[][] => {
   return out;
 };
 
-/** 안내 메일에 적을 자동 마감 날짜: 마감일이 있으면 그 날, 없으면 (마지막 저장 + 30일)과 (지금 + 3일) 중 늦은 날. */
-export function closeDateOf(job: Pick<CloseNoticeJobRow, 'closes_at' | 'updated_at'>, nowSec: number): number {
-  return job.closes_at ?? Math.max(job.updated_at + JOB_STALE_AFTER, nowSec + JOB_CLOSE_NOTICE_BEFORE);
+/**
+ * 안내 메일에 적을 자동 마감 날짜: 마감일이 있으면 그 날, 없으면 (마지막 저장 + 무수정 기간)과 (지금 + 3일) 중 늦은 날.
+ * staleSec = 무수정 자동 마감 기간 (설정 job_stale_days, 기본 30일). 끈 경우에는 마감일 없는 공고에 안내를 보내지 않는다.
+ */
+export function closeDateOf(job: Pick<CloseNoticeJobRow, 'closes_at' | 'updated_at'>, nowSec: number, staleSec: number = JOB_STALE_AFTER): number {
+  return job.closes_at ?? Math.max(job.updated_at + staleSec, nowSec + JOB_CLOSE_NOTICE_BEFORE);
 }
 
-/** 자동 마감 안내 메일 (한국어 + 중국어). 공고 제목·날짜·기업 관리 화면 주소만 — 지원자 정보 없음. */
+/**
+ * 자동 마감 안내 메일 (한국어 + 중국어). 공고 제목·날짜·기업 관리 화면 주소만 — 지원자 정보 없음.
+ * staleDays = 무수정 자동 마감 일수 (0 = 끔: "다시 저장하면 N일 게재" 줄을 넣지 않는다).
+ */
 export function jobCloseNoticeMail(
   job: Pick<CloseNoticeJobRow, 'title_ko' | 'closes_at' | 'updated_at'>, nowSec: number, origin: string, tr: (l: 'ko' | 'zh', key: string) => string,
+  staleDays: number = DEFAULT_RETENTION.job_stale_days,
 ): { subject: string; text: string } {
   const url = `${origin.replace(/\/+$/, '')}/biz/jobs`;
   const title = (job.title_ko ?? '').replace(/[\r\n]+/g, ' ').slice(0, 120);
-  const date = kstDate(closeDateOf(job, nowSec));
+  const date = kstDate(closeDateOf(job, nowSec, (staleDays || DEFAULT_RETENTION.job_stale_days) * DAY));
   const reasonKey = job.closes_at != null ? 'mail.job_close.reason.deadline' : 'mail.job_close.reason.stale';
   const fill = (l: 'ko' | 'zh', s: string) =>
-    s.replaceAll('{site}', tr(l, 'site.name')).replaceAll('{url}', url).replaceAll('{job}', title).replaceAll('{date}', date);
-  const body = (l: 'ko' | 'zh') => fill(l, tr(l, 'mail.job_close.body').replaceAll('{reason}', tr(l, reasonKey)));
+    s.replaceAll('{site}', tr(l, 'site.name')).replaceAll('{url}', url).replaceAll('{job}', title).replaceAll('{date}', date)
+      .replaceAll('{stale_days}', legalParams(l, { ...DEFAULT_RETENTION, job_stale_days: staleDays }).stale_days);
+  const body = (l: 'ko' | 'zh') => fill(l, tr(l, 'mail.job_close.body')
+    .replaceAll('{reason}', tr(l, reasonKey)).replaceAll('{stale_line}', staleDays > 0 ? tr(l, 'mail.job_close.stale_line') : ''));
   return {
     subject: `[${tr('ko', 'site.name')}] ${fill('ko', tr('ko', 'mail.job_close.subject'))} / ${fill('zh', tr('zh', 'mail.job_close.subject'))}`,
     text: `${body('ko')}\n\n----------------------------------------\n\n${body('zh')}`,
@@ -234,16 +250,21 @@ export function devForcedStep(cron: string | undefined): StepName | undefined {
 
 const tr = (l: 'ko' | 'zh', key: string) => t(l, key);
 
-/** 1. 공고 자동 마감 + 3일 전 안내. 게재(publish)는 하지 않는다. 초안·차단 공고는 건드리지 않는다. */
-export async function closeJobs(env: Env, now: number): Promise<StepResult> {
+/**
+ * 1. 공고 자동 마감 + 3일 전 안내. 게재(publish)는 하지 않는다. 초안·차단 공고는 건드리지 않는다.
+ * 무수정 자동 마감을 끄면(job_stale_days = 0) 마감일 없는 공고의 마감·안내를 하지 않는다 — 마감일이 지난 공고의 마감과 그 안내는 그대로 한다.
+ */
+export async function closeJobs(env: Env, now: number, r: RetentionValues = DEFAULT_RETENTION): Promise<StepResult> {
+  const stale = retentionSeconds(r).jobStale;
   const closedDeadline = await closeJobsPastDeadline(env.DB, { now, limit: CAPS.closeJobs });
-  const closedStale = closedDeadline < CAPS.closeJobs
+  const closedStale = stale !== null && closedDeadline < CAPS.closeJobs
     ? await closeStaleJobs(env.DB, {
-      now, staleBefore: now - JOB_STALE_AFTER, noticeBefore: now - JOB_CLOSE_NOTICE_BEFORE, limit: CAPS.closeJobs - closedDeadline,
+      now, staleBefore: now - stale, noticeBefore: now - JOB_CLOSE_NOTICE_BEFORE, limit: CAPS.closeJobs - closedDeadline,
     })
     : 0;
   const jobs = await listJobsNeedingCloseNotice(env.DB, {
-    now, deadlineBefore: now + JOB_CLOSE_NOTICE_BEFORE, staleBefore: now - (JOB_STALE_AFTER - JOB_CLOSE_NOTICE_BEFORE), limit: CAPS.closeNoticeJobs,
+    now, deadlineBefore: now + JOB_CLOSE_NOTICE_BEFORE, staleBefore: stale === null ? null : now - (stale - JOB_CLOSE_NOTICE_BEFORE),
+    limit: CAPS.closeNoticeJobs,
   });
   let mailsSent = 0, mailsFailed = 0, noticed = 0;
   if (jobs.length) {
@@ -253,7 +274,7 @@ export async function closeJobs(env: Env, now: number): Promise<StepResult> {
     }
     const plan = planNotices(jobs, emails, CAPS.closeNoticeMails);
     for (const p of plan) {
-      const m = jobCloseNoticeMail(p.job, now, env.APP_ORIGIN, tr);
+      const m = jobCloseNoticeMail(p.job, now, env.APP_ORIGIN, tr, r.job_stale_days);
       for (const to of p.to) {
         // sendMail 은 실패해도 예외를 던지지 않는다 (email_log 에 결과가 남는다).
         if (await sendMail(env, { to, template: 'job_close_notice', ...m })) mailsSent++;
@@ -266,16 +287,22 @@ export async function closeJobs(env: Env, now: number): Promise<StepResult> {
   return { step: 'closeJobs', done: { closed_deadline: closedDeadline, closed_stale: closedStale, noticed, mails_sent: mailsSent, mails_failed: mailsFailed } };
 }
 
-/** 2. 마감·차단된 공고의 지원에 보관 기한을 붙이고, 마감 확인 후 30일이 지난 진행 중 지원을 자동 종료한다. */
-export async function markApplications(env: Env, now: number): Promise<StepResult> {
+/**
+ * 2. 마감·차단된 공고의 지원에 보관 기한을 붙이고, 마감 확인 후 자동 종료 일수(기본 30일)가 지난 진행 중 지원을 자동 종료한다.
+ * 지원마다 실제 보관 일수 = MIN(낼 때의 기간 keep_days — NULL 이면 180, 지금 설정) (db/maintenance 의 effKeep). 설정을 줄였으면 이미 붙은 기한도 당긴다.
+ */
+export async function markApplications(env: Env, now: number, r: RetentionValues = DEFAULT_RETENTION): Promise<StepResult> {
+  const sec = retentionSeconds(r);
+  const keep = { keepDays: sec.applicationKeepDays, legacyDays: LEGACY_APPLICATION_KEEP_DAYS };
   // 차단이 풀려 다시 열린 공고의 진행 중 지원은 기한을 뗀다 (먼저 — 같은 실행에서 자동 종료되지 않게).
   const unmarked = await unmarkPurgeAfter(env.DB, { now, openStatuses: AUTO_CLOSABLE, limit: CAPS.markApplications });
-  const marked = await markPurgeAfter(env.DB, { now, purgeAt: now + APPLICATION_KEEP_AFTER_CLOSE, limit: CAPS.markApplications });
-  // purge_after - 180일 + 30일 < now  ⇔  purge_after < now + 180일 - 30일
-  const purgeBefore = now + APPLICATION_KEEP_AFTER_CLOSE - APPLICATION_AUTO_CLOSE_AFTER;
-  const rows = await listAutoCloseCandidates(env.DB, { purgeBefore, openStatuses: AUTO_CLOSABLE, limit: CAPS.markApplications });
-  const r = await autoCloseApplications(env.DB, { groups: autoCloseGroups(rows), now, purgeBefore });
-  return { step: 'markApplications', done: { marked, unmarked, auto_closed: r.changed, events: r.events } };
+  // 기간을 줄였으면 이미 붙은 기한을 "지금 + 실제 보관 일수" 로 당긴다 (늦추지는 않는다).
+  const lowered = await lowerPurgeAfter(env.DB, { now, keep, limit: CAPS.markApplications });
+  const marked = await markPurgeAfter(env.DB, { now, keep, limit: CAPS.markApplications });
+  const cutoff = { ...keep, autoCloseDays: sec.applicationAutoCloseDays };
+  const rows = await listAutoCloseCandidates(env.DB, { now, cutoff, openStatuses: AUTO_CLOSABLE, limit: CAPS.markApplications });
+  const x = await autoCloseApplications(env.DB, { groups: autoCloseGroups(rows), now, cutoff });
+  return { step: 'markApplications', done: { marked, unmarked, lowered, auto_closed: x.changed, events: x.events } };
 }
 
 /** 3. 보관 기한이 지난 지원서의 내용을 지운다: D1 먼저(복사본·파일 키·요약 + 진행 중이면 auto_closed + 국외 이전 동의 철회), 그다음 R2 파일. */
@@ -299,18 +326,18 @@ export async function purgeApplications(env: Env, now: number): Promise<StepResu
   return { step: 'purgeApplications', done: { erased: r.erased, auto_closed: r.changed, consents: r.consents, files_deleted: filesDeleted, files_failed: filesFailed } };
 }
 
-/** 4. 보관 기간이 지난 행을 지운다 (표마다 200행까지). users 행은 지우지 않는다. */
-export async function dropOldRowsStep(env: Env, now: number): Promise<StepResult> {
+/** 4. 보관 기간이 지난 행을 지운다 (표마다 200행까지). users 행은 지우지 않는다. 열람 기록 기간은 설정 access_log_keep_days. */
+export async function dropOldRowsStep(env: Env, now: number, ret: RetentionValues = DEFAULT_RETENTION): Promise<StepResult> {
   const r = await dropOldRows(env.DB, {
-    now, erasedBefore: now - ERASED_ROW_KEEP, accessBefore: now - ACCESS_LOG_KEEP, emailBefore: now - EMAIL_LOG_KEEP,
+    now, erasedBefore: now - ERASED_ROW_KEEP, accessBefore: now - retentionSeconds(ret).accessLogKeep, emailBefore: now - EMAIL_LOG_KEEP,
     usageBefore: kstDay(now - USAGE_KEEP_DAYS * DAY), limit: CAPS.dropRowsPerTable,
   });
   return { step: 'dropOldRows', done: { ...r } };
 }
 
-/** 5. 확인 후 1년이 지난 사업자 서류: D1 행을 먼저 지우고 그다음 R2 객체(vdocs/ 아래만). 확인 대기 서류는 건드리지 않는다. */
-export async function purgeVerificationDocs(env: Env, now: number): Promise<StepResult> {
-  const reviewedBefore = now - VDOC_KEEP_AFTER_REVIEW;
+/** 5. 확인 후 보관 기간(설정 vdoc_keep_days, 기본 1년)이 지난 사업자 서류: D1 행을 먼저 지우고 그다음 R2 객체(vdocs/ 아래만). 확인 대기 서류는 건드리지 않는다. */
+export async function purgeVerificationDocs(env: Env, now: number, r: RetentionValues = DEFAULT_RETENTION): Promise<StepResult> {
+  const reviewedBefore = now - retentionSeconds(r).vdocKeep;
   const rows = (await listExpiredVerificationDocs(env.DB, { reviewedBefore, limit: CAPS.purgeVerificationDocs }))
     .filter((d) => d.r2_key.startsWith(VDOC_PREFIX));
   const deleted = await deleteVerificationDocRows(env.DB, { ids: rows.map((d) => d.id), reviewedBefore });
@@ -408,14 +435,18 @@ export interface RunOptions {
 
 export interface RunOutcome { step: StepName; ok: boolean; done: Record<string, number> }
 
-/** 예약 작업 한 번: 단계 하나 → 집계 기록 → 로그 한 줄. 예외를 밖으로 내보내지 않는다. */
+/**
+ * 예약 작업 한 번: 보관 기간 설정 읽기(기본 키 한 행) → 단계 하나 → 집계 기록 → 로그 한 줄. 예외를 밖으로 내보내지 않는다.
+ * 설정을 읽지 못하면 단계를 실행하지 않는다 (failed).
+ */
 export async function runMaintenance(env: Env, nowSec: number, opts: RunOptions = {}): Promise<RunOutcome> {
   const step = opts.force ?? stepForTime(nowSec);
   const fn = opts.impl?.[step] ?? STEPS[step];
   let ok = true;
   let done: Record<string, number> = {};
   try {
-    done = (await fn(env, nowSec)).done;
+    const retention = await loadRetention(env.DB);
+    done = (await fn(env, nowSec, retention)).done;
   } catch {
     ok = false; // 오류 내용은 남기지 않는다 (키·주소가 들어 있을 수 있다)
   }

@@ -1,5 +1,5 @@
 // 사이트 설정 (site_settings, 0006). 이름 → 문자열 값. 값의 뜻·검사는 호출부(lib)가 한다 — 여기서는 받은 값으로 SQL 만 실행한다.
-// 지금 쓰는 키: public_job_filters (lib/public-jobs.PUBLIC_FILTERS_SETTING).
+// 지금 쓰는 키: public_job_filters (lib/public-jobs.PUBLIC_FILTERS_SETTING), retention · retention.log (lib/retention, T-12c), maint.* (db/maintenance).
 //
 // ON CONFLICT (key) DO UPDATE … excluded 는 PostgreSQL 에서도 그대로 된다 (docs/DB-PORTING.md 3장).
 
@@ -15,4 +15,23 @@ export async function setSetting(db: D1Database, key: string, value: string, use
     `INSERT INTO site_settings (key, value, updated_by, updated_at) VALUES (?,?,?,?)
      ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
   ).bind(key, value, userId, ts).run();
+}
+
+export interface SettingMeta { value: string; updated_by: string | null; updated_at: number; updated_by_email: string | null }
+
+/** 설정값 + 누가(관리자 id·이메일)·언제 바꿨는지. 행이 없으면 null. 관리자 화면에서만 쓴다. */
+export async function getSettingWithMeta(db: D1Database, key: string): Promise<SettingMeta | null> {
+  return db.prepare(
+    `SELECT s.value, s.updated_by, s.updated_at, u.email AS updated_by_email
+     FROM site_settings s LEFT JOIN users u ON u.id = s.updated_by WHERE s.key = ?`,
+  ).bind(key).first<SettingMeta>();
+}
+
+/** 설정값 여러 개를 한 트랜잭션으로 저장 (보관 기간 + 그 변경 기록, T-12c). [sqlite] batch = 한 트랜잭션. */
+export async function setSettings(db: D1Database, items: Array<{ key: string; value: string }>, userId: string, ts: number): Promise<void> {
+  if (!items.length) return;
+  await db.batch(items.map((i) => db.prepare(
+    `INSERT INTO site_settings (key, value, updated_by, updated_at) VALUES (?,?,?,?)
+     ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+  ).bind(i.key, i.value, userId, ts)));
 }

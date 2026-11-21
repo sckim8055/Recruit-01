@@ -71,7 +71,7 @@ export interface JobSavePlan { status: string; localize_status: string; review_f
 
 export async function listCompanyJobs(db: D1Database, companyId: string): Promise<JobListRow[]> {
   const r = await db.prepare(
-    `SELECT id, title_zh, title_ko, status, localize_status, review_flag, review_cleared_by, updated_at
+    `SELECT id, title_zh, title_ko, status, localize_status, review_flag, review_cleared_by, updated_at, published_at
      FROM jobs WHERE company_id = ? AND agency_id IS NULL ORDER BY updated_at DESC LIMIT 200`,
   ).bind(companyId).all<JobListRow>();
   return r.results;
@@ -188,6 +188,25 @@ export async function publishJob(db: D1Database, x: { ts: number; id: string; re
        AND (review_flag IS NULL OR review_cleared_by IS NOT NULL)
        AND EXISTS (SELECT 1 FROM companies WHERE id = jobs.company_id AND verify_status = 'verified')`,
   ).bind(x.ts, x.id, x.rev).run();
+  return res.meta.changes === 1;
+}
+
+/** 이 공고에 지원(취소된 것 포함)이 하나라도 있는가. 초안 삭제 화면에서만 쓴다. */
+export async function jobHasApplications(db: D1Database, jobId: string): Promise<boolean> {
+  return (await db.prepare('SELECT 1 AS x FROM applications WHERE job_id = ? LIMIT 1').bind(jobId).first()) !== null;
+}
+
+/**
+ * 지우는 것: 쓰지 않은 초안 공고 한 행 (T-12c). 한 문장 안에서 세 조건을 다시 확인한다 — 초안이고(status = 'draft'), 한 번도 게재된 적이 없고
+ * (published_at IS NULL), 지원이 하나도 없을 때(취소된 지원 포함). 그 기업의 공고(company_id)이고 헤드헌터 공고가 아닐 때만. 지웠으면 true.
+ * jobs 를 가리키는 표는 applications 뿐이다(외래키) — 지원이 없으면 다른 행이 남지 않는다.
+ */
+export async function deleteUnusedDraft(db: D1Database, x: { id: string; companyId: string }): Promise<boolean> {
+  const res = await db.prepare(
+    `DELETE FROM jobs
+     WHERE id = ? AND company_id = ? AND agency_id IS NULL AND status = 'draft' AND published_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM applications WHERE job_id = jobs.id)`,
+  ).bind(x.id, x.companyId).run();
   return res.meta.changes === 1;
 }
 

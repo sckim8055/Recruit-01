@@ -126,7 +126,7 @@ describe.skipIf(!hasSqlite)('지원 DB 문장', () => {
     return { raw, d1 };
   };
   const apply = (d1: D1Database, p: Partial<Parameters<typeof insertApplication>[1]> = {}) =>
-    insertApplication(d1, { id: 'a1', jobId: 'j1', seekerId: 's1', resumeId: 'r1', snapshot: 'v1.x.y', fileKey: 'rfiles/k1', consentAt: null, consentVersion: CROSS_BORDER_VERSION, ts: 100, ...p }, FLAGS);
+    insertApplication(d1, { id: 'a1', jobId: 'j1', seekerId: 's1', resumeId: 'r1', snapshot: 'v1.x.y', fileKey: 'rfiles/k1', consentAt: null, consentVersion: CROSS_BORDER_VERSION, ts: 100, keepDays: 180, ...p }, FLAGS);
 
   it('공개 중인 공고에만 지원이 들어간다', async () => {
     const { d1 } = setup();

@@ -12,8 +12,9 @@ import { companies } from './routes/companies';
 import { homePage, jobs } from './routes/jobs';
 import { resumes } from './routes/resumes';
 import { applications, apply } from './routes/applications';
-import { missingConsents, needsConsentCheck, safeNext } from './lib/consent';
+import { missingConsents, needsConsentCheck, requiredConsents, safeNext } from './lib/consent';
 import { listRequiredConsents } from './db/consents';
+import { loadRetention } from './lib/retention-setting';
 import { PUBLIC_FILES } from './lib/static-files';
 import { render } from './render';
 import { account } from './routes/account';
@@ -36,15 +37,17 @@ app.use('*', async (c, next) => {
 });
 
 // 이용약관·개인정보 동의 확인 (T-11). 로그인한 회원(관리자 제외)이 지금 판에 동의하지 않았으면 서비스 화면을 열 수 없다.
-// - 비로그인 요청은 여기서 아무것도 읽지 않는다 (캐시되는 공개 화면이 D1 을 읽지 않게). 로그인한 요청은 요청마다 작은 읽기 한 번
-//   (consents 의 idx_consents_user). 따로 캐시하지 않는다.
+// - 비로그인 요청은 여기서 아무것도 읽지 않는다 (캐시되는 공개 화면이 D1 을 읽지 않게). 로그인한 요청은 요청마다 작은 읽기 두 번을 동시에
+//   (consents 의 idx_consents_user + 보관 기간 설정 site_settings 'retention' 기본 키 한 행 — 개인정보처리방침의 지금 판이 그 설정의 rev 로 정해진다, T-12c).
+//   따로 캐시하지 않는다.
 // - 예외 주소(문서·동의 화면·로그인·로그아웃·언어·계정/탈퇴, lib/consent.consentExempt)와 public/ 의 정적 파일은 확인하지 않는다.
 // - GET·HEAD → /consent?next=<원래 경로+검색 조건> (safeNext 가 받는 경로일 때만), 그 밖의 메서드 → 403 (아무것도 처리하지 않는다).
 app.use('*', async (c, next) => {
   const u = c.var.user;
   const path = c.req.path;
   if (!u || PUBLIC_FILES.has(path) || !needsConsentCheck(u.role, path)) return next();
-  if (!missingConsents(await listRequiredConsents(c.env.DB, u.id)).length) return next();
+  const [rows, retention] = await Promise.all([listRequiredConsents(c.env.DB, u.id), loadRetention(c.env.DB)]);
+  if (!missingConsents(rows, requiredConsents(retention)).length) return next();
   c.header('Cache-Control', NO_STORE);
   if (c.req.method === 'GET' || c.req.method === 'HEAD') {
     const url = new URL(c.req.url);

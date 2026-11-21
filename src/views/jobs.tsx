@@ -4,7 +4,7 @@ import type { Locale } from '../env';
 import { fmtDate } from '../lib/company';
 import { t } from '../lib/i18n';
 import {
-  CHINESE_LEVELS, JOB_LIMITS, REPORT_LINES, SALARY_BASES, SALARY_MAX,
+  CHINESE_LEVELS, JOB_LIMITS, REPORT_LINES, SALARY_BASES, SALARY_MAX, draftDeletable,
   type JobFieldError, type JobFormField, type JobInput, type JobStatus, type LocalizeStatus,
 } from '../lib/jobs';
 import { isActiveCode, labelOf, type OptionKind, type OptionSet } from '../lib/options';
@@ -76,15 +76,16 @@ const JobNav = ({ locale }: { locale: Locale }) => (
 
 export interface JobListRow {
   id: string; title_zh: string | null; title_ko: string | null; status: JobStatus; localize_status: LocalizeStatus;
-  review_flag: string | null; review_cleared_by: string | null; updated_at: number;
+  review_flag: string | null; review_cleared_by: string | null; updated_at: number; published_at: number | null;
 }
 
-export const JobList = ({ locale, rows, counts, verified }: {
-  locale: Locale; rows: JobListRow[]; counts: Record<string, { total: number; unread: number }>; verified: boolean;
+export const JobList = ({ locale, rows, counts, verified, ok }: {
+  locale: Locale; rows: JobListRow[]; counts: Record<string, { total: number; unread: number }>; verified: boolean; ok?: string;
 }) => (
   <section class="wide">
     <p class="crumbs"><a href="/biz">{t(locale, 'biz.title')}</a></p>
     <h1>{t(locale, 'job.list.title')}</h1>
+    <Flash locale={locale} ok={ok} />
     {!verified && <p class="muted">{t(locale, 'job.list.unverified')}</p>}
     <p><a class="button" href="/biz/jobs/new">{t(locale, 'job.new')}</a></p>
     {rows.length === 0 ? <p class="muted">{t(locale, 'job.list.empty')}</p> : (
@@ -101,6 +102,8 @@ export const JobList = ({ locale, rows, counts, verified }: {
                   <a href={`/biz/jobs/${r.id}`}>{r.title_zh || t(locale, 'job.untitled')}</a>
                   {r.title_ko && <div class="muted">{r.title_ko}</div>}
                   {r.review_flag && !r.review_cleared_by && <div class="hint">{t(locale, 'job.review_pending')}</div>}
+                  {/* 지원 수 행(counts)은 취소된 지원만 있어도 생긴다 → 행이 없을 때만 지원이 없다 */}
+                  {draftDeletable(r, !!counts[r.id]) && <div class="hint"><a href={`/biz/jobs/${r.id}/delete`}>{t(locale, 'job.delete')}</a></div>}
                 </td>
                 <td><JobStatusBadge locale={locale} status={r.status} /></td>
                 <td><LocalizeBadge locale={locale} status={r.localize_status} /></td>
@@ -248,6 +251,8 @@ export interface JobReviewProps {
   koErrors: JobFieldError[];
   koInput?: { title_ko: string; body_ko: string };
   highlightBlocks?: boolean;
+  /** 쓰지 않은 초안이라 지울 수 있음 (lib/jobs.draftDeletable) */
+  deletable?: boolean;
   ok?: string;
   error?: string;
 }
@@ -295,6 +300,7 @@ export const JobReview = (p: JobReviewProps) => {
             </form>
           )}
           {!closed && <a href={`/biz/jobs/${j.id}/edit`}>{t(l, 'job.edit.title')}</a>}
+          {p.deletable && <a href={`/biz/jobs/${j.id}/delete`}>{t(l, 'job.delete')}</a>}
         </div>
         {j.status === 'published' && <p class="hint">{t(l, 'job.published_note')}</p>}
       </div>
@@ -378,3 +384,22 @@ export const JobReview = (p: JobReviewProps) => {
     </section>
   );
 };
+
+/** 쓰지 않은 초안 삭제 확인 화면 (T-12c). 지우면 되돌릴 수 없다. */
+export const JobDeleteConfirm = ({ locale, job }: { locale: Locale; job: Pick<JobRow, 'id' | 'title_zh' | 'title_ko'> }) => (
+  <section class="wide">
+    <JobNav locale={locale} />
+    <h1>{t(locale, 'job.delete.title')}</h1>
+    <div class="box">
+      <p><b>{job.title_zh || job.title_ko || t(locale, 'job.untitled')}</b></p>
+      <p>{t(locale, 'job.delete.lead')}</p>
+      <p class="muted">{t(locale, 'job.delete.only')}</p>
+      <form method="post" action={`/biz/jobs/${job.id}/delete`}>
+        <div class="actions">
+          <button type="submit" class="secondary">{t(locale, 'job.delete.submit')}</button>
+          <a href={`/biz/jobs/${job.id}`}>{t(locale, 'common.cancel')}</a>
+        </div>
+      </form>
+    </div>
+  </section>
+);

@@ -13,6 +13,13 @@ import type { ResumeBody } from './resume';
 /** 국외 이전 동의 문구의 판(版). 문구를 바꾸면 이 값을 올린다 (consents.version 에 남는다). 문구(locales 의 apply.consent.*)는 개인정보처리방침 5항(src/legal/privacy.ts)과 같은 내용이어야 한다. */
 export const CROSS_BORDER_VERSION = '2026-11-1';
 
+/**
+ * 지원할 때 consents.version 에 남기는 국외 이전 동의의 판 (T-12c): `${CROSS_BORDER_VERSION}/k<지원서 보관 일수>`.
+ * 동의 문구의 "공고 마감 후 N일" 이 관리자 설정으로 바뀌므로, 기록만 보고도 구직자가 어느 기간에 동의했는지 알 수 있게 한다.
+ * keepDays 는 지원할 때의 application_keep_days (applications.keep_days 에도 같은 값이 들어간다).
+ */
+export const crossBorderVersion = (keepDays: number): string => `${CROSS_BORDER_VERSION}/k${keepDays}`;
+
 // ── 국외 이전 동의
 
 export type ConsentNeed = 'none' | 'optional' | 'required';

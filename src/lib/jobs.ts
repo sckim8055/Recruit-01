@@ -342,6 +342,14 @@ export function readBlockReason(f: Record<string, unknown>): BlockReason {
 }
 
 /** 숨김 칸으로 받은 내용 버전(rev). 정수가 아니면 null. */
+/**
+ * 기업이 지울 수 있는 공고 (T-12c, 작성 중 공고 한도에서 막히지 않게): 초안이고, 한 번도 게재된 적이 없고(published_at 없음), 지원이 하나도 없을 때만.
+ * 게재 중·마감·차단 공고와, 한 번이라도 게재됐던 공고(차단이 풀려 초안으로 돌아온 공고 포함)는 지울 수 없다 — 공개된 기록과 지원이 남아야 하므로.
+ * DB 문장(db/jobs.deleteUnusedDraft)이 세 조건을 다시 확인한다.
+ */
+export const draftDeletable = (job: { status: string; published_at: number | null }, hasApplications: boolean): boolean =>
+  job.status === 'draft' && job.published_at === null && !hasApplications;
+
 export function readRev(f: Record<string, unknown>): number | null {
   const v = str(f, 'rev');
   return /^\d{1,9}$/.test(v) ? Number(v) : null;

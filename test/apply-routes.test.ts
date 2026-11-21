@@ -241,8 +241,35 @@ describe.skipIf(!hasSqlite)('지원 화면', () => {
     const [a] = w.apps();
     expect(a!.cross_border_consent_at).not.toBeNull();
     expect({ ...w.raw.prepare("SELECT user_id, type, version, ref_id FROM consents WHERE type = 'cross_border'").get()! })
-      .toEqual({ user_id: 's1', type: 'cross_border', version: CROSS_BORDER_VERSION, ref_id: a!.id });
+      .toEqual({ user_id: 's1', type: 'cross_border', version: `${CROSS_BORDER_VERSION}/k180`, ref_id: a!.id }); // T-12c: 판에 보관 일수가 붙는다
     expect(await (await w.get(`/my/applications/${a!.id}`)).text()).toContain('동의함');
+  });
+
+  it('보관 기간 설정 (T-12c): 동의 문구는 설정 숫자, 지원에 낼 때의 기간과 /k<일> 판이 남는다 (화면보다 길게 붙지 않는다)', async () => {
+    const w = world();
+    const r = await createResume(w);
+    const r2 = await createResume(w, {}, true, 's2');
+    w.raw.prepare("INSERT INTO site_settings (key, value, updated_at) VALUES ('retention', ?, 0)").run(JSON.stringify({ application_keep_days: 90 }));
+    const h2 = await (await w.get(`/jobs/${J1}/apply?resume=${r.id}`)).text();
+    expect(h2).toContain('공고 마감 후 90일까지 또는 지원을 취소할 때까지');
+    expect(h2).toContain('name="keep_days" value="90"');
+    const zh = await (await w.get(`/jobs/${J2}/apply?resume=${r.id}`, 's1', 'zh')).text();
+    expect(zh).toContain('职位截止后90天或');
+    // 화면을 본 뒤 기간이 120 으로 늘었어도, 화면에 보였던 90 이 붙는다
+    w.raw.exec(`UPDATE site_settings SET value = '{"application_keep_days":120}' WHERE key = 'retention'`);
+    const res = await w.post(`/jobs/${J1}/apply`, applyForm(r.id, { consent: '1', keep_days: '90' }));
+    expect(res.status).toBe(302);
+    const a = w.apps().find((x) => x.seeker_id === 's1')!;
+    expect({ ...w.raw.prepare('SELECT keep_days FROM applications WHERE id = ?').get(a.id)! }).toEqual({ keep_days: 90 });
+    expect({ ...w.raw.prepare("SELECT version FROM consents WHERE type = 'cross_border' AND ref_id = ?").get(a.id)! })
+      .toEqual({ version: `${CROSS_BORDER_VERSION}/k90` });
+    // 숨은 칸이 지금 설정보다 길면(위조) 지금 설정, 없으면 지금 설정
+    const res2 = await w.post(`/jobs/${J1}/apply`, applyForm(r2.id, { consent: '1', keep_days: '365' }), 's2');
+    expect(res2.status).toBe(302);
+    const b = w.apps().find((x) => x.seeker_id === 's2')!;
+    expect({ ...w.raw.prepare('SELECT keep_days FROM applications WHERE id = ?').get(b.id)! }).toEqual({ keep_days: 120 });
+    expect({ ...w.raw.prepare("SELECT version FROM consents WHERE type = 'cross_border' AND ref_id = ?").get(b.id)! })
+      .toEqual({ version: `${CROSS_BORDER_VERSION}/k120` });
   });
 
   it('동의가 필요 없는 기업: 동의 칸이 없고, 보내도 기록하지 않는다. 기업명 비공개는 중립 표시', async () => {

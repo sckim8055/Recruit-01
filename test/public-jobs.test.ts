@@ -13,7 +13,8 @@ import { parseKstDate } from '../src/lib/jobs';
 import { buildOptionSet } from '../src/lib/options';
 import { filterChoices } from '../src/lib/public-jobs';
 import { optionRows } from './option-seed';
-import { REQUIRED_CONSENTS } from '../src/lib/consent';
+import { requiredConsents } from '../src/lib/consent';
+import { DEFAULT_RETENTION } from '../src/lib/retention';
 
 // T-06e: 직무·업계·근무지 값은 DB(job_options) 에서 온다. 기본 행(0007 = test/option-seed.ts)으로 만든 검색 값 목록.
 const CHOICES = filterChoices(buildOptionSet(optionRows()));
@@ -214,7 +215,7 @@ function fakeDb(o: { rows?: PublicJobListRow[]; detail?: PublicJobDetail | null;
           : o.detail ?? null),
         // T-11: 로그인한 회원의 동의 확인(src/index.tsx)에는 지금 판의 동의가 있다고 답한다
         all: async () => ({ results: sql.includes('FROM job_options') ? optionRows()
-          : sql.includes('FROM consents') ? REQUIRED_CONSENTS.map((r) => ({ type: r.type, version: r.version, withdrawn_at: null }))
+          : sql.includes('FROM consents') ? requiredConsents(DEFAULT_RETENTION).map((r) => ({ type: r.type, version: r.version, withdrawn_at: null }))
           : o.rows ?? [] }),
       };
       return stmt;
