@@ -271,4 +271,7 @@ details > summary{cursor:pointer;color:var(--accent);font-size:14px}
 
 /* 관리자 2단계 인증 등록의 QR 코드 (흰 바탕 유지 — 스캔되게) */
 .qr { margin: var(--s4) 0; }
+.codes{list-style:none;font-family:var(--mono);font-size:16px;letter-spacing:1px;display:grid;grid-template-columns:repeat(2,max-content);gap:var(--s2) var(--s6);background:var(--subtle);border:1px solid var(--line);border-radius:var(--r-sm);padding:var(--s3) var(--s4);margin:var(--s4) 0}
+.codes li{margin:0}
+@media (max-width:400px){.codes{grid-template-columns:max-content}}
 .qr svg { display: block; max-width: 100%; height: auto; background: #fff; border: 1px solid #d0d5dd; border-radius: 6px; }

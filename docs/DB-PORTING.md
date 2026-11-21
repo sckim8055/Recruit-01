@@ -10,8 +10,9 @@
 
 | 파일 | 다루는 표 |
 |---|---|
-| `src/db/users.ts` | users (로그인 시 조회·생성, TOTP 확정) |
-| `src/db/sessions.ts` | auth_codes, sessions, admin_totp_pending |
+| `src/db/users.ts` | users (로그인 시 조회·생성, 관리자 최초 TOTP 확정 + 복구 코드, 쓴 TOTP 단계 올리기) |
+| `src/db/sessions.ts` | auth_codes, sessions, admin_totp_pending (관리자 + 2단계 인증을 켠 회원의 로그인 대기) |
+| `src/db/twofa.ts` | 2단계 인증(T-16): users(totp_* · 시도 수), totp_enrolments(등록 대기), totp_recovery_codes, admin_actions(관리자 초기화 기록), sessions(mfa·다른 세션 삭제) |
 | `src/db/companies.ts` | companies, company_members, company_invites, verification_docs(행), agency_members |
 | `src/db/jobs.ts` | jobs (+ 초안 삭제 전 지원 여부 읽기, T-12c) |
 | `src/db/public-jobs.ts` | jobs + companies (공개 공고 목록·상세, 읽기만) |
@@ -91,7 +92,7 @@
 | `settings.setSettings` (T-12c) | batch(키마다 `ON CONFLICT … DO UPDATE`) = 한 트랜잭션 | `BEGIN … COMMIT` |
 | `maintenance.ts` (전체) | 행 수 한도를 `WHERE id IN (SELECT id … LIMIT ?)` 로 건다 — SQLite 는 `DELETE/UPDATE … LIMIT` 을 기본 빌드에서 지원하지 않는다. `auth_codes` 는 기본 키가 email 이라 `email IN (SELECT email … LIMIT ?)` | 문법은 그대로 된다. 잠금 범위는 4장 |
 | `maintenance.autoCloseApplications` · `erasePurgedApplications` | batch: 상태별로 이벤트 `INSERT … SELECT lower(hex(randomblob(16))), …` → `UPDATE … WHERE … AND EXISTS (그 지원의 auto_closed 이벤트, at = 지금, actor NULL)`. 이벤트 id 를 SQL 안에서 만든다(하이픈 없는 32자, `account.eraseUser` 와 같음). 판단은 문장별 영향 행 수의 합 | `gen_random_uuid()::text`, `BEGIN … COMMIT`, 순서 그대로 (상태 문장이 이벤트 문장 뒤여야 한다) |
-| `maintenance.dropOldRows` | batch 9문장, **자식 먼저**(application_events → applications(이벤트가 남지 않은 것만) → consents → access_log → email_log → sessions → auth_codes → admin_totp_pending → usage_counters). D1 은 외래키를 검사한다. usage_counters 는 기본 키가 세 컬럼이라 행 값 `(scope, subject, day) IN (SELECT … LIMIT ?)` 로 한도를 건다(SQLite 3.15+), `day < ?` 는 고정 형식 'YYYY-MM-DD' 글자 비교 | `BEGIN … COMMIT`, 순서 그대로. 행 값 IN 은 PostgreSQL 도 된다. day 를 `date` 형으로 바꾸면 바인딩도 date 로 |
+| `maintenance.dropOldRows` | batch 12문장, **자식 먼저**(application_events → applications(이벤트가 남지 않은 것만) → consents → access_log → email_log → totp_enrolments → sessions → auth_codes → admin_totp_pending → usage_counters → totp_recovery_codes → admin_actions, 뒤 세 표는 T-16). D1 은 외래키를 검사한다. usage_counters 는 기본 키가 세 컬럼이라 행 값 `(scope, subject, day) IN (SELECT … LIMIT ?)` 로 한도를 건다(SQLite 3.15+), `day < ?` 는 고정 형식 'YYYY-MM-DD' 글자 비교 | `BEGIN … COMMIT`, 순서 그대로. 행 값 IN 은 PostgreSQL 도 된다. day 를 `date` 형으로 바꾸면 바인딩도 date 로 |
 | `usage.takeQuota` | `INSERT … SELECT ?,… WHERE ? <= ? ON CONFLICT (scope, subject, day) DO UPDATE SET n = usage_counters.n + excluded.n … WHERE usage_counters.n + excluded.n <= ?` — 한도 확인과 더하기를 한 문장으로, 판단은 meta.changes = 1. SQLite 는 `INSERT … SELECT` 와 `ON CONFLICT` 를 같이 쓸 때 SELECT 에 WHERE 가 있어야 한다(없으면 ON 을 조인으로 읽음) — 지금은 한도 조건이 그 WHERE 다 | 문법은 된다(DO UPDATE 의 WHERE 가 거짓이면 rowCount 0). FROM 없는 SELECT 의 매개변수 형 지정(`$4::integer`)이 필요할 수 있다(확인 필요). 동시성: 같은 키의 UPSERT 는 행 잠금으로 차례가 되어 한도를 넘지 않는다고 본다(확인 필요). 첫 행을 두 요청이 동시에 넣으면 한쪽이 충돌 → DO UPDATE 경로로 간다 |
 | `jobs.insertJob` | `INSERT … SELECT ?,… WHERE (SELECT COUNT(*) FROM jobs WHERE company_id = ? AND agency_id IS NULL AND status NOT IN ('published','closed')) < ?` — 작성 중인 공고 한도(T-05c)를 한 문장으로 | 문법은 된다. FROM 없는 SELECT 의 매개변수 형 지정이 필요할 수 있다(확인 필요). 동시에 두 번 추가하면 둘 다 통과해 한도 + 1 이 될 수 있다(4장, `resumes.insertResume` 과 같음) |
 | `maintenance.findReferencedFileKeys` · `maintenanceCounts` | 읽기 batch(SELECT 여러 개). 키는 문장당 50개(D1 바인딩 한도 100) | 조회 여러 번. PostgreSQL 은 `= ANY($1::text[])` 로 배열 하나를 넘길 수 있다 |
@@ -104,6 +105,9 @@
 | `alerts.insertAlert` (T-10) | `INSERT … SELECT ?,… WHERE (SELECT COUNT(*) …) < ? AND NOT EXISTS (같은 조건)` — 5개 한도·중복을 한 문장으로, meta.changes | 문법은 된다. 동시 두 요청은 4장(한도 + 1 이 될 수 있음, `resumes.insertResume` 과 같음) |
 | `alerts.recordAlertSent` · `pauseAlertByToken` · `sweepAlerts` · `listNewJobsForAlerts` (T-10) | batch = 트랜잭션(읽기 batch 포함). 토큰 추가는 `INSERT … SELECT … WHERE EXISTS (알림)`, 행 수 한도는 `id IN (SELECT … LIMIT ?)` | `BEGIN … COMMIT`, 순서 그대로 |
 | `migrations/0012_job_alerts.sql` (T-10) | `ALTER TABLE … ADD COLUMN … NOT NULL DEFAULT … CHECK`, `alert_unsub_tokens.alert_id REFERENCES alerts(id) ON DELETE CASCADE` — D1 은 외래키를 검사하므로 CASCADE 가 없으면 `account.eraseUser` 의 `DELETE FROM alerts` 가 막힌다 | 그대로 된다 (스키마를 새로 쓸 때 CASCADE 를 꼭 옮긴다) |
+| `users.confirmTotp`, `twofa.saveEnrolment` · `replaceRecoveryCodes` · `disableTotp` · `resetMemberTotp` (T-16) | batch = 한 트랜잭션. 판단은 첫 문장의 영향 행 수, 뒤 문장은 `EXISTS (SELECT 1 FROM users WHERE id = ? AND totp_secret = ?)`(방금 저장한 암호문 — IV 가 무작위라 유일) 또는 `EXISTS (방금 넣은 admin_actions)` 로 다시 확인. 복구 코드 추가는 `INSERT … SELECT ?,… WHERE EXISTS …` | `BEGIN … COMMIT`, 순서 그대로. FROM 없는 SELECT 의 매개변수 형 지정이 필요할 수 있다(확인 필요) |
+| `users.useTotpStep`, `twofa.useRecoveryCode` · `takeTotpTry`, `sessions.consumeTotpPending` (T-16) | 한 문장 가드(`… AND totp_last_step < ?`, `… used_at IS NULL`(서브쿼리 `LIMIT 1`), 시도 수 `CASE` 로 창 다시 시작, `DELETE … WHERE id = ?`) + meta.changes = 1 | 그대로 된다(rowCount). 같은 행을 바꾸는 동시 UPDATE 는 행 잠금으로 차례가 되어 하나만 1 이라고 본다(확인 필요) |
+| `migrations/0013_user_totp.sql` (T-16) | `totp_enrolments.session_id REFERENCES sessions(id) ON DELETE CASCADE` — 세션 삭제(로그아웃·탈퇴·정리)가 등록 대기를 함께 지운다. D1 은 외래키를 검사하므로 CASCADE 가 없으면 세션 삭제가 막힌다 | 그대로 된다 (CASCADE 를 꼭 옮긴다) |
 | `migrations/0007_job_options.sql` | 기본 행의 시각 `strftime('%s','now')` | `extract(epoch from now())::bigint` |
 | `companies.listPublicCompanies` | `ORDER BY name_ko` = 바이트 순서 | DB 콜레이션에 따라 한글 정렬이 달라질 수 있음 (`COLLATE "C"` 로 맞춤) |
 

@@ -1,7 +1,7 @@
 # 경로 목록
 
 화면은 서버 렌더링 + HTML 폼이다. `✅` 는 구현됨, 나머지는 docs/TASKS.md 의 해당 작업에서 만든다.
-모든 POST 는 같은 출처에서 온 요청만 받는다(`sameOrigin`) — **예외는 하나**: 조건 알림 메일의 RFC 8058 한 번 클릭 해지 `POST /alerts/u/<토큰>`(T-10, 아래). `/biz/jobs/:id/applicants*`·`/biz/applications*`·`/admin/applications*`·`/admin/access-log` 는 모든 응답(로그인 리다이렉트·403 포함)이 `private, no-store` 이고 HEAD 는 405 다(T-09a). `/consent`·`/my/account*` 의 모든 응답도 `private, no-store` 다(T-11). `/my/resumes*`·`/my/applications*`·`/jobs/:id/apply` 는 구직자만(비로그인 → /login, 기업·헤드헌터·관리자 403, 남의 이력서·지원 id 는 404), 모든 응답이 `Cache-Control: private, no-store`. "권한" 칸의 판단은 `authz.ts`·`requireRole` 을 쓴다.
+모든 POST 는 같은 출처에서 온 요청만 받는다(`sameOrigin`) — **예외는 하나**: 조건 알림 메일의 RFC 8058 한 번 클릭 해지 `POST /alerts/u/<토큰>`(T-10, 아래). `/biz/jobs/:id/applicants*`·`/biz/applications*`·`/admin/applications*`·`/admin/access-log` 는 모든 응답(로그인 리다이렉트·403 포함)이 `private, no-store` 이고 HEAD 는 405 다(T-09a). `/consent`·`/my/account*`(2단계 인증 화면 포함)·`/login/totp`·`/admin/users/*` 의 모든 응답도 `private, no-store` 다(T-11·T-16). `/my/resumes*`·`/my/applications*`·`/jobs/:id/apply` 는 구직자만(비로그인 → /login, 기업·헤드헌터·관리자 403, 남의 이력서·지원 id 는 404), 모든 응답이 `Cache-Control: private, no-store`. "권한" 칸의 판단은 `authz.ts`·`requireRole` 을 쓴다.
 
 예약 작업(T-12, 공고 자동 마감·보관 기한 삭제·정리, T-10 조건 알림 메일)은 cron(`scheduled`)으로만 실행되며 HTTP 경로가 없다 (docs/ARCHITECTURE.md 14·17절). 기간은 관리자 보관 기간 설정(`/admin/settings`, T-12c)을 따른다.
 
@@ -13,7 +13,7 @@
 | GET / | 홈 (소개 + 최신 공개 공고 5건). 비로그인은 60초 캐시. `?bye=1`(탈퇴 직후)은 한 줄 안내를 그리고 캐시하지 않음(`private, no-store`) | 누구나 | ✅ |
 | GET /login · POST /login/request · POST /login/verify | 이메일 인증코드 로그인·가입 | 누구나 | ✅ |
 | POST /logout | 로그아웃 | 로그인 | ✅ |
-| GET·POST /login/totp | 관리자 2단계 인증 (최초에는 인증 앱 등록) | 인증코드를 통과한 관리자 | ✅ |
+| GET·POST /login/totp | 로그인 2단계 (ARCHITECTURE 3-1). 관리자 필수(최초에는 인증 앱 등록 → 번호 확인 → 복구 코드 8개를 이 응답에서 한 번 표시, "저장했습니다 → 계속" → `/admin`), 2단계 인증을 켠 회원(T-16). 등록된 계정은 `code` 한 칸에 인증 앱 6자리 번호 또는 복구 코드(대소문자·공백·하이픈 무시). 번호·복구 코드가 대기의 5회를 같이 쓰고, 5회·10분이면 `/login`. 통과: 관리자 → `/admin`, 회원 → 고른 유형이 다르면 유형 안내, 아니면 `/my`. 복구 코드로 통과하면 남은 개수 + 재등록 안내 화면과 알림 메일. 모든 응답 `private, no-store` | 인증코드를 통과한 관리자·2단계 인증을 켠 회원 (대기 쿠키 `atp`) | ✅ T-03·T-16 |
 | GET /lang/:l | 언어 전환 (ko/zh) | 누구나 | ✅ |
 | GET /my | 역할별 첫 화면 (구직자: 이력서·지원 현황 링크, 기업·헤드헌터 → /biz, 관리자 → /admin) | 로그인 | ✅ |
 | GET /biz | 기업 첫 화면 (소속 없음: 받은 초대 + 기업 등록 폼 / 소속 있음: 검증 상태·남은 할 일·새 지원 요약 "새 지원 M건 · 전체 N건"(새 지원자 알림 메일이 이 주소로 연결)). 헤드헌터는 임시 화면 | company, headhunter | ✅ |
@@ -25,6 +25,13 @@
 | GET /consent | 동의 화면: 빠진 종류의 체크 칸만(미리 체크 없음), 이미 동의한 종류는 안내, 수집 항목·목적·보유 기간(지금 보관 기간 설정의 숫자)·국외 보관 요약, 탈퇴·로그아웃 안내, 숨은 `next`. 빠진 것이 없으면 `safeNext(next)` 로 302. 비로그인 → /login, 관리자 → /admin | 로그인 (관리자 제외) | ✅ T-11 |
 | POST /consent | `terms=1`·`privacy=1`·`next` → 빠진 종류가 모두 체크돼야 함(아니면 400, 기록 없음) → 빠진 종류만 `consents` 에 기록 → 303 `safeNext(next)`(밖으로 나가는 주소·예외 주소는 `/my`) | 로그인 (관리자 제외) | ✅ T-11 |
 | GET /my/account | 계정: 로그인 이메일·유형·동의 내역(판)·문서 링크·회원 탈퇴 입구. 관리자·다른 담당자가 있는 기업의 대표 담당자는 입구 대신 이유 | 로그인 | ✅ T-11 |
+| GET /my/account/2fa | 2단계 인증: 상태·켠 시각·남은 복구 코드 수. 꺼져 있으면 켜기 안내, 켜져 있으면 재등록·복구 코드 새로 만들기·(회원만) 끄기 링크. 이 세션에서 등록 중이면 서버 대기의 새 키(QR·키)와 확인 칸. `?ok=off` 만 받는다 | 로그인 | ✅ T-16 |
+| POST /my/account/2fa/start | 켜기 시작: 꺼진 계정만 → 등록 대기(회원 + 지금 세션, 10분, 5회) → 303 `/my/account/2fa`. 켜진 계정은 아무것도 하지 않고 303 | 로그인 | ✅ T-16 |
+| POST /my/account/2fa/reenrol | 재등록 1단계: `code`(지금 번호 또는 복구 코드, 회원별 15분 5번) → 새 등록 대기 → 303. 틀리면 400(잠김도 400, 같은 화면). 예전 키는 확정 전까지 유효 | 2단계 인증을 켠 계정 | ✅ T-16 |
+| POST /my/account/2fa/confirm | 켜기·재등록 확정: `code`(대기의 새 키로 만든 번호만 — 키는 폼으로 받지 않는다) → 비밀키 저장·지금 세션 `mfa = 1`·다른 세션 삭제·복구 코드 8개(이 응답에서 한 번 표시) + 알림 메일. 틀리면 400(대기 5회), 대기 없음·만료 400 | 로그인 | ✅ T-16 |
+| POST /my/account/2fa/cancel | 이 세션의 등록 대기 삭제 → 303 | 로그인 | ✅ T-16 |
+| POST /my/account/2fa/codes | 복구 코드 새로 만들기: `code`(지금 인증 앱 번호만, 회원별 15분 5번) → 예전 코드 무효, 8개를 이 응답에서 표시 + 알림 메일. 틀리면 400 | 2단계 인증을 켠 계정 | ✅ T-16 |
+| GET·POST /my/account/2fa/off | 끄기: `code`(번호 또는 복구 코드, 회원별 15분 5번) → 비밀키·복구 코드·대기 삭제 + 알림 메일 → 303 `/my/account/2fa?ok=off`. 틀리면 400. 꺼진 계정 GET 은 `/my/account/2fa` 로. **관리자 403** | 2단계 인증을 켠 회원(관리자 제외) | ✅ T-16 |
 | GET /my/account/delete | 탈퇴 확인 화면(지워지는 것·남는 것, 로그인 이메일 입력 칸). 막히는 계정은 계정 화면 | 로그인 | ✅ T-11 |
 | POST /my/account/delete | `confirm`(로그인 이메일) 다르면 400(아무것도 안 바뀜) → `deleteAccount` → 막히면 400 + 계정 화면 → 세션 쿠키 삭제, 303 `/?bye=1`(홈에 한 줄 안내, 이 요청은 캐시 안 함) | 로그인 | ✅ T-11 |
 
@@ -106,6 +113,7 @@
 | POST /admin/applications/:id/open | 사유(`reason`) → `openApplication` → 내용은 이 POST 응답에만 그린다(리다이렉트 없음). access_log 에 사유, 상태 변경 없음. 사유 없음·300자 초과는 400 + 오류, 취소됨·열 수 없음은 안내 | ✅ T-09a |
 | POST /admin/applications/:id/file | 사유와 함께 첨부 내려받기 (`downloadApplicationFile`, access_log 에 사유). 안 되면 400 + 지원서 화면 | ✅ T-09a |
 | GET /admin/system | 시스템 점검 (T-13, `private, no-store`, 로그인 리다이렉트·403 포함): 실행 환경, 설정 점검 표(`lib/config-check.configChecks` — ok·확인·문제 + 고치는 법), 비밀값 표(설정됨/없음 + 길이 구간, **값은 없음**), 오늘 사용량, 보관 기간(읽기만), 예약 작업 시간표(UTC·한국 시간, 붙은 단계 `sendAlerts` 표시), 마이그레이션 확인 방법 안내, T-10 "조건 알림"(켜진·꺼진 알림 수, 오늘 알림 메일 `쓴 수 / 한도` — 개수만, 누구의 어떤 조건인지 없음). 읽기: 사용량 2 + 보관 기간 설정 1 + 알림 개수 1 + 알림 메일 1. 요청을 막지 않는다. 관리자 첫 화면에서 링크 | ✅ T-13 |
+| GET·POST /admin/users/2fa-reset · POST /admin/users/2fa-reset/confirm | 회원 2단계 인증 초기화 (T-16, `private, no-store`, 로그인 리다이렉트·403 포함): 폼(`email`, `reason` 10자 이상) → POST 검사(사유 짧음·회원 없음·관리자 계정·2단계 인증 꺼짐 → 400 + 안내) → 확인 화면(이메일·유형·사유, 숨은 칸) → `/confirm` 에서 다시 검사 → 한 트랜잭션: `admin_actions` 기록 + 비밀키·복구 코드·대기·모든 세션 삭제 → 회원에게 알림 메일 → 303 `?ok=1`. 관리자 계정은 대상이 아니다(README DB 명령). 관리자 첫 화면에서 링크 | admin (TOTP 세션) | ✅ T-16 |
 | GET /admin/access-log | 열람 기록: 최근 순 50건씩, `?type=application\|resume\|verification_doc`(그 밖의 값은 무시), `?before=<시각>` 커서. 시각·연 사람(이메일·역할)·대상·사유. 지원서 대상은 관리자 지원서 화면으로 연결 | ✅ T-09a |
 
 관리자에게 **없는** 기능: 조건 알림을 보거나 만들거나 보내기(T-10 — 개수만 보인다), 개인정보 "영구 보관"·"지우지 않기" 설정(T-12c — 범위 안의 기간만), 공고 내용 수정, 이력서 전달, 구직자·기업에게 추천 발송, 지원자에게 메일 보내기(면접 요청·불합격 통보는 기업 담당자만, T-09b), 지원자 목록·사람 검색, 지원서 수정·일괄 내려받기.

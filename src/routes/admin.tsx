@@ -1,4 +1,4 @@
-// 관리자 화면. 관리자 세션은 이메일 인증코드 + TOTP 를 모두 통과해야만 생긴다 (src/lib/admin2fa.ts).
+// 관리자 화면. 관리자 세션은 이메일 인증코드 + TOTP 를 모두 통과해야만 생긴다 (src/lib/twofa.ts).
 // 관리자에게 없는 기능: 공고 내용 수정, 이력서 전달, 추천 발송 (CLAUDE.md 규칙 1). 기업 정보도 고치지 않는다 (승인·반려·승인 취소만).
 import { Hono, type Context } from 'hono';
 import { now, type AppEnv } from '../env';
@@ -21,6 +21,7 @@ import { adminJobs } from './admin-jobs';
 import { humanGetOnly, noStore } from './guards';
 import { adminOptions } from './admin-options';
 import { adminSettings } from './admin-settings';
+import { adminUsers } from './admin-users';
 import { adminCounts } from '../db/admin';
 import {
   approveCompany, listCompaniesForAdmin, loadCompanyDetail, rejectCompany, revokeCompany, type CompanyDetail,
@@ -33,6 +34,8 @@ admin.use('/applications/*', noStore, humanGetOnly);
 admin.use('/access-log', noStore, humanGetOnly);
 // 시스템 점검(T-13): 로그인 리다이렉트·403 에도 no-store.
 admin.use('/system', noStore);
+// 회원 2단계 인증 초기화(T-16): 로그인 리다이렉트·403 에도 no-store.
+admin.use('/users/*', noStore);
 
 // /admin 아래 모든 경로는 관리자만.
 admin.use('*', requireRole('admin'));
@@ -155,3 +158,5 @@ admin.route('/', adminOptions);
 
 // 지원서 사유 입력 열람·열람 기록 (/admin/applications/:id, /admin/access-log). 지원자 목록·사람 검색은 없다
 admin.route('/', adminApplicants);
+// 회원 2단계 인증 초기화 (T-16, routes/admin-users.tsx).
+admin.route('/', adminUsers);

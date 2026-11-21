@@ -63,9 +63,10 @@ export async function eraseUser(db: D1Database, u: { id: string; email: string; 
     // 6) 로그인 수단
     db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(u.id),
     db.prepare('DELETE FROM admin_totp_pending WHERE user_id = ?').bind(u.id),
+    db.prepare(`DELETE FROM totp_recovery_codes WHERE user_id = ? AND ${alive}`).bind(u.id, u.id), // 2단계 인증 복구 코드 (T-16)
     db.prepare(`DELETE FROM auth_codes WHERE email = ? AND ${alive}`).bind(u.email, u.id),
     // 7) 계정: 이메일을 무작위 표시로 바꾸고 탈퇴 상태로 (맨 마지막 — 앞 문장들의 "아직 탈퇴 전" 조건이 이 문장 전까지 참이어야 한다)
-    db.prepare("UPDATE users SET email = ?, status = 'deleted', totp_secret = NULL, last_login_at = NULL WHERE id = ? AND status != 'deleted'").bind(u.marker, u.id),
+    db.prepare("UPDATE users SET email = ?, status = 'deleted', totp_secret = NULL, totp_last_step = NULL, totp_enabled_at = NULL, last_login_at = NULL WHERE id = ? AND status != 'deleted'").bind(u.marker, u.id),
   ]);
   return res[res.length - 1]?.meta.changes === 1;
 }

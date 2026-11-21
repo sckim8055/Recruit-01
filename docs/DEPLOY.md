@@ -212,7 +212,9 @@ npm run deploy:test
 npx wrangler d1 execute DB --remote --command "UPDATE users SET role='admin' WHERE email='내이메일@example.com'"
 ```
 
-3. 사이트에서 로그아웃 → 다시 로그인 → 2단계 인증 등록 화면 → 휴대폰 인증 앱(Google Authenticator 등)에서 "설정 키 입력" 으로 화면의 키 입력 → 6자리 입력 → `/admin` 이 보이면 성공. (자세히: README "관리자 계정 만들기")
+3. 사이트에서 로그아웃 → 다시 로그인 → 2단계 인증 등록 화면 → 휴대폰의 TOTP 인증 앱(Microsoft Authenticator, Google Authenticator, 1Password, 腾讯身份验证器 등 아무 앱)으로 QR 코드를 찍거나 "설정 키 입력" 으로 화면의 키 입력 → 6자리 입력
+   → **복구 코드 8개가 한 번 표시된다. 종이·비밀번호 관리 프로그램에 저장**한 뒤 "저장했습니다 → 계속" → `/admin` 이 보이면 성공.
+   인증 앱과 복구 코드를 모두 잃어버리면 README "관리자 계정 만들기" 의 DB 명령으로만 초기화할 수 있다. (자세히: README "관리자 계정 만들기")
 
 ### 2-10. /admin/system 에서 빨간 항목 고치기
 

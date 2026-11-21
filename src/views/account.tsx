@@ -5,6 +5,7 @@ import type { ConsentRow, RequiredConsent, RequiredConsentItem } from '../lib/co
 import { t } from '../lib/i18n';
 import type { RetentionValues } from '../lib/retention';
 import { tRetention } from '../legal/render';
+import { TwofaBox } from './twofa';
 
 const DocLinks = ({ locale }: { locale: Locale }) => (
   <p><a href="/terms">{t(locale, 'footer.terms')}</a> · <a href="/privacy">{t(locale, 'footer.privacy')}</a></p>
@@ -86,9 +87,10 @@ const BlockText = ({ locale, block }: { locale: Locale; block: DeletionBlock }) 
     : <p class="warn">{t(locale, 'acct.block.owner_with_members')} <a href="/biz/members">{t(locale, 'mem.title')}</a></p>
 );
 
-/** 계정 화면: 로그인 이메일, 유형, 동의 내역, 문서, 회원 탈퇴 입구(막히면 이유). */
+/** 계정 화면: 로그인 이메일, 유형, 2단계 인증(T-16), 동의 내역, 문서, 회원 탈퇴 입구(막히면 이유). */
 export const AccountPage = (p: {
   locale: Locale; email: string; role: Role; consents: ConsentRow[]; required: RequiredConsentItem[]; blocks: DeletionBlock[];
+  twofa: { enabled: boolean; since: number | null; remaining: number };
 }) => {
   const l = p.locale;
   const needsConsent = p.role !== 'admin' && p.required.some((r) => !p.consents.some((x) => x.type === r.type && x.version === r.version && x.withdrawn_at === null));
@@ -101,6 +103,7 @@ export const AccountPage = (p: {
           <dt>{t(l, 'acct.type')}</dt><dd>{t(l, `acct.role.${p.role}`)}</dd>
         </dl>
       </div>
+      <TwofaBox locale={l} role={p.role} {...p.twofa} />
       <div class="box">
         <h2>{t(l, 'acct.consents')}</h2>
         <ConsentStatus locale={l} rows={p.consents} required={p.required} />

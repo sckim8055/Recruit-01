@@ -130,14 +130,25 @@ npx wrangler d1 execute DB --local --command "UPDATE users SET role='admin' WHER
 ```
 
 (테스트 서버는 `--local` 대신 `--remote`, 운영 서버는 `--remote --env production`.) 로그아웃한 뒤 다시 로그인하면 2단계 인증 등록 화면이 나온다.
-휴대폰의 인증 앱(Google Authenticator, Microsoft Authenticator 등)에서 "설정 키 입력"을 골라 화면의 키를 입력하고,
-앱에 나오는 6자리 번호를 입력하면 `/admin` 으로 들어간다. 다음 로그인부터는 이메일 인증코드 + 앱의 6자리 번호가 필요하다.
+휴대폰의 TOTP 인증 앱(Microsoft Authenticator, Google Authenticator, 1Password, 腾讯身份验证器 등 아무 앱)에서 QR 코드를 찍거나 "설정 키 입력"을 골라 화면의 키를 입력하고,
+앱에 나오는 6자리 번호를 입력하면 **복구 코드 8개**가 한 번 표시된다. 종이에 적거나 비밀번호 관리 프로그램에 저장한 뒤 "저장했습니다 → 계속" 을 누르면 `/admin` 으로 들어간다.
+다음 로그인부터는 이메일 인증코드 + 앱의 6자리 번호(또는 복구 코드 하나)가 필요하다.
 
-인증 앱을 잃어버렸을 때 초기화:
+휴대폰을 바꿀 때: **계정 → 2단계 인증 관리 → 인증 앱 다시 등록**(지금 앱의 번호 또는 복구 코드로 확인 → 새 QR → 새 번호). 복구 코드를 다 썼으면 같은 화면에서 "복구 코드 새로 만들기".
+
+인증 앱과 복구 코드를 **모두** 잃어버린 관리자는 화면으로 되돌릴 수 없다. 다른 관리자 또는 운영 담당자가 DB 에서 초기화한다:
 
 ```
-npx wrangler d1 execute DB --local --command "UPDATE users SET totp_secret=NULL, totp_last_step=NULL WHERE email='내이메일@example.com'"
+npx wrangler d1 execute DB --local --command "UPDATE users SET totp_secret=NULL, totp_last_step=NULL, totp_enabled_at=NULL WHERE email='내이메일@example.com'; DELETE FROM totp_recovery_codes WHERE user_id=(SELECT id FROM users WHERE email='내이메일@example.com'); DELETE FROM sessions WHERE user_id=(SELECT id FROM users WHERE email='내이메일@example.com')"
 ```
+
+그다음 로그인하면 처음처럼 등록 화면과 새 복구 코드가 나온다.
+
+## 회원의 2단계 인증 (선택)
+
+구직자·기업 담당자는 **계정 → 2단계 인증**에서 스스로 켜고 끌 수 있다(끄려면 앱의 번호나 복구 코드가 필요하다). 인증 앱과 복구 코드를 모두 잃어버린 회원이 연락하면,
+본인임을 확인한 뒤 관리자 화면 **회원 2단계 인증 초기화**(`/admin/users/2fa-reset`)에서 이메일과 사유(10자 이상)를 입력해 초기화한다.
+그 회원은 모든 기기에서 로그아웃되고 알림 메일을 받으며, 누가·언제·왜 했는지 기록이 남는다. 관리자 계정은 이 화면으로 초기화할 수 없다(위 DB 명령).
 
 ## 이용약관·개인정보처리방침 (운영 전에 반드시 채울 것)
 
@@ -161,7 +172,7 @@ npx wrangler d1 execute DB --local --command "UPDATE users SET totp_secret=NULL,
 - 관리자 계정은 화면에서 탈퇴할 수 없다. 꼭 지워야 하면 먼저 역할을 구직자로 바꾼 뒤(아래 명령), 그 계정으로 로그인해 계정 화면에서 탈퇴한다.
 
 ```
-npx wrangler d1 execute DB --remote --command "UPDATE users SET role='seeker', totp_secret=NULL WHERE email='지울관리자@example.com'"
+npx wrangler d1 execute DB --remote --command "UPDATE users SET role='seeker', totp_secret=NULL, totp_last_step=NULL, totp_enabled_at=NULL WHERE email='지울관리자@example.com'; DELETE FROM totp_recovery_codes WHERE user_id=(SELECT id FROM users WHERE email='지울관리자@example.com')"
 ```
 
 ## 자동 정리 작업 (매시 정각)

@@ -31,6 +31,8 @@ src/
     rules.ts         ★ 법적 규칙 (게재 가능 여부, 금지 표현, 기술유출 필터, 지원 상태 계산) — 순수 함수
     authz.ts         ★ 열람·수정 권한 — 순수 함수
     auth.ts          이메일 인증코드 로그인, 세션, 역할 검사, CSRF
+    twofa.ts         2단계 인증: 로그인 2단계(관리자 필수·회원 선택), 계정 화면의 켜기·재등록·복구 코드·끄기, 관리자 초기화 (3-1절, T-16)
+    recovery.ts      복구 코드 만들기·표시·정규화·해시 — 순수 함수 (3-1절)
     crypto.ts        AES-GCM 암호화, 해시, 인증코드·토큰 생성
     email.ts         Resend 발송 + email_log (키가 없으면 dev 에서만 콘솔 출력 — 6절)
     config-check.ts  설정 점검 — 순수 함수, 화면은 /admin/system 뿐 (6절, T-13)
@@ -52,7 +54,7 @@ src/
     retention.ts     보관 기간: 기본값·범위(RETENTION_SPEC)·설정 해석·관리자 폼 검사·저장 계획(rev)·변경 기록 — 순수 함수 (14절, T-12c)
     retention-setting.ts  보관 기간 설정 한 행 읽기(loadRetention)
     localize/        현지화 엔진 층 (7절)
-  db/                SQL 과 D1 호출은 여기에만 (T-05d). users · sessions(인증코드·세션·TOTP 대기) · companies(기업·담당자·초대·서류 행)
+  db/                SQL 과 D1 호출은 여기에만 (T-05d). users · sessions(인증코드·세션·TOTP 대기) · twofa(등록 대기·복구 코드·시도 수·끄기·관리자 초기화, T-16) · companies(기업·담당자·초대·서류 행)
                      · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수) · settings(site_settings) · options(job_options) · resumes(이력서)
                      · applications(지원·동의·취소) · application-views(지원 현황 화면용 읽기) · applicants(기업·관리자 쪽: 내용 없는 지원자 목록·개수·지원 한 건·viewed·열람 기록 읽기)
                      · consents(이용약관·개인정보 동의 읽기·쓰기) · account(탈퇴 트랜잭션) · usage(하루 사용량 한도, 15절) · alerts(조건 알림·해지 토큰, 17절). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
@@ -75,14 +77,43 @@ docs/                이 문서, API.md, TASKS.md
 
 | 역할 | 가입 | 검증 | 비고 |
 |---|---|---|---|
-| seeker (구직자) | 이메일 인증코드 | 없음 | |
-| company (기업 담당자) | 이메일 인증코드 | 사업자 서류 + 국세청 상태조회 + 관리자 승인 | 검증 전에는 초안만 작성 |
+| seeker (구직자) | 이메일 인증코드 | 없음 | 2단계 인증(TOTP) 선택 (T-16) |
+| company (기업 담당자) | 이메일 인증코드 | 사업자 서류 + 국세청 상태조회 + 관리자 승인 | 검증 전에는 초안만 작성. 2단계 인증 선택 (T-16) |
 | headhunter | `FLAG_HEADHUNTER_POSTING` 이 켜진 뒤에만 가입 | 유료직업소개사업 등록증 + 관리자 승인 | 현재 꺼짐 |
-| admin (운영자) | DB 에서 직접 지정 | TOTP 2단계 (T-03) | 세션 12시간 |
+| admin (운영자) | DB 에서 직접 지정 | TOTP 2단계 필수 (T-03), 복구 코드·재등록 (T-16) | 세션 12시간 |
 
 - 한 기업에 담당자를 여럿 둘 수 있다 (`company_members`). 중국 본사 소속은 `is_hq = 1`.
 - 본사 소속 담당자는 **국외 이전 동의가 있는 지원서만** 볼 수 있다 (`authz.canViewApplication`).
 - 관리자는 공고 내용을 고칠 수 없고 차단만 한다. 지원서는 사유를 입력해야 열리고 `access_log` 에 사유와 함께 남는다 (12절). 이력서 원본의 관리자 열람 화면은 아직 없다.
+
+### 3-1. 2단계 인증 (T-03 관리자, T-16 회원·재등록·복구 코드)
+
+코드: `lib/twofa.ts`(흐름), `lib/recovery.ts`(복구 코드, 순수), `lib/totp.ts`(RFC 6238, 바꾸지 않음), `db/twofa.ts`·`db/sessions.ts`·`db/users.ts`(SQL), 마이그레이션 0003·0013.
+
+- **켜짐 = `users.totp_secret` 이 있다** (🔒 `encryptText`). 관리자는 필수, 구직자·기업 담당자는 선택. 켠 시각 `totp_enabled_at`, 마지막으로 쓴 30초 단계 `totp_last_step`.
+- **세션 인정(`lib/auth.loadUser` 한 곳, `sessionUsable(role, mfa, totp_on)`):** `mfa = 1` 이면 인정. 아니면 관리자가 아니고 2단계 인증이 꺼진 계정만. 켠 계정의 `mfa = 0` 세션(켜기 전에 만든 세션 등)은 로그인하지 않은 것으로 본다.
+- **로그인 상태 기계:**
+  1. `POST /login/request` — 인증코드 메일. 응답은 2단계 인증 여부와 관계없이 같다.
+  2. `POST /login/verify` — 코드가 맞으면: 관리자이거나 `totp_secret` 이 있으면 **세션 없이** `admin_totp_pending`(토큰 해시, 10분, 5회, 고른 유형 `chosen_role`) + 쿠키 `atp`(path `/login`) → 302 `/login/totp`. 아니면 세션(`mfa = 0`) → 지금처럼 `/my` 또는 유형 안내.
+  3. `GET /login/totp` — 대기가 없거나 만료·5회·정지·(회원인데 그사이 꺼짐)이면 대기를 지우고 `/login`. 관리자이고 비밀키가 없으면 **최초 등록**(새 키를 대기 행 `secret_new` 🔒 에 두고 QR·키 표시, 인증 앱 번호만). 그 밖은 번호 또는 복구 코드 한 칸.
+  4. `POST /login/totp` — 최초 등록: 번호가 맞으면 한 트랜잭션으로 비밀키 확정(`totp_secret IS NULL` 일 때만)·복구 코드 8개·대기 삭제 → `mfa = 1` 세션 → 복구 코드 화면("저장했습니다 → 계속" → `/admin`).
+     등록됨: 번호(쓴 단계보다 뒤, `UPDATE … WHERE totp_last_step < 단계` 한 문장) 또는 복구 코드(`UPDATE … WHERE used_at IS NULL` 한 문장) → 대기를 한 문장으로 지운 요청만 → `mfa = 1` 세션.
+     복구 코드였으면 알림 메일 + "남은 N개, 인증 앱 다시 등록" 화면. 아니면 관리자 `/admin`, 회원은 고른 유형이 다르면 유형 안내, 같으면 `/my`. 틀리면 대기의 시도 수 +1(번호·복구 코드가 같은 5회를 나눠 쓴다).
+- **계정 화면 `/my/account/2fa`(모든 응답 `private, no-store`, 로그인 필요, 동의 확인 예외 `/my/account*`):**
+  - 켜기(꺼진 계정): `POST …/start` → `totp_enrolments`(회원 + **지금 세션** id, 새 키 🔒, 10분, 5회) → `GET` 에 QR·키 → `POST …/confirm` 번호 → 한 트랜잭션: 비밀키 저장(대기를 만들 때의 비밀키 그대로일 때만)·쓴 단계·켠 시각·복구 코드 교체·**지금 세션 `mfa = 1`**·**다른 세션 모두 삭제**·대기 삭제 → 복구 코드 화면 + 알림 메일.
+    새 키는 폼·주소로 받지 않는다(서버 대기에서만 읽는다). 대기는 세션에 `ON DELETE CASCADE` 로 묶여 로그아웃·만료 정리·탈퇴 때 함께 지워진다.
+  - 재등록(켜진 계정, 관리자 포함): `POST …/reenrol` 지금 번호 또는 복구 코드 → 새 대기 → 새 키의 번호로 `…/confirm` → 같은 트랜잭션(비밀키 교체, 예전 복구 코드 무효, 다른 세션 삭제) + 알림. **확정 전까지 예전 키가 그대로 유효**하다.
+  - 복구 코드 새로 만들기: `POST …/codes` 지금 **인증 앱 번호**(복구 코드는 안 됨) → 예전 코드 모두 삭제 + 8개 → 화면 + 알림.
+  - 끄기(회원만): `GET/POST …/off` 번호 또는 복구 코드 → 비밀키·단계·켠 시각 NULL, 복구 코드·대기 삭제 + 알림. 관리자는 403(화면에도 없음, SQL 도 `role != 'admin'`).
+  - 로그인한 상태의 확인(재등록 1단계·복구 코드 새로 만들기·끄기)은 **회원별 15분에 5번**: `users.totp_fail_count`·`totp_fail_since` 를 한 문장으로 "잡고"(넘으면 잠김 — 번호를 보지 않는다), 성공하면 0 으로 되돌린다.
+- **복구 코드:** 8개, 10자, `ABCDEFGHJKMNPQRSTUVWXYZ23456789`(0·O·1·I·L 없음)에서 `crypto.getRandomValues`(248 이상 버림), 표시 `XXXXX-XXXXX`, 입력은 대소문자·공백·하이픈 무시.
+  저장은 `totp_recovery_codes.code_hash = sha256(SESSION_PEPPER|rc|회원 id|코드)` 뿐(세션·인증코드 해시와 같은 방식). 원문은 만든 응답에 한 번만 나간다. 남은 개수는 계정 화면에.
+- **잃어버렸을 때:** 복구 코드 → 없으면 회원은 운영자에게 연락 → 관리자 `/admin/users/2fa-reset`(관리자 TOTP 세션, `no-store`, 같은 출처 POST): 이메일 + 사유 10자 이상 → 확인 화면 → 한 트랜잭션: `admin_actions` 기록(관리자·대상·사유·시각, 대상이 관리자가 아니고 2단계 인증이 켜져 있을 때만) → 비밀키 등 NULL·복구 코드·대기·**모든 세션** 삭제 → 회원에게 알림 메일.
+  관리자 계정은 이 화면으로 초기화할 수 없다 — README 의 DB 명령. `access_log` 는 `target_type` CHECK 가 지원서·이력서·서류뿐이라 쓰지 않았다.
+- **알림 메일**(`totp_enabled`·`totp_disabled`·`totp_reenrolled`·`totp_codes_new`·`totp_recovery_used`·`totp_reset_by_admin`, 회원의 언어): 무슨 일이 있었는지만 — 키·번호·복구 코드·사유는 넣지 않는다.
+- **동의·점검 모드:** `/login/totp` 는 `/login*`, `/my/account/2fa*` 는 `/my/account*` 예외에 이미 들어간다(lib/consent·pause 는 고치지 않음). 점검 중 회원의 `/my/account*` 는 지금처럼 503, 관리자·`/admin/*` 는 통과.
+- **정리(14절 dropOldRows):** 만료된 `totp_enrolments`, 쓴 복구 코드와 2단계 인증이 꺼진 계정의 복구 코드, 열람 기록 보관 기간이 지난 `admin_actions`.
+- **탈퇴:** `eraseUser` 가 `totp_secret`·대기·세션(→ 등록 대기 CASCADE)을 지운다. 복구 코드와 2단계 관련 값도 `eraseUser` 가 함께 지운다.
 
 ## 4. 데이터
 
@@ -341,7 +372,8 @@ docs/                이 문서, API.md, TASKS.md
   끝났으면(이미 탈퇴한 계정 포함) 로그아웃과 같은 `logout()` 으로 세션 쿠키를 지우고 303 `/?bye=1`. 홈은 `bye=1` 일 때만 한 줄 안내를 그리고, 이 요청은 page-cache 를 거치지 않는다
   (`routes/jobs.homeCache`, `private, no-store`) — 캐시되는 홈에는 안내가 들어가지 않는다. `/consent`·`/my/account*` 의 모든 응답은 `private, no-store`.
 - **탈퇴 때 지워지는 것 (`db/account.eraseUser`, 한 트랜잭션):** 이력서 행, 지원서 내용(암호문 → `''`)·파일 키·`summary_zh`(진행 중이던 지원은 `withdrawn` 이벤트 + 상태 `withdrawn`, 끝난 지원은 상태 유지, `purge_after` = 탈퇴 시각),
-  프로필, 알림 조건, 세션, 인증코드, 관리자 2단계 대기·비밀값, 기업·헤드헌터 소속, 받은(수락 전) 초대. 혼자 맡던 기업의 게재 중 공고는 `closed`.
+  프로필, 알림 조건, 세션(→ 2단계 등록 대기 CASCADE), 인증코드, 2단계 대기·비밀값, 기업·헤드헌터 소속, 받은(수락 전) 초대. 혼자 맡던 기업의 게재 중 공고는 `closed`.
+  2단계 복구 코드(해시)는 여기서 지우지 않고 다음 dropOldRows 가 지운다(3-1절).
   `users` 행은 지우지 않고 **이메일을 `deleted-<무작위>@deleted.invalid` 로 바꾸고** `status = 'deleted'` (같은 이메일로 다시 가입하면 새 계정, 동의도 새로 받는다).
   R2 파일(이력서·지원서 첨부)은 지우기 전에 키를 모아 두었다가 트랜잭션 뒤에 지운다(실패하면 고아 객체 → T-12, 콘솔에는 개수만).
 - **남는 것:** 지원했다는 사실(행·상태·이벤트, 내용 없음), 동의 기록(`withdrawn_at` 을 채움), 열람 기록(`access_log`), 그 회원이 만든 공고와 기업 정보(기업의 자료), 기업이 낸 검증 서류.
@@ -378,7 +410,9 @@ docs/                이 문서, API.md, TASKS.md
 |---|---|---|---|
 | 동의 기록(철회된 것)·지원했다는 사실(내용 없는 행·이벤트) | `ERASED_ROW_KEEP` = 730일 | "2년간 보관할 수 있습니다 【확인 필요: 기간】" (글자 그대로) | dropOldRows |
 | 메일 발송 기록 `email_log`(주소 해시) | `EMAIL_LOG_KEEP` = 365일 | "1년" | dropOldRows |
-| 만료된 세션·인증코드·2단계 대기 | 만료 시각 | — | dropOldRows |
+| 만료된 세션·인증코드·2단계 대기·2단계 등록 대기(T-16) | 만료 시각 | — | dropOldRows |
+| 쓴 복구 코드, 2단계 인증이 꺼진 계정의 복구 코드(T-16) | 다음 차례 | — | dropOldRows |
+| 관리자 2단계 초기화 기록 `admin_actions`(T-16) | 열람 기록과 같은 설정 `access_log_keep_days` | (방침에 넣을 문장: TASKS T-16) | dropOldRows |
 | 하루 사용량 `usage_counters`(15절) | `lib/quota.USAGE_KEEP_DAYS` = 35일 | (개인정보 아님) | dropOldRows |
 | 마감 안내 | `JOB_CLOSE_NOTICE_BEFORE` = 3일 전 | — | closeJobs |
 | R2 고아 객체 | `ORPHAN_MIN_AGE` = 24시간 | — | sweepOrphans |
@@ -437,7 +471,7 @@ cron 은 **매시 정각 한 번**(`wrangler.jsonc` `"0 * * * *"`, `scheduledTim
 
 **플랫폼 한도 (2026-11 Cloudflare 문서 확인):** Workers Free 는 cron 실행당 CPU 10ms, 실행당 하위 요청 50개(D1·R2 호출과 fetch 포함), cron 계정당 5개, cron 벽시계 15분.
 D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다), 문장당 바인딩 100개. 이 작업은 보수적으로 batch 안 문장도 하나씩 세어 **실행당 D1 문장 25개 이하, R2 호출 15개 이하**로 맞췄다
-(계산상 단계별 최대: closeJobs 18(메일 10통 포함) · purgeApplications 16 · markApplications 15 · 나머지 11 이하, 집계 기록 2 + 보관 기간 설정 읽기 1 포함 (T-12c). 테스트가 상한보다 많은 후보로 단계마다 25·15 이하인지 센다). CPU 10ms 는 테스트로 확인할 수 없다 — 배포 뒤 대시보드에서 확인한다.
+(계산상 단계별 최대: closeJobs 18(메일 10통 포함) · purgeApplications 16 · markApplications 15 · dropOldRows 15(T-16 에서 3문장 더함) · 나머지 11 이하, 집계 기록 2 + 보관 기간 설정 읽기 1 포함 (T-12c). 테스트가 상한보다 많은 후보로 단계마다 25·15 이하인지 센다). CPU 10ms 는 테스트로 확인할 수 없다 — 배포 뒤 대시보드에서 확인한다.
 
 ### 14-3. 단계마다 하는 일 (src/db/maintenance.ts 의 문장 주석에 무엇을 지우는지 적혀 있다)
 
@@ -450,8 +484,9 @@ D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다)
 3. **purgeApplications** — `purge_after < 지금` 이고 내용·파일이 남은 지원 10건: **D1 먼저**(한 batch: 진행 중이면 `auto_closed` + 상태, `resume_snapshot = ''`·`file_r2_key = NULL`·`summary_zh = NULL`, 그 지원의 국외 이전 동의 `withdrawn_at`)
    → 아직 어떤 행이 그 키를 가리키는지 다시 확인 → 아무도 가리키지 않는 `rfiles/` 객체만 R2 에서 삭제. R2 삭제 실패는 세어 두고(행은 이미 지워짐) 고아 정리가 치운다. 공고 상태는 보지 않는다(기한이 지났으면 지운다).
 4. **dropOldRows** — 표마다 200행, 자식 먼저, 한 batch: 내용이 지워진(`resume_snapshot = ''`·파일 키 없음) 지원 중 `purge_after < 지금 - 2년` 의 이벤트 → 이벤트가 남지 않은 그 지원 행,
-   철회된 지 2년 지난 동의, 열람 기록 보관 기간(기본 2년)이 지난 열람 기록, 1년 지난 메일 기록, 만료된 세션·인증코드·관리자 2단계 대기, 35일(한국 시간 날짜)보다 오래된 하루 사용량(T-05c).
-   `company_invites` 와 `users` 는 건드리지 않는다. (batch 9문장 + 집계 2 = 11문장, 상한 25 안.)
+   철회된 지 2년 지난 동의, 열람 기록 보관 기간(기본 2년)이 지난 열람 기록, 1년 지난 메일 기록, 만료된 2단계 등록 대기·세션·인증코드·로그인 2단계 대기, 35일(한국 시간 날짜)보다 오래된 하루 사용량(T-05c),
+   쓴 복구 코드·2단계 인증이 꺼진 계정의 복구 코드, 열람 기록 보관 기간이 지난 관리자 초기화 기록(T-16).
+   `company_invites` 와 `users` 는 건드리지 않는다. (batch 12문장 + 집계 2 = 14문장, 상한 25 안.)
    지원 행이 지워지면 그 공고에 같은 구직자가 다시 지원할 수 있게 된다(취소 후 2년 — UNIQUE 가 풀림).
 5. **purgeVerificationDocs** — 확인(`approved`·`rejected`)이 서류 보관 기간(기본 1년) 전에 끝난 서류 5건(`vdocs/` 키만): **행을 먼저**(행마다 한 문장) 지우고, 지워진 행의 `vdocs/` 객체만 R2 에서 지운다. 확인 대기(`pending`) 서류는 건드리지 않는다.
    서류가 모두 지워진 검증 완료 기업은 **검증 완료 그대로**다(검증 상태는 서류 행으로 다시 계산하지 않는다. `verifyBlocks` 의 "서류 없음" 은 검증 대기 기업의 승인 버튼에만 쓰인다 — 관리자 화면·공개 화면이 그대로 그려지는지 테스트).

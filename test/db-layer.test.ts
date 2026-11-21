@@ -53,9 +53,9 @@ describe('DB 접근 계층 (src/db/)', () => {
     expect(db.some((f) => /\.prepare\s*\(/.test(f.text))).toBe(true);
   });
 
-  it('보호 파일(rules·authz·crypto·totp)에는 DB 코드가 없다', async () => {
+  it('보호 파일(rules·authz·crypto·totp)과 복구 코드(recovery, T-16)에는 DB 코드가 없다', async () => {
     const files = await sourceFiles();
-    for (const p of ['src/lib/rules.ts', 'src/lib/authz.ts', 'src/lib/crypto.ts', 'src/lib/totp.ts']) {
+    for (const p of ['src/lib/rules.ts', 'src/lib/authz.ts', 'src/lib/crypto.ts', 'src/lib/totp.ts', 'src/lib/recovery.ts']) {
       const f = files.find((x) => x.path === p);
       expect(f, p).toBeDefined();
       expect(/\benv\.DB\b|\.prepare\s*\(|\.batch\s*\(|\.\.\/db\//.test(f!.text), p).toBe(false);

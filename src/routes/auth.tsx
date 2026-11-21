@@ -2,12 +2,17 @@
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppEnv, Role } from '../env';
-import { completeTotp, PENDING_COOKIE, totpStep } from '../lib/admin2fa';
+import { completeTotp, PENDING_COOKIE, totpStep } from '../lib/twofa';
 import { logout, requestCode, requireRole, setSessionCookie, TOTP_PENDING_TTL, verifyCode } from '../lib/auth';
 import { render } from '../render';
 import { LoginCode, LoginRoleNotice, LoginEmail, LoginTotp, MySeeker } from '../views/pages';
+import { RecoveryCodesShown, RecoveryUsedNotice } from '../views/twofa';
+import { noStore } from './guards';
 
 export const auth = new Hono<AppEnv>();
+
+// 2단계 인증 화면에는 등록 키·복구 코드가 나올 수 있다 → 저장하지 않게 (T-16).
+auth.use('/login/totp', noStore);
 
 // 가입 화면에서 고를 수 있는 유형. headhunter 는 FLAG_HEADHUNTER_POSTING 이 켜진 뒤에만 받는다.
 function signupRole(raw: unknown, headhunterOn: boolean): Exclude<Role, 'admin'> {
@@ -35,7 +40,7 @@ auth.post('/login/verify', async (c) => {
   const r = await verifyCode(c.env, email, String(f.code ?? '').trim(), role, c.var.locale);
   if (!r.ok) return render(c, <LoginCode locale={c.var.locale} email={email} role={role} error={r.why} />, 'login.title');
   if (r.kind === 'totp') {
-    // 관리자: 세션 대신 2단계 대기 쿠키만 준다 (10분, /login 경로에서만 전송).
+    // 관리자·2단계 인증을 켠 회원: 세션 대신 2단계 대기 쿠키만 준다 (10분, /login 경로에서만 전송).
     setCookie(c, PENDING_COOKIE, r.pendingToken, {
       httpOnly: true, secure: c.env.APP_ENV !== 'dev', sameSite: 'Lax', path: '/login', maxAge: TOTP_PENDING_TTL,
     });
@@ -51,11 +56,16 @@ auth.post('/login/verify', async (c) => {
   return c.redirect('/my');
 });
 
-// 관리자 2단계 인증. 처음이면 인증 앱 등록 화면이 함께 나온다.
+// 로그인 2단계 (관리자 필수, 회원은 켰을 때). 관리자가 처음이면 인증 앱 등록 화면이 함께 나온다. 등록된 계정은 번호 또는 복구 코드.
+const totpPage = (c: Parameters<typeof render>[0], step: Exclude<Awaited<ReturnType<typeof totpStep>>, { state: 'none' }>, error?: string) =>
+  render(c, (
+    <LoginTotp locale={c.var.locale} setup={step.state === 'setup' ? step : undefined} admin={step.state === 'setup' || step.admin} error={error} />
+  ), step.state === 'setup' || step.admin ? 'totp.title' : 'totp.title.member');
+
 auth.get('/login/totp', async (c) => {
   const step = await totpStep(c.env, getCookie(c, PENDING_COOKIE));
   if (step.state === 'none') return c.redirect('/login');
-  return render(c, <LoginTotp locale={c.var.locale} setup={step.state === 'setup' ? step : undefined} />, 'totp.title');
+  return totpPage(c, step);
 });
 
 auth.post('/login/totp', async (c) => {
@@ -65,14 +75,23 @@ auth.post('/login/totp', async (c) => {
   if (r.ok) {
     deleteCookie(c, PENDING_COOKIE, { path: '/login' });
     setSessionCookie(c, r.token, r.maxAge);
-    return c.redirect('/admin');
+    c.set('user', r.user); // 이 응답의 머리글도 로그인 상태로 그린다
+    const home = r.user.role === 'admin' ? '/admin' : '/my';
+    // 관리자 최초 등록: 복구 코드를 이 응답에서 한 번만 보인다 ("저장했습니다 → 계속").
+    if (r.codes) return render(c, <RecoveryCodesShown locale={c.var.locale} codes={r.codes} next={home} />, 'rc.title');
+    // 복구 코드로 들어왔다: 남은 개수 + 인증 앱을 다시 등록하라는 안내.
+    if (r.recoveryLeft !== undefined) return render(c, <RecoveryUsedNotice locale={c.var.locale} left={r.recoveryLeft} next={home} />, 'rc.used.title');
+    if (r.user.role === 'admin') return c.redirect('/admin');
+    // 유형 안내는 2단계가 없는 로그인과 같다 (/login/verify).
+    if (r.chosenRole && r.chosenRole !== r.user.role) return render(c, <LoginRoleNotice locale={c.var.locale} actual={r.user.role} />, 'login.title');
+    return c.redirect('/my');
   }
   const step = await totpStep(c.env, token);
   if (r.why === 'none' || step.state === 'none') {
     deleteCookie(c, PENDING_COOKIE, { path: '/login' });
     return c.redirect('/login');
   }
-  return render(c, <LoginTotp locale={c.var.locale} setup={step.state === 'setup' ? step : undefined} error="totp_invalid" />, 'totp.title');
+  return totpPage(c, step, 'totp_invalid');
 });
 
 auth.post('/logout', async (c) => {
