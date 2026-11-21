@@ -45,10 +45,31 @@ export const LoginCode = ({ locale, email, role, error }: { locale: Locale; emai
   </section>
 );
 
-export const My = ({ locale, email, role }: { locale: Locale; email: string; role: string }) => (
+// 구직자 첫 화면. 지원 현황은 T-08 에서 채운다.
+export const MySeeker = ({ locale, email }: { locale: Locale; email: string }) => (
   <section class="card">
     <h1>{t(locale, 'nav.my')}</h1>
-    <p>{t(locale, 'my.hello')}</p>
-    <p class="muted">{email} · {role}</p>
+    <p>{t(locale, 'my.seeker.applications_soon')}</p>
+    <p class="muted">{email}</p>
   </section>
 );
+
+/** 아직 내용이 없는 화면 (제목 + 한 줄). textKey 는 locales 의 키. */
+export const Placeholder = ({ locale, titleKey, textKey }: { locale: Locale; titleKey: string; textKey: string }) => (
+  <section class="card">
+    <h1>{t(locale, titleKey)}</h1>
+    <p>{t(locale, textKey)}</p>
+  </section>
+);
+
+/** 403·404 화면. */
+export const ErrorPage = ({ locale, code }: { locale: Locale; code: 403 | 404 }) => {
+  const k = code === 403 ? 'forbidden' : 'notfound';
+  return (
+    <section class="card">
+      <h1>{t(locale, `${k}.title`)}</h1>
+      <p>{t(locale, `${k}.body`)}</p>
+      <p><a href="/">{t(locale, 'common.home')}</a></p>
+    </section>
+  );
+};

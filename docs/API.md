@@ -10,8 +10,10 @@
 | GET /login · POST /login/request · POST /login/verify | 이메일 인증코드 로그인·가입 | 누구나 | ✅ |
 | POST /logout | 로그아웃 | 로그인 | ✅ |
 | GET /lang/:l | 언어 전환 (ko/zh) | 누구나 | ✅ |
-| GET /my | 역할별 첫 화면 | 로그인 | ✅ (임시 화면) |
+| GET /my | 역할별 첫 화면 (구직자: 지원 현황 자리, 기업·헤드헌터 → /biz, 관리자 → /admin) | 로그인 | ✅ |
+| GET /biz | 기업·헤드헌터 첫 화면 | company, headhunter | ✅ (임시 화면) |
 | GET /api/health | 상태 확인 | 누구나 | ✅ |
+| (없는 경로) · 권한 없음 | 404 · 403 화면 (공통 레이아웃, 한국어·중국어) | 누구나 | ✅ |
 | GET /terms · /privacy | 약관·개인정보처리방침 | 누구나 | T-11 |
 
 ## 구직자
@@ -45,7 +47,7 @@
 ## 관리자
 | 경로 | 설명 | 작업 |
 |---|---|---|
-| GET /admin | 검증 대기·검토 대기·신고·사용량 | T-03 |
+| GET /admin | 검증 대기·검토 대기·신고·사용량 | T-03 (T-02 에서 임시 화면 ✅) |
 | POST /admin/companies/:id/verify | 기업 승인·반려 | T-04 |
 | POST /admin/jobs/:id/block · /clear-review | 공고 차단 · 기술유출 검토 통과 | T-05 |
 | GET /admin/applications/:id?reason= | 사유 입력 후 지원서 열람 (access_log) | T-09 |

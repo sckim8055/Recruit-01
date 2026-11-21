@@ -4,7 +4,7 @@ import { setCookie } from 'hono/cookie';
 import type { AppEnv, Role } from '../env';
 import { logout, requestCode, requireRole, setSessionCookie, verifyCode } from '../lib/auth';
 import { render } from '../render';
-import { LoginCode, LoginEmail, My } from '../views/pages';
+import { LoginCode, LoginEmail, MySeeker } from '../views/pages';
 
 export const auth = new Hono<AppEnv>();
 
@@ -42,9 +42,12 @@ auth.post('/logout', async (c) => {
   return c.redirect('/');
 });
 
+// 역할별 첫 화면: 구직자는 여기(지원 현황, T-08), 기업·헤드헌터는 /biz, 관리자는 /admin.
 auth.get('/my', requireRole('seeker', 'company', 'headhunter', 'admin'), (c) => {
   const u = c.var.user!;
-  return render(c, <My locale={c.var.locale} email={u.email} role={u.role} />, 'nav.my');
+  if (u.role === 'company' || u.role === 'headhunter') return c.redirect('/biz');
+  if (u.role === 'admin') return c.redirect('/admin');
+  return render(c, <MySeeker locale={c.var.locale} email={u.email} />, 'nav.my');
 });
 
 auth.get('/lang/:l', (c) => {

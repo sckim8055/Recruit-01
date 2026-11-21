@@ -6,6 +6,8 @@
 ## 완료
 - [x] T-00 저장소 뼈대, 스키마, 규칙(rules)·권한(authz)·암호화(crypto), 테스트 25개
 - [x] T-01 이메일 인증코드 로그인·세션·로그아웃·언어 전환 (로컬에서 동작 확인)
+- [x] T-02 공통 정리: 역할별 `/my` 분기(구직자 → 지원 현황, 기업 → /biz, 관리자 → /admin), 404·403 화면 문구, `loadActor()`
+      (users + company_members + agency_members 를 읽어 `authz.Actor` 를 만드는 함수) 추가
 
 ## 운영자 설정 (사람이 하는 일 — 안내 문서를 먼저 써서 건넨다)
 - [ ] O-1 GitHub 저장소에 이 폴더 올리기
@@ -17,8 +19,6 @@
 - [ ] O-7 (나중) 고용노동부 1350 문의 → 답에 따라 기능 플래그 결정
 
 ## 개발
-- [ ] T-02 공통 정리: 역할별 `/my` 분기(구직자 → 지원 현황, 기업 → /biz, 관리자 → /admin), 404·403 화면 문구, `loadActor()`
-      (users + company_members + agency_members 를 읽어 `authz.Actor` 를 만드는 함수) 추가
 - [ ] T-03 관리자: TOTP 2단계 인증(`users.totp_secret` 🔒, 인증코드 통과 후 TOTP 를 통과해야 세션 발급), `/admin` 첫 화면.
       admin 계정은 DB 에서 role 을 직접 바꿔 만든다 (README 에 방법 기재)
 - [ ] T-04 기업: 기업 등록, 기업 페이지 편집("기업 제공" 표시), 검증 서류 업로드(R2 비공개, 이미지·PDF, 10MB 제한),

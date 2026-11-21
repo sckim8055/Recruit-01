@@ -6,6 +6,7 @@ import { now, type AppEnv, type Env, type Role, type SessionUser } from '../env'
 import { randomCode, randomToken, safeEqual, sha256Hex } from './crypto';
 import { sendMail } from './email';
 import { t } from './i18n';
+import { renderError } from '../render';
 import type { Locale } from '../env';
 
 const CODE_TTL = 10 * 60;
@@ -114,7 +115,7 @@ export const loadUser: MiddlewareHandler<AppEnv> = async (c, next) => {
 export const requireRole = (...roles: Role[]): MiddlewareHandler<AppEnv> => async (c, next) => {
   const u = c.var.user;
   if (!u) return c.redirect('/login');
-  if (!roles.includes(u.role)) return c.text('Forbidden', 403);
+  if (!roles.includes(u.role)) return renderError(c, 403);
   await next();
 };
 
