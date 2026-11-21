@@ -92,7 +92,7 @@ docs/                이 문서, API.md, TASKS.md
   - **첨부파일 바이트도 Worker 에서 `ENC_KEY` 로 AES-GCM 암호화한 뒤 R2 에 넣는다** (`lib/resume-files.ts`, R2 키를 추가 인증 데이터로 써서 다른 위치로 옮긴 객체는 풀리지 않는다).
     R2 버킷을 직접 열어도 내용이 보이지 않는다. 크기 한도는 기술설계서의 10MB 대신 **5MB**(무료 플랜 CPU 한도 안에서 암호화·복호화하기 위해), 종류는 내용으로 판별한 **PDF·DOCX 만**(HWP·DOC·이미지는 PDF 로 저장해 올리도록 안내).
   - 이력서마다 자기 R2 객체를 가진다(복사하면 새 키로 다시 암호화). 새 파일은 R2 에 먼저 올리고 DB 를 쓰며, DB 쓰기가 실패하면 방금 올린 파일을 지운다.
-    교체·삭제된 예전 객체는 DB 가 더 이상 가리키지 않게 된 **뒤에** 지운다. R2 삭제가 실패하면 어느 행도 가리키지 않는 객체가 남을 수 있다 → T-12 정리 작업.
+    교체·삭제된 예전 객체는 DB 가 더 이상 가리키지 않게 된 **뒤에** 지운다. R2 삭제가 실패하면 어느 행도 가리키지 않는 객체가 남을 수 있다 → 14절 sweepOrphans 가 24시간 뒤 치운다.
   첨부파일 또는 experience_text 중 하나는 있어야 지원할 수 있다.
 - 이력서 원본은 본인만 보고 고친다(`authz.canViewResume`·`canEditResume`). 기업·헤드헌터는 원본을 볼 수 없고 지원서(복사본)만 본다. 관리자 열람(사유 필요)은 함수만 있고 화면은 아직 없다.
 - **번역 API 로 보내는 것은 headline·experience_text·desired_role·chinese_level·years 뿐이다.** 이름·연락처와 **첨부파일은 보내지 않는다**
@@ -100,7 +100,7 @@ docs/                이 문서, API.md, TASKS.md
 - **지원서(`applications.resume_snapshot`)** 는 지원 시점의 이력서 복사본이다. 지원 화면에서 이번 지원에만 쓸 내용으로 고쳐서 낼 수 있고, 이후 이력서를 고치거나 지워도 지원서는 바뀌지 않는다.
 - **상태(`applications.status`)** 는 `application_events` 에서 `rules.nextStatus()` 로 계산해 저장한다.
 - **`translations`** 는 공고 번역 캐시 전용이다. 개인정보를 넣지 않는다.
-- **보관:** 지원서는 공고 마감 후 180일(`purge_after`), 검증 서류 원본은 1년, 열람 기록은 2년. 숫자는 개인정보처리방침 확정 때 다시 본다.
+- **보관:** 지원서는 공고 마감(을 확인한 때) 후 180일(`purge_after`), 검증 서류 원본은 확인 후 1년, 열람 기록은 2년. 숫자는 `lib/retention.ts` 한 곳에 있고 개인정보처리방침 3항과 같아야 한다 — 지우는 작업은 14절(T-12).
 
 ## 5. 법적 규칙이 코드에 있는 위치
 
@@ -308,5 +308,87 @@ docs/                이 문서, API.md, TASKS.md
   `users` 행은 지우지 않고 **이메일을 `deleted-<무작위>@deleted.invalid` 로 바꾸고** `status = 'deleted'` (같은 이메일로 다시 가입하면 새 계정, 동의도 새로 받는다).
   R2 파일(이력서·지원서 첨부)은 지우기 전에 키를 모아 두었다가 트랜잭션 뒤에 지운다(실패하면 고아 객체 → T-12, 콘솔에는 개수만).
 - **남는 것:** 지원했다는 사실(행·상태·이벤트, 내용 없음), 동의 기록(`withdrawn_at` 을 채움), 열람 기록(`access_log`), 그 회원이 만든 공고와 기업 정보(기업의 자료), 기업이 낸 검증 서류.
-  보관 기간은 개인정보처리방침 3항(동의 기록·지원 사실 2년은 【확인 필요】). 기간이 지난 행을 지우는 작업은 T-12.
+  보관 기간은 개인정보처리방침 3항(동의 기록·지원 사실 2년은 【확인 필요】). 기간이 지난 행을 지우는 작업은 14절(T-12).
 
+
+## 14. 예약 작업: 자동 마감·보관 기한 삭제·정리 (T-12)
+
+코드: `src/lib/retention.ts`(기간 상수, 한 곳), `src/lib/maintenance.ts`(단계·시간표·상한·실행기), `src/db/maintenance.ts`(SQL), `src/index.tsx` 의 `scheduled`.
+**이 작업은 데이터를 지운다.** 모든 UPDATE·DELETE 는 호출부가 넘긴 시각으로 거는 시간 조건 + 행 수 한도 + "아직 처리 전" 조건을 가지며, 두 번 실행해도 더 바뀌지 않는다.
+
+### 14-1. 보관 기간 = 상수 = 개인정보처리방침 3항
+
+| 대상 | 상수 (`lib/retention.ts`) | 방침 3항 (`src/legal/privacy.ts`) | 하는 단계 |
+|---|---|---|---|
+| 지원서 내용(복사본·첨부·요약) | `APPLICATION_KEEP_AFTER_CLOSE` = 180일 | "공고 마감 후 180일까지 보관한 뒤 삭제" (취소하면 바로 — T-08) | markApplications → purgeApplications |
+| 진행 중 지원의 자동 종료 | `APPLICATION_AUTO_CLOSE_AFTER` = 30일 | (방침 항목 아님, 상태 "채용 종료") | markApplications |
+| 사업자 서류 | `VDOC_KEEP_AFTER_REVIEW` = 365일 | "확인 후 1년" | purgeVerificationDocs |
+| 열람 기록 `access_log` | `ACCESS_LOG_KEEP` = 730일 | "2년" | dropOldRows |
+| 동의 기록(철회된 것)·지원했다는 사실(내용 없는 행·이벤트) | `ERASED_ROW_KEEP` = 730일 | "탈퇴 후에도 2년간 보관할 수 있습니다 【확인 필요: 기간】" | dropOldRows |
+| 메일 발송 기록 `email_log`(주소 해시) | `EMAIL_LOG_KEEP` = 365일 | (방침에 따로 없음) | dropOldRows |
+| 만료된 세션·인증코드·2단계 대기 | 만료 시각 | — | dropOldRows |
+| 마감일 없는 공고 | `JOB_STALE_AFTER` = 30일, 안내 `JOB_CLOSE_NOTICE_BEFORE` = 3일 | — | closeJobs |
+| R2 고아 객체 | `ORPHAN_MIN_AGE` = 24시간 | — | sweepOrphans |
+
+`test/maintenance.test.ts` 가 상수로 만든 숫자("180일"·"1년"·"2년", 중국어 "180天"·"1年"·"2年")가 방침 3항 글(한·중)에 있는지 확인한다. 하나를 바꾸면 다른 쪽과 `PRIVACY_VERSION` 을 같이 바꾼다.
+
+**"공고 마감 후 180일" 의 기준 시각:** 마감 시각을 따로 저장하지 않는다 (수동 마감 `db/jobs.closeJob` 은 시각을 찍지 않고, 그 문장의 가드는 바꾸지 않았다).
+`markApplications` 가 공고가 `closed`·`blocked` 인 것을 **발견한 때** `purge_after = 그때 + 180일` 을 붙인다 → "마감 확인 후 180일" 이며 실제 마감보다 최대 한 주기(markApplications 사이 간격, 최대 8시간) 늦다.
+자동 종료도 같은 기준이다: `purge_after - 180일 + 30일 < 지금` 이면 진행 중 지원에 `auto_closed`.
+차단이 풀려 초안·게재 중으로 돌아간 공고(마감된 공고는 다시 열 수 없다 — 다시 여는 경로 없음)는, 기한이 아직 오지 않았고 내용이 남은 **진행 중** 지원의 `purge_after` 를 다시 NULL 로 한다(끝난 지원·기한이 지난 지원은 그대로).
+
+### 14-2. 시간표와 상한
+
+cron 은 **매시 정각 한 번**(`wrangler.jsonc` `"0 * * * *"`, `scheduledTime` 의 UTC 시각으로 단계를 고른다), 한 번에 **한 단계**만 한다 (`SCHEDULE`, 24칸).
+
+| UTC | KST | 단계 | | UTC | KST | 단계 |
+|---|---|---|---|---|---|---|
+| 00 | 09 | report | | 12 | 21 | closeJobs |
+| 01 | 10 | closeJobs | | 13 | 22 | markApplications |
+| 02 | 11 | markApplications | | 14 | 23 | purgeApplications |
+| 03 | 12 | purgeApplications | | 15 | 00 | purgeVerificationDocs |
+| 04 | 13 | dropOldRows | | 16 | 01 | sweepOrphans |
+| 05 | 14 | sweepOrphans | | 17 | 02 | closeJobs |
+| 06 | 15 | purgeVerificationDocs | | 18 | 03 | markApplications |
+| 07 | 16 | closeJobs | | 19 | 04 | purgeApplications |
+| 08 | 17 | markApplications | | 20 | 05 | dropOldRows |
+| 09 | 18 | purgeApplications | | 21 | 06 | sweepOrphans |
+| 10 | 19 | dropOldRows | | 22 | 07 | closeJobs |
+| 11 | 20 | sweepOrphans | | 23 | 08 | purgeApplications |
+
+하루: closeJobs 5 · markApplications 4 · purgeApplications 5 · dropOldRows 3 · sweepOrphans 4 · purgeVerificationDocs 2 · report 1.
+상한(`CAPS`, 한 번 실행): 공고 마감 10 · 안내 공고 10 · 안내 메일 10 · 지원 기한 붙이기/떼기/자동 종료 각 50 · 내용 삭제 10 · 표마다 행 삭제 200 · 서류 5 · R2 목록 100 · 고아 삭제 10 · 참조 확인 IN 50개.
+→ 하루 처리량 최대: 공고 마감 50, 안내 메일 50, 지원 내용 삭제 50, 표마다 600행, 서류 10, 고아 40. 남은 것은 다음 차례에 이어서 한다 (기한보다 늦어질 수 있다 — 규모가 커지면 상한을 올리거나 유료 플랜).
+
+**플랫폼 한도 (2026-11 Cloudflare 문서 확인):** Workers Free 는 cron 실행당 CPU 10ms, 실행당 하위 요청 50개(D1·R2 호출과 fetch 포함), cron 계정당 5개, cron 벽시계 15분.
+D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다), 문장당 바인딩 100개. 이 작업은 보수적으로 batch 안 문장도 하나씩 세어 **실행당 D1 문장 25개 이하, R2 호출 15개 이하**로 맞췄다
+(계산상 단계별 최대: closeJobs 17(메일 10통 포함) · purgeApplications 15 · markApplications 13 · 나머지 10 이하, 집계 기록 2 포함. 테스트가 상한보다 많은 후보로 단계마다 25·15 이하인지 센다). CPU 10ms 는 테스트로 확인할 수 없다 — 배포 뒤 대시보드에서 확인한다.
+
+### 14-3. 단계마다 하는 일 (src/db/maintenance.ts 의 문장 주석에 무엇을 지우는지 적혀 있다)
+
+1. **closeJobs** — (a) 게재 중 + `closes_at <= 지금` → `closed`(updated_at = 지금). (b) 게재 중 + 마감일 없음 + `updated_at < 지금 - 30일` + **안내를 3일 전 이전에 보냄**(`close_notice_at <= 지금 - 3일`) → `closed`.
+   (c) 안내: 게재 중 + `close_notice_at IS NULL` + (마감일이 (지금, 지금+3일] 안 또는 마감일 없음 + `updated_at < 지금 - 27일`) → 그 기업의 활성 담당자에게 `job_close_notice` 메일(한국어+중국어: 공고 제목·날짜·`/biz/jobs` 주소, 계속 게재하는 방법, 개인정보 없음)
+   → 보낸 뒤 `close_notice_at = 지금` (읽을 때의 `updated_at` 이 그대로인 공고만). 기업이 저장하면(`updateJobSource`·`saveLocalized`·`saveKorean`) `close_notice_at = NULL`.
+   담당자가 없는 공고는 메일 없이 안내 완료로 표시한다(그래야 (b) 가 진행된다). 초안·차단 공고는 건드리지 않고, **게재는 절대 하지 않는다.**
+2. **markApplications** — 차단이 풀린 공고의 진행 중 지원 기한 떼기 → 마감·차단 공고의 지원(취소 제외, 기한 없음)에 `purge_after = 지금 + 180일` → 마감 확인 후 30일이 지난 진행 중 지원(`submitted`·`viewed`·`reviewing`·`interview` = `rules.nextStatus(s, 'auto_closed')` 가 바꾸는 상태)에 `auto_closed`.
+   규칙 3: 상태별로 묶어 `nextStatus` 를 TypeScript 에서 계산하고, 한 batch 에서 이벤트(`auto_closed`, actor 없음)를 넣은 뒤 **그 지원에 방금 넣은 이벤트가 있을 때만** 상태를 바꾼다.
+3. **purgeApplications** — `purge_after < 지금` 이고 내용·파일이 남은 지원 10건: **D1 먼저**(한 batch: 진행 중이면 `auto_closed` + 상태, `resume_snapshot = ''`·`file_r2_key = NULL`·`summary_zh = NULL`, 그 지원의 국외 이전 동의 `withdrawn_at`)
+   → 아직 어떤 행이 그 키를 가리키는지 다시 확인 → 아무도 가리키지 않는 `rfiles/` 객체만 R2 에서 삭제. R2 삭제 실패는 세어 두고(행은 이미 지워짐) 고아 정리가 치운다. 공고 상태는 보지 않는다(기한이 지났으면 지운다).
+4. **dropOldRows** — 표마다 200행, 자식 먼저, 한 batch: 내용이 지워진(`resume_snapshot = ''`·파일 키 없음) 지원 중 `purge_after < 지금 - 2년` 의 이벤트 → 이벤트가 남지 않은 그 지원 행,
+   철회된 지 2년 지난 동의, 2년 지난 열람 기록, 1년 지난 메일 기록, 만료된 세션·인증코드·관리자 2단계 대기. `company_invites` 와 `users` 는 건드리지 않는다.
+   지원 행이 지워지면 그 공고에 같은 구직자가 다시 지원할 수 있게 된다(취소 후 2년 — UNIQUE 가 풀림).
+5. **purgeVerificationDocs** — 확인(`approved`·`rejected`)이 1년 전에 끝난 서류 5건(`vdocs/` 키만): **행을 먼저**(행마다 한 문장) 지우고, 지워진 행의 `vdocs/` 객체만 R2 에서 지운다. 확인 대기(`pending`) 서류는 건드리지 않는다.
+   서류가 모두 지워진 검증 완료 기업은 **검증 완료 그대로**다(검증 상태는 서류 행으로 다시 계산하지 않는다. `verifyBlocks` 의 "서류 없음" 은 검증 대기 기업의 승인 버튼에만 쓰인다 — 관리자 화면·공개 화면이 그대로 그려지는지 테스트).
+   승인 취소 후 다시 승인받으려면 새 서류를 올려야 한다(지금도 같다). R2 삭제가 실패한 `vdocs/` 객체는 자동으로 치우지 않는다(남은 일).
+6. **sweepOrphans** — R2 `rfiles/` 목록 한 쪽(100개, 커서 `site_settings` `maint.rfiles_cursor`, 목록이 끝나면 커서 삭제)에서 (a) 올라온 지 24시간 이상(`uploaded`) (b) `resumes.file_r2_key`·`applications.file_r2_key` 어디에도 없는(IN 50개씩 확인) 객체를 10개까지 지운다.
+   참조 확인이 실패(예외)하면 하나도 지우지 않는다. 24시간이 안 된 객체(올리는 중·DB 쓰기 전)·다른 접두어는 건드리지 않는다. 지울 것이 10개를 넘거나 삭제가 실패하면 커서를 옮기지 않아 다음 차례에 같은 쪽을 다시 본다. 저장한 커서로 목록이 실패하면 커서를 지운다.
+7. **report** — 00 UTC(09 KST) 한 번. `OPS_EMAIL`(선택 변수)이 있으면 전날(UTC) 단계별 처리 수 + 회원 수(역할별, 탈퇴 제외)·게재 중 공고 수·지원 수(상태별)를 평문으로 보낸다(개수만 — 이메일·이름·id 없음, 운영자용이라 한국어만). 없으면 메일 없이 넘어간다.
+   단계별 처리 수는 실행마다 `site_settings` `maint.stats.<UTC 날짜>` 에 더해 두고(숫자만), 7일 지난 줄은 이 단계가 지운다.
+
+### 14-4. 순서와 실패
+
+- **DB 를 먼저, R2 를 나중에.** 반대로 하다 끊기면 DB 가 없는 파일을 가리키게 되고(지원서·이력서 화면 오류), 이 순서로 하다 끊기면 아무도 가리키지 않는 **암호문** 객체가 남을 뿐이다(rfiles/ 는 고아 정리가 24시간 뒤 치운다).
+- 실행기(`runMaintenance`)는 단계를 try/catch 로 감싸고 예외를 밖으로 내보내지 않는다. 로그는 실행마다 한 줄 `maint: step=<이름> ok|failed counts=<숫자 JSON>` — 오류 내용·키·이메일·id 는 남기지 않는다.
+  (dev·test 에서 Resend 키가 없으면 `lib/email.sendMail` 이 받는 주소와 본문을 콘솔에 출력한다 — 기존 동작, 운영에서는 출력하지 않는다.)
+- 정리 작업을 실행하는 **HTTP 경로는 없다.** `scheduled` 만 실행한다. 개발용으로 cron 문자열 `maint:<단계>` 로 단계를 고르는 것은 `APP_ENV === 'dev'` 일 때만 받는다(배포 환경의 cron 문자열은 `wrangler.jsonc` 에 적은 `"0 * * * *"` 뿐이라 닿지 않는다. test 환경에서 같은 문자열을 보내도 시간표대로 실행됨을 확인).
+- `users` 행은 이 작업에서 지우지 않는다: `jobs.created_by`·`access_log.actor_id`·`application_events.actor_id`·`consents.user_id` 등이 외래키로 가리킨다(D1 은 외래키를 검사한다). 탈퇴 계정은 이메일이 익명화된 상태로 남는다 → 남은 일.

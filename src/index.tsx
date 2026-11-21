@@ -21,6 +21,7 @@ import { legal } from './routes/legal';
 import { NO_STORE } from './routes/guards';
 import { ConsentRequired } from './views/account';
 import { homeCache } from './routes/jobs';
+import { devForcedStep, runMaintenance } from './lib/maintenance';
 
 const app = new Hono<AppEnv>();
 
@@ -79,6 +80,11 @@ app.onError((err, c) => {
 
 export default {
   fetch: app.fetch,
-  // 예약 작업 (매일 03:00 KST). 구현은 docs/TASKS.md T-12.
-  async scheduled(_ev: ScheduledController, _env: Env, _ctx: ExecutionContext) {},
+  // 예약 작업 (T-12, 매시 정각 — wrangler.jsonc "0 * * * *"). 한 번에 한 단계만 한다 (lib/maintenance.SCHEDULE, docs/ARCHITECTURE.md 14절).
+  // 단계를 골라 실행하는 것(cron 문자열 "maint:<단계>")은 APP_ENV 가 dev 일 때만 받는다 — 배포 환경의 cron 문자열은 wrangler.jsonc 에 적은 것뿐이다.
+  // 정리 작업을 실행하는 HTTP 경로는 없다.
+  async scheduled(ev: ScheduledController, env: Env, ctx: ExecutionContext) {
+    const force = env.APP_ENV === 'dev' ? devForcedStep(ev.cron) : undefined;
+    ctx.waitUntil(runMaintenance(env, Math.floor(ev.scheduledTime / 1000), { force }));
+  },
 } satisfies ExportedHandler<Env>;

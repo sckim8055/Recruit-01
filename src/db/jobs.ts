@@ -3,6 +3,7 @@
 // 쓰기 함수는 영향 행 수가 1 이면 true 를 돌려준다 (호출부의 판단은 옮기기 전과 같다).
 //
 // [sqlite] meta.changes(영향 행 수) → PostgreSQL 드라이버의 rowCount.
+// 기업이 저장하는 세 문장(updateJobSource·saveLocalized·saveKorean)은 close_notice_at 을 NULL 로 되돌린다 (T-12: 저장하면 무수정 기간·마감 안내가 새로 시작된다).
 import type { JobFamily, JobStatus, LocalizeStatus } from '../lib/jobs';
 import type { AdminJobListRow } from '../views/admin-jobs';
 import type { JobListRow } from '../views/jobs';
@@ -100,7 +101,7 @@ export async function updateJobSource(
   const res = await db.prepare(
     `UPDATE jobs SET title_zh = ?, source_zh = ?, job_family = ?, role_category = ?, industry = ?, location = ?, salary_min = ?,
        salary_max = ?, salary_basis = ?, work_hours = ?, report_line = ?, chinese_level = ?, contact_email = ?, closes_at = ?,
-       status = ?, localize_status = ?, review_flag = ?, review_cleared_by = ?, rev = rev + 1, updated_at = ?
+       status = ?, localize_status = ?, review_flag = ?, review_cleared_by = ?, rev = rev + 1, updated_at = ?, close_notice_at = NULL
      WHERE id = ? AND rev = ? AND status = ?
        AND (? != 'published' OR EXISTS (SELECT 1 FROM companies WHERE id = jobs.company_id AND verify_status = 'verified'))`,
   ).bind(
@@ -131,7 +132,7 @@ export async function saveLocalized(
   const plan = x.plan;
   const res = await db.prepare(
     `UPDATE jobs SET title_ko = ?, body_ko = ?, back_zh = ?, localize_engine = ?, status = ?, localize_status = ?,
-       review_flag = ?, review_cleared_by = ?, rev = rev + 1, updated_at = ?
+       review_flag = ?, review_cleared_by = ?, rev = rev + 1, updated_at = ?, close_notice_at = NULL
      WHERE id = ? AND rev = ? AND status = ?
        AND (? != 'published' OR EXISTS (SELECT 1 FROM companies WHERE id = jobs.company_id AND verify_status = 'verified'))`,
   ).bind(
@@ -149,7 +150,7 @@ export async function saveKorean(
   const plan = x.plan;
   const res = await db.prepare(
     `UPDATE jobs SET title_ko = ?, body_ko = ?, back_zh = ?, status = ?, localize_status = ?, review_flag = ?, review_cleared_by = ?,
-       rev = rev + 1, updated_at = ?
+       rev = rev + 1, updated_at = ?, close_notice_at = NULL
      WHERE id = ? AND rev = ? AND status = ?
        AND (? != 'published' OR EXISTS (SELECT 1 FROM companies WHERE id = jobs.company_id AND verify_status = 'verified'))`,
   ).bind(

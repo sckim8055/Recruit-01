@@ -25,6 +25,7 @@
 | `src/db/applicants.ts` | applications + jobs + access_log + users (기업·관리자 쪽, T-09): 공고의 지원 목록(내용 없음), 기업의 공고별 지원 수, 지원 한 건 + 공고 소속(권한 판단용, 암호문 포함 — `lib/applicants.openApplication` 만 쓴다), `viewed` 이벤트 + 상태, 열람 기록 목록(관리자)·지원서별 열람 기록(구직자, 역할·시각만) |
 | `src/db/consents.ts` | consents (type `terms`·`privacy`): 그 회원의 필수 동의 읽기(요청마다 한 번, `idx_consents_user`), 같은 판의 유효한 동의가 없을 때만 추가. 국외 이전(`cross_border`)은 `applications.ts` |
 | `src/db/account.ts` | 회원 탈퇴(T-11): 다른 담당자가 있는 기업의 대표인지 세기, 한 트랜잭션으로 지우기 — applications·application_events·consents·resumes·seeker_profiles·alerts·jobs(혼자 맡던 기업의 게재 중 공고 마감)·company_members·agency_members·company_invites·sessions·admin_totp_pending·auth_codes·users(이메일 익명화, `status = 'deleted'`) |
+| `src/db/maintenance.ts` | 예약 작업(T-12, 데이터를 지운다): jobs(자동 마감·안내 표시), company_members+users(활성 담당자 주소), applications·application_events·consents(보관 기한 붙이기/떼기·자동 종료·내용 삭제·동의 철회·오래된 행 삭제), access_log·email_log·sessions·auth_codes·admin_totp_pending(기간 지난 행 삭제), verification_docs(1년 지난 서류 행 삭제), resumes+applications(R2 키 참조 확인), site_settings(`maint.*` 키: 고아 정리 커서·일별 집계), 개수(users·jobs·applications). 모든 UPDATE·DELETE 에 바인딩한 시각 조건 + 행 수 한도 |
 | `src/db/applicant-views.ts` | application_events + applications (기업 지원자 목록 화면, T-09b): 공고 하나의 지원별 면접 요청 메일 수 — `GROUP BY` 한 번, 읽기만. `COUNT(*)` 는 `Number()` 로 바꿔 쓴다 (PostgreSQL bigint 대비) |
 
 - 스키마는 `migrations/` (SQLite 문법). 판단 규칙(`rules.ts`·`authz.ts`)·TTL·횟수 제한은 DB 와 무관하므로 옮길 때 고치지 않는다.
@@ -83,6 +84,14 @@
 | `consents.insertConsents` | batch(종류마다 `INSERT … SELECT ?,… WHERE NOT EXISTS (같은 판의 유효한 동의)`) | `BEGIN … COMMIT`. FROM 없는 SELECT 의 매개변수 형 지정이 필요할 수 있다(확인 필요). 동시 두 요청은 4장 — 같은 판 동의가 두 줄 생길 수 있지만 판단(`missingConsents`)에는 영향 없음 |
 | `account.eraseUser` | batch 14문장 = 한 트랜잭션. 이벤트 id 를 **`lower(hex(randomblob(16)))`** 로 SQL 안에서 만든다(다른 곳의 UUID 와 모양이 다르다: 하이픈 없는 32자). 세션·2단계 대기 삭제를 뺀 모든 문장이 "아직 탈퇴 전"(`EXISTS … status != 'deleted'`)을 조건으로 하고 `users` 갱신이 맨 마지막 — 순서를 바꾸면 앞 문장들이 실행되지 않는다. 판단은 마지막 문장의 영향 행 수 | `gen_random_uuid()::text`(또는 앱에서 id 를 만들어 바인딩), `BEGIN … COMMIT`, 순서 그대로 |
 | `account.countOwnedCompaniesWithOthers` | `COUNT(*)` 가 숫자로 옴 | `COUNT(*)::int` 또는 변환(호출부가 `Number()` 로 감싼다) |
+| `maintenance.ts` (전체) | 행 수 한도를 `WHERE id IN (SELECT id … LIMIT ?)` 로 건다 — SQLite 는 `DELETE/UPDATE … LIMIT` 을 기본 빌드에서 지원하지 않는다. `auth_codes` 는 기본 키가 email 이라 `email IN (SELECT email … LIMIT ?)` | 문법은 그대로 된다. 잠금 범위는 4장 |
+| `maintenance.autoCloseApplications` · `erasePurgedApplications` | batch: 상태별로 이벤트 `INSERT … SELECT lower(hex(randomblob(16))), …` → `UPDATE … WHERE … AND EXISTS (그 지원의 auto_closed 이벤트, at = 지금, actor NULL)`. 이벤트 id 를 SQL 안에서 만든다(하이픈 없는 32자, `account.eraseUser` 와 같음). 판단은 문장별 영향 행 수의 합 | `gen_random_uuid()::text`, `BEGIN … COMMIT`, 순서 그대로 (상태 문장이 이벤트 문장 뒤여야 한다) |
+| `maintenance.dropOldRows` | batch 8문장, **자식 먼저**(application_events → applications(이벤트가 남지 않은 것만) → consents → access_log → email_log → sessions → auth_codes → admin_totp_pending). D1 은 외래키를 검사한다 | `BEGIN … COMMIT`, 순서 그대로 |
+| `maintenance.findReferencedFileKeys` · `maintenanceCounts` | 읽기 batch(SELECT 여러 개). 키는 문장당 50개(D1 바인딩 한도 100) | 조회 여러 번. PostgreSQL 은 `= ANY($1::text[])` 로 배열 하나를 넘길 수 있다 |
+| `maintenance.listExpiredVerificationDocs` · `deleteVerificationDocRows` · `deleteMaintSetting` · `deleteOldMaintStats` | 접두어 비교를 `substr(col, 1, n) = '접두어'` 로 한다 (LIKE 는 `_` 가 와일드카드) | `substr` 그대로 되거나 `left(col, n)` / `starts_with` |
+| `maintenance.markCloseNoticeSent` | `WHERE (id = ? AND updated_at = ?) OR (…)` — 공고마다 읽은 updated_at 이 그대로일 때만 (10개 이하) | 그대로 된다 |
+| `maintenance.putMaintSetting` | `ON CONFLICT (key) DO UPDATE … excluded`, `updated_by = NULL` | 그대로 된다 |
+| `maintenance.maintenanceCounts` | `COUNT(*)` 가 숫자로 옴 | `COUNT(*)::int` 또는 변환(호출부가 `Number()` 로 감싼다) |
 | `migrations/0007_job_options.sql` | 기본 행의 시각 `strftime('%s','now')` | `extract(epoch from now())::bigint` |
 | `companies.listPublicCompanies` | `ORDER BY name_ko` = 바이트 순서 | DB 콜레이션에 따라 한글 정렬이 달라질 수 있음 (`COLLATE "C"` 로 맞춤) |
 
@@ -91,7 +100,7 @@ PostgreSQL 에서도 그대로 되는 것(표시하지 않음): `ON CONFLICT …
 `ORDER BY 식 = '값' DESC`(참/거짓 정렬), `CASE`, `LIMIT`, `rev = rev + 1`.
 `public-jobs.ts` 의 `LIMIT ? OFFSET ?`, `CASE WHEN … END`(ELSE 없으면 NULL)도 그대로 된다. 목록 정렬 `published_at DESC, id DESC` 의 id 는 TEXT 이므로
 PostgreSQL 콜레이션에 따라 같은 시각 안의 순서만 달라질 수 있다(페이지가 겹치지 않으려면 `COLLATE "C"` 권장, 확인 필요).
-지금 코드는 `datetime()`·`strftime`·`rowid`·`INSERT OR IGNORE/REPLACE`·`LIKE` 를 쓰지 않는다.
+지금 코드는 `datetime()`·`strftime`·`rowid`·`INSERT OR IGNORE/REPLACE`·`LIKE` 를 쓰지 않는다 (`randomblob` 은 `account.ts`·`maintenance.ts` 두 곳).
 
 ## 4. 이 계층으로 쉬워지지 않는 것
 

@@ -35,7 +35,10 @@ export function migratedDb(): { raw: Sqlite; d1: D1Database } {
     batch: async (stmts: Stmt[]) => {
       raw.exec('BEGIN');
       try {
-        const out = stmts.map((s) => ({ meta: { changes: Number(raw.prepare(s.sql).run(...(s.b as never[])).changes) } }));
+        // 읽기 문장(SELECT)은 D1 처럼 results 를 돌려준다.
+        const out = stmts.map((s) => /^\s*SELECT\b/i.test(s.sql)
+          ? { results: raw.prepare(s.sql).all(...(s.b as never[])).map(plain), meta: { changes: 0 } }
+          : { meta: { changes: Number(raw.prepare(s.sql).run(...(s.b as never[])).changes) } });
         raw.exec('COMMIT');
         return out;
       } catch (e) {

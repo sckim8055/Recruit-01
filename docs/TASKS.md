@@ -144,6 +144,27 @@
         4) 문서를 고칠 때마다 `lib/consent.ts` 의 `TERMS_VERSION`·`PRIVACY_VERSION`(국외 이전 문구는 `CROSS_BORDER_VERSION`)을 올린다
       남은 일: 대표 담당자 넘기기(지금은 다른 담당자가 있는 대표는 탈퇴 불가), 동의 시각을 계정 화면에 보이기(`listRequiredConsents` 에 `agreed_at` 추가 필요),
       관리자 계정 탈퇴 방법(지금은 README 의 SQL 로 역할을 바꾼 뒤), 탈퇴 후 남는 행의 보관 기간이 지나면 지우기 → T-12, 탈퇴 때 R2 삭제 실패로 남은 객체 정리 → T-12
+- [x] T-12 예약 작업 (자동 마감·보관 기한 삭제·정리). cron 을 매시 정각 한 번(`"0 * * * *"`)으로 바꾸고 실행마다 **단계 하나만** 한다(`lib/maintenance.SCHEDULE`, UTC 시각 → 단계, 24칸):
+      00 report · 01 closeJobs · 02 markApplications · 03 purgeApplications · 04 dropOldRows · 05 sweepOrphans · 06 purgeVerificationDocs · 07 closeJobs · 08 markApplications · 09 purgeApplications ·
+      10 dropOldRows · 11 sweepOrphans · 12 closeJobs · 13 markApplications · 14 purgeApplications · 15 purgeVerificationDocs · 16 sweepOrphans · 17 closeJobs · 18 markApplications · 19 purgeApplications ·
+      20 dropOldRows · 21 sweepOrphans · 22 closeJobs · 23 purgeApplications (하루 closeJobs 5 · purgeApplications 5 · markApplications 4 · sweepOrphans 4 · dropOldRows 3 · purgeVerificationDocs 2 · report 1).
+      한 번 실행 상한(`CAPS`): 공고 마감 10 · 안내 공고 10 · 안내 메일 10 · 지원 기한 붙이기/떼기/자동 종료 각 50 · 내용 삭제 10 · 표마다 행 삭제 200 · 서류 5 · R2 목록 100 · 고아 삭제 10 · 참조 확인 IN 50개,
+      실행당 D1 문장 25개 이하(batch 안 문장도 하나씩 셈, 집계 기록 2개 포함)·R2 호출 15개 이하(`BUDGET`, 테스트가 후보를 상한보다 많이 넣고 셈). 남은 것은 다음 차례에.
+      기간 상수는 `lib/retention.ts` 한 곳(지원서 180일·자동 종료 30일·서류 1년·열람 기록 2년·내용 없는 행과 철회된 동의 2년·메일 기록 1년·무수정 30일·안내 3일 전·고아 24시간), 개인정보처리방침 3항 글(한·중)에 같은 숫자가 있는지 테스트.
+      SQL 은 새 파일 `src/db/maintenance.ts` 에만(모든 UPDATE·DELETE 에 시간 조건 + 한도 + 지우는 것 주석), 마이그레이션 0009(`jobs.close_notice_at`, 인덱스 `applications(purge_after)`·`access_log(at)`·`email_log(sent_at)`).
+      단계: closeJobs(마감일 지남 → closed, 마감일 없음 + 무수정 30일 + 안내 후 3일 → closed, 3일 전 활성 담당자에게 `job_close_notice` 한·중 메일 한 번, 저장하면 `close_notice_at` 초기화 — `db/jobs.ts` 의 기업 저장 세 문장, 초안·차단 공고는 안 건드림, 게재 없음) ·
+      markApplications(마감·차단 공고 지원에 `purge_after = 확인 시각 + 180일`, 30일 지난 진행 중 지원 `auto_closed` 이벤트 + 상태를 한 batch 로 — 상태는 방금 넣은 이벤트가 있을 때만, 차단이 풀린 공고의 진행 중 지원은 기한 떼기) ·
+      purgeApplications(기한 지난 지원 10건: D1 먼저 내용·파일 키·요약 삭제 + 진행 중이면 auto_closed + 국외 이전 동의 철회 → 아무 행도 가리키지 않는 `rfiles/` 객체만 R2 삭제, 실패는 세고 고아 정리에 맡김) ·
+      dropOldRows(표마다 200행, 자식 먼저: 내용 없는 지원의 이벤트·행 2년, 철회된 동의 2년, 열람 기록 2년, 메일 기록 1년, 만료 세션·인증코드·2단계 대기, users·초대는 안 건드림) ·
+      purgeVerificationDocs(확인 후 1년 지난 승인·반려 서류 5건, 행 먼저 → `vdocs/` 객체, 확인 대기 서류 안 건드림, 서류가 없어진 검증 완료 기업은 그대로 검증 완료) ·
+      sweepOrphans(`rfiles/` 목록 100개씩 커서 `maint.rfiles_cursor`, 24시간 지났고 resumes·applications 어디도 가리키지 않는 객체 10개까지, 참조 확인 실패면 하나도 안 지움) ·
+      report(00 UTC, `OPS_EMAIL` 이 있으면 전날 단계별 처리 수 + 개수만 평문 메일, 집계는 `maint.stats.<날짜>`, 7일 지난 집계 삭제).
+      실행기 `runMaintenance`: 예외를 밖으로 내지 않고 로그 한 줄 `maint: step=… ok|failed counts={숫자}`(키·이메일·id·오류 내용 없음), `scheduled` 에서 `ctx.waitUntil`. HTTP 경로 없음.
+      개발용 단계 고르기는 cron 문자열 `maint:<단계>` 이고 `APP_ENV === 'dev'` 일 때만(README). 새 선택 변수 `OPS_EMAIL`(기본 빈 값). 테스트 `test/maintenance.test.ts`(44개, SQLite + 외래키 켬 + 가짜 R2),
+      `test/sqlite-d1.ts` 의 batch 가 SELECT 결과를 돌려주도록 고침(D1 과 같게). wrangler dev(4.166)로 로컬 D1·R2 에 가짜 행을 넣고 단계마다 실행해 전후를 확인.
+      정한 것: 무수정 마감은 안내를 보낸 지 3일이 지나야 한다(안내 없이 마감되지 않게 — 그래서 실제 마감은 max(무수정 30일, 안내 + 3일)), 담당자 없는 공고는 메일 없이 안내 완료로 표시,
+      기한이 지난 지원은 공고 상태와 관계없이 지움, 시간표는 `hour % 단계 수` 대신 24칸 표(보고를 하루 한 번으로 하기 위해), 보고 메일은 운영자용이라 한국어만.
+      남은 일 → T-12b
 ## 운영자 설정 (사람이 하는 일 — 안내 문서를 먼저 써서 건넨다)
 - [ ] O-1 GitHub 저장소에 이 폴더 올리기
 - [ ] O-2 Cloudflare: D1 `recruit-test` 생성 → `wrangler.jsonc` 의 `database_id` 교체, R2 `recruit-test-files` 생성
@@ -167,8 +188,9 @@
       마감·차단 직후 캐시 즉시 지우기(지금은 최대 60초 남음 — 배포 환경의 Cache API purge 는 zone 단위라 확인 필요)
 - [ ] T-10 조건 알림: 필터 저장, 일간·주간 메일(제목 "조건에 맞는 새 공고"). 무료 플랜 CPU 한도를 넘지 않게 한 번에 보내는 수를 제한
 - [ ] T-04c 국세청 사업자 상태조회 (공공데이터포털 키 발급 후)
-- [ ] T-12 예약 작업: 공고 자동 마감(마감일 또는 30일 무수정, 3일 전 안내), 미처리 지원자 `auto_closed`, `purge_after` 지난 지원서 삭제,
-      만료 세션·인증코드 정리, 사용량 점검 메일
+- [ ] T-12b 정리 작업 남은 일: 탈퇴 계정(`users.status = 'deleted'`) 행 삭제 — jobs.created_by·access_log.actor_id·application_events.actor_id·consents.user_id 가 외래키로 가리켜 지금은 지우지 않는다
+      (가리키는 행이 모두 기간이 지나 지워진 뒤에 지우거나, 가리키는 컬럼을 NULL 로 바꾸는 마이그레이션이 필요). R2 삭제에 실패한 `vdocs/` 객체 정리(지금은 `rfiles/` 만 고아 정리).
+      CPU 10ms 한도 실측(배포 뒤 대시보드). 처리량이 상한(하루 내용 삭제 50건 등)을 넘으면 상한 조정
 - [ ] T-13 운영 환경: `wrangler.jsonc` 에 `env.production`(별도 D1·R2·도메인), 주 1회 암호화 백업, 배포 절차 문서
 - [ ] T-14 (플래그 뒤) 이력서 중국어 요약: 경력·기술 항목만 번역 → 구직자 승인(`summary_approved_at`) → 기업 화면에 원문과 나란히 표시,
       본사 공유(받는 사람은 이메일 인증코드로 확인, 7일 만료) → `summary_shared`

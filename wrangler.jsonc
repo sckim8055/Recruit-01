@@ -13,7 +13,9 @@
     }
   ],
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "recruit-test-files" }],
-  "triggers": { "crons": ["0 18 * * *"] },
+  // 예약 작업 (T-12): 매시 정각에 한 번, 실행마다 정리 단계 하나만 한다 (무료 플랜 CPU·호출 수 한도 — docs/ARCHITECTURE.md 14절).
+  // 어느 시각(UTC)에 어느 단계를 하는지는 src/lib/maintenance.ts 의 SCHEDULE. cron 은 계정당 5개까지라 하나만 쓴다.
+  "triggers": { "crons": ["0 * * * *"] },
   "vars": {
     "APP_ENV": "test",
     "APP_ORIGIN": "https://recruit.kimbbob.xyz",
@@ -33,7 +35,9 @@
     // 엔진별 모델. 비워 두면 코드의 기본값(src/lib/localize/engines/*.ts 의 DEFAULT_*_MODEL)을 쓴다.
     "LOCALIZE_WORKERS_AI_MODEL": "",
     "LOCALIZE_GEMINI_MODEL": "",
-    "LOCALIZE_CLAUDE_MODEL": ""
+    "LOCALIZE_CLAUDE_MODEL": "",
+    // 정리 작업 하루 보고(개수만)를 받을 운영자 이메일. 비워 두면 보고 메일을 보내지 않는다 (README "자동 정리 작업").
+    "OPS_EMAIL": ""
   }
   // Workers AI 를 쓰려면: Cloudflare 에 로그인(npx wrangler login)한 뒤 아래 줄의 맨 앞 // 를 지우고, 위 "vars" 의 } 뒤에 쉼표를 붙인다.
   // "ai": { "binding": "AI" }

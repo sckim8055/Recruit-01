@@ -3,6 +3,8 @@
 화면은 서버 렌더링 + HTML 폼이다. `✅` 는 구현됨, 나머지는 docs/TASKS.md 의 해당 작업에서 만든다.
 모든 POST 는 같은 출처에서 온 요청만 받는다(`sameOrigin`). `/biz/jobs/:id/applicants*`·`/biz/applications*`·`/admin/applications*`·`/admin/access-log` 는 모든 응답(로그인 리다이렉트·403 포함)이 `private, no-store` 이고 HEAD 는 405 다(T-09a). `/consent`·`/my/account*` 의 모든 응답도 `private, no-store` 다(T-11). `/my/resumes*`·`/my/applications*`·`/jobs/:id/apply` 는 구직자만(비로그인 → /login, 기업·헤드헌터·관리자 403, 남의 이력서·지원 id 는 404), 모든 응답이 `Cache-Control: private, no-store`. "권한" 칸의 판단은 `authz.ts`·`requireRole` 을 쓴다.
 
+예약 작업(T-12, 공고 자동 마감·보관 기한 삭제·정리)은 cron(`scheduled`)으로만 실행되며 HTTP 경로가 없다 (docs/ARCHITECTURE.md 14절).
+
 ## 공통
 | 경로 | 설명 | 권한 | 상태 |
 |---|---|---|---|

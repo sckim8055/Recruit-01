@@ -125,3 +125,34 @@ npx wrangler d1 execute DB --local --command "UPDATE users SET totp_secret=NULL,
 ```
 npx wrangler d1 execute DB --remote --command "UPDATE users SET role='seeker', totp_secret=NULL WHERE email='지울관리자@example.com'"
 ```
+
+## 자동 정리 작업 (매시 정각)
+
+서버는 매시 정각에 정리 작업을 하나씩 자동으로 한다. 운영자가 따로 켤 것은 없다 (자세한 내용은 docs/ARCHITECTURE.md 14절).
+- 마감일이 지난 공고를 마감하고, 마감일이 없는 공고는 마지막 저장 후 30일이 지나면 마감한다. 마감 3일 전에 기업 담당자에게 안내 메일(한국어+중국어)을 한 번 보낸다.
+- 마감된 공고의 지원서는 180일 뒤 내용과 첨부파일을 지운다(개인정보처리방침 3항). 마감 후 30일이 지나도 처리되지 않은 지원은 "채용 종료" 상태가 된다.
+- 확인 후 1년이 지난 사업자 서류, 2년이 지난 열람 기록, 만료된 로그인 정보 등을 지운다. 어느 기록도 가리키지 않는 첨부파일(삭제 실패로 남은 것)도 하루 뒤에 지운다.
+- 한 번에 조금씩만 하고(무료 플랜 한도), 남은 것은 다음 차례에 이어서 한다.
+
+**잘 돌았는지 보는 법**
+1. Cloudflare 대시보드 → Workers & Pages → `recruit-test` → **Logs**(또는 `npx wrangler tail`)에서 매시 한 줄 `maint: step=<단계> ok counts={…}` 를 본다. `failed` 가 보이면 개발자에게 알린다.
+   이 줄에는 숫자만 있다(이메일·파일 이름·id 없음).
+2. (선택) 매일 아침 9시(한국 시간)에 전날 처리 수를 메일로 받으려면 `wrangler.jsonc` 의 `"OPS_EMAIL": ""` 에 받을 주소를 적고 다시 배포한다. 비워 두면 보내지 않는다.
+   메일에는 개수만 들어 있다. (메일 발송에는 Resend 키가 필요하다 — O-6.)
+
+**로컬에서 직접 실행해 보기 (개발자용)**
+
+```
+npx wrangler dev --var APP_ENV:dev --test-scheduled
+```
+
+다른 창에서 (wrangler 4.166 에서 확인):
+
+```
+curl "http://localhost:8787/cdn-cgi/local/scheduled?cron=maint:closeJobs"
+curl "http://localhost:8787/__scheduled?cron=maint:closeJobs"
+```
+
+`maint:` 뒤에는 `closeJobs` · `markApplications` · `purgeApplications` · `dropOldRows` · `purgeVerificationDocs` · `sweepOrphans` · `report` 중 하나를 쓴다.
+단계를 고르는 이 방법은 `APP_ENV` 가 `dev` 일 때만 된다. `cron=0+*+*+*+*` 로 보내면 지금 시각(UTC)의 단계가 돌고, `&time=<밀리초>` 를 붙이면 그 시각으로 실행한다.
+결과는 wrangler 창의 `maint:` 줄과 `npx wrangler d1 execute DB --local --command "…"` 로 확인한다. 정리 작업을 실행하는 웹 주소는 없다.

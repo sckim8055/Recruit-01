@@ -22,6 +22,8 @@ export interface Env {
   LOCALIZE_CLAUDE_MODEL?: string;
   // Workers AI 바인딩. wrangler.jsonc 의 "ai" 설정을 켜야 생긴다 (운영자가 Cloudflare 에 로그인한 뒤).
   AI?: { run(model: string, input: unknown): Promise<unknown> };
+  // 예약 작업(T-12)의 하루 보고를 받을 운영자 주소. 비어 있으면 보고 메일을 보내지 않는다 (lib/maintenance.report).
+  OPS_EMAIL?: string;
   // secrets
   ENC_KEY: string;
   SESSION_PEPPER: string;
