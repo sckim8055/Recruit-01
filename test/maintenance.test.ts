@@ -156,12 +156,15 @@ describe('보관 기간 상수', () => {
     const ko = sec('ko'), zh = sec('zh');
     const find = (items: string[], word: string) => items.find((x) => x.startsWith(word)) ?? '';
     // 숫자를 상수에서 만들어 글과 비교한다
-    expect(find(ko, '지원서(')).toContain(`공고 마감 후 ${APPLICATION_KEEP_AFTER_CLOSE / DAY}일`);
+    expect(find(ko, '지원서(')).toContain(`중단된 뒤 ${APPLICATION_KEEP_AFTER_CLOSE / DAY}일`);
+    expect(find(ko, '지원서(')).toContain(`마감 후 ${APPLICATION_AUTO_CLOSE_AFTER / DAY}일`);
     expect(`${APPLICATION_KEEP_AFTER_CLOSE / DAY}일`).toBe(PRIVACY_TEXT_NUMBERS.ko.application);
     expect(find(ko, '기업의 사업자 서류')).toContain(`확인 후 ${VDOC_KEEP_AFTER_REVIEW / (365 * DAY)}년`);
     expect(find(ko, '지원서·서류의 열람 기록')).toContain(`${ACCESS_LOG_KEEP / (365 * DAY)}년`);
     expect(find(ko, '동의 기록')).toContain(`${ERASED_ROW_KEEP / (365 * DAY)}년간`);
-    expect(find(zh, '应聘资料（')).toContain(`截止后${APPLICATION_KEEP_AFTER_CLOSE / DAY}天`);
+    expect(find(zh, '应聘资料（')).toContain(`停止发布后${APPLICATION_KEEP_AFTER_CLOSE / DAY}天`);
+    expect(find(zh, '应聘资料（')).toContain(`截止后${APPLICATION_AUTO_CLOSE_AFTER / DAY}天`);
+    expect(find(ko, '메일 발송 기록')).toContain(`${EMAIL_LOG_KEEP / (365 * DAY)}년`);
     expect(find(zh, '企业的营业资料')).toContain(`确认后${VDOC_KEEP_AFTER_REVIEW / (365 * DAY)}年`);
     expect(find(zh, '应聘资料和企业资料的查看记录')).toContain(`${ACCESS_LOG_KEEP / (365 * DAY)}年`);
     expect(find(zh, '同意记录')).toContain(`${ERASED_ROW_KEEP / (365 * DAY)}年`);
