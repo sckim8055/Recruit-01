@@ -6,7 +6,8 @@ import { now, type AppEnv } from '../env';
 import { canManageMembers } from '../lib/authz';
 import { MAX_COMPANY_SEATS, hasSeatLeft, inviteIsHq, inviteMail, parseInvite, removeCheck } from '../lib/company';
 import { sendMail } from '../lib/email';
-import { QUOTA_MSG, limitsOf, quotaText, takeCompanyMail } from '../lib/quota';
+import { QUOTA_MSG, limitsOf, loadLimits, quotaText, takeCompanyMail } from '../lib/quota';
+import { limitsFrom } from '../lib/limits';
 import { render, renderError } from '../render';
 import { MembersPage } from '../views/company';
 import {
@@ -40,7 +41,9 @@ bizMembers.get('/members', async (c) => {
   const ok = OK[c.req.query('ok') ?? ''];
   // 초대는 저장했지만 안내 메일을 못 보낸 경우
   const mail = c.req.query('mail');
-  const L = limitsOf(c.env);
+  // 한도 숫자는 안내를 보일 때만 읽는다 (T-17: 관리자 설정 → 변수 → 기본값, 설정 한 행).
+  const limitNote = ok === 'inv.ok.invited' && (mail === 'limit_company' || mail === 'limit_site');
+  const L = limitNote ? limitsFrom(await loadLimits(c.env)) : limitsOf(c.env);
   const error = ok !== 'inv.ok.invited' ? undefined
     : mail === 'failed' ? 'inv.err.mail_failed'
     : mail === 'skipped' ? 'inv.err.mail_unverified'

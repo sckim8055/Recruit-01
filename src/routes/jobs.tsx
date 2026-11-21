@@ -16,6 +16,8 @@ import { render, renderError } from '../render';
 import { Home } from '../views/pages';
 import { PublicJobList, PublicJobPage, type ApplyState } from '../views/public-jobs';
 import { hasApplied } from '../db/applications';
+import { loadLimits } from '../lib/quota';
+import { alertsPaused } from '../lib/limits';
 
 export const jobs = new Hono<AppEnv>();
 
@@ -62,12 +64,21 @@ jobs.get('/', pageCache, async (c) => {
   const filter = parseJobFilter(c.req.query(), enabled, choices);
   const page = parsePage(c.req.query('page'));
   const { limit, offset } = pageQuery(page);
-  const rows = await listPublicJobs(c.env.DB, { flags: flagsOf(c.env), now: now(), filter, limit, offset });
-  const pg = pageOf(rows, page);
   // 조건 알림 만들기 칸 (T-10): 로그인한 구직자에게만, 조건을 하나 이상 골랐을 때만. 로그인한 요청은 page-cache 를 거치지 않으므로(private, no-store)
-  // 비로그인 캐시 화면은 바뀌지 않는다 (누구에게나 같은 HTML). 추가로 읽는 것은 없다.
-  const alertForm = c.var.user?.role === 'seeker' && activeFilterCount(filter) > 0;
-  return render(c, <PublicJobList locale={c.var.locale} filter={filter} enabled={enabled} choices={choices} options={options} alertForm={alertForm} {...pg} />, 'pj.title');
+  // 비로그인 캐시 화면은 바뀌지 않는다 (누구에게나 같은 HTML).
+  // T-17: 그 경우에만 한도 설정 한 행을 공고와 동시에 읽어, 알림 발송이 멈춘 상태(lib/limits.alertsPaused)면 칸 대신 한 줄 안내를 그린다.
+  // 비로그인·기업·관리자·조건 없는 요청은 이 설정을 읽지 않는다.
+  const wantsAlert = c.var.user?.role === 'seeker' && activeFilterCount(filter) > 0;
+  const [rows, limits] = await Promise.all([
+    listPublicJobs(c.env.DB, { flags: flagsOf(c.env), now: now(), filter, limit, offset }),
+    wantsAlert ? loadLimits(c.env) : null,
+  ]);
+  const pg = pageOf(rows, page);
+  const paused = limits ? alertsPaused(limits) : false;
+  return render(c, (
+    <PublicJobList locale={c.var.locale} filter={filter} enabled={enabled} choices={choices} options={options}
+      alertForm={wantsAlert && !paused} alertPaused={wantsAlert && paused} {...pg} />
+  ), 'pj.title');
 });
 
 jobs.get('/:id', pageCache, async (c) => {

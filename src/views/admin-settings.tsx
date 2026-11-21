@@ -1,4 +1,4 @@
-// 관리자 사이트 설정 (T-06d, T-12c). 채용정보 목록(/jobs)에 보일 검색 조건, 보관 기간.
+// 관리자 사이트 설정 (T-06d, T-12c, T-17). 채용정보 목록(/jobs)에 보일 검색 조건, 보관 기간, 사용량 한도·조건 알림(views/admin-limits).
 // 검색 조건은 검색 칸의 표시만 바꾼다 — 공고 내용·게재 상태·공고 작성 폼은 바뀌지 않는다.
 // 보관 기간은 두 단계로 저장한다(자바스크립트 없음): 폼 → 확인 화면(바뀌는 값 old → new, 결과, "확인했습니다") → 저장.
 import type { Locale } from '../env';
@@ -11,6 +11,8 @@ import {
 } from '../lib/retention';
 import { Flash } from './company';
 import { FILTER_LABELS } from './public-jobs';
+import { AlertsBox, LimitsBox, type LimitsMeta } from './admin-limits';
+import type { EffectiveLimits, LimitFieldError, LimitKey, LimitsForm, LimitsLogEntry } from '../lib/limits';
 
 const fill = (s: string, v: Record<string, string | number>) => Object.entries(v).reduce((a, [k, x]) => a.replaceAll(`{${k}}`, String(x)), s);
 
@@ -89,6 +91,11 @@ export const RetentionBox = (p: {
 export const AdminSettingsPage = (p: {
   locale: Locale; enabled: readonly FilterKey[]; ok?: string;
   retention: { form: RetentionForm; errors?: Partial<Record<RetentionKey, RetentionFieldError>>; meta: RetentionMeta | null; log: RetentionLogEntry[]; ok?: string; error?: string };
+  /** 사용량 한도·조건 알림 (T-17). */
+  limits?: {
+    effective: EffectiveLimits; form: LimitsForm; errors?: Partial<Record<LimitKey, LimitFieldError>>; meta: LimitsMeta | null; log: LimitsLogEntry[];
+    ok?: string; error?: string; alertsOk?: string; alertsError?: string;
+  };
 }) => {
   const l = p.locale;
   return (
@@ -116,6 +123,13 @@ export const AdminSettingsPage = (p: {
         </form>
       </div>
       <RetentionBox locale={l} {...p.retention} />
+      {p.limits && (
+        <>
+          <LimitsBox locale={l} effective={p.limits.effective} form={p.limits.form} errors={p.limits.errors} meta={p.limits.meta} log={p.limits.log}
+            ok={p.limits.ok} error={p.limits.error} />
+          <AlertsBox locale={l} effective={p.limits.effective} meta={p.limits.meta} ok={p.limits.alertsOk} error={p.limits.alertsError} />
+        </>
+      )}
       <div class="box">
         <h2>{t(l, 'adm.opt.title')}</h2>
         <p class="muted">{t(l, 'adm.set.options_lead')}</p>

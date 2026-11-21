@@ -7,7 +7,8 @@ import { requireRole } from '../lib/auth';
 import { identitySnapshot, parseRevokeAction, parseVerifyAction } from '../lib/company';
 import { serveVerificationDoc } from '../lib/files';
 import { verifyBlocks } from '../lib/rules';
-import { todayAlertMail, todayUsage } from '../lib/quota';
+import { loadLimits, todayAlertMail, todayUsage } from '../lib/quota';
+import { limitsFrom } from '../lib/limits';
 import { countAlertsByStatus } from '../db/alerts';
 import { configChecks, secretSummary, worstLevel } from '../lib/config-check';
 import { SCHEDULE, SHARED_SLOTS } from '../lib/maintenance';
@@ -36,12 +37,16 @@ admin.use('/access-log', noStore, humanGetOnly);
 admin.use('/system', noStore);
 // 회원 2단계 인증 초기화(T-16): 로그인 리다이렉트·403 에도 no-store.
 admin.use('/users/*', noStore);
+// 사이트 설정(보관 기간·사용량 한도·조건 알림, T-17): 로그인 리다이렉트·403 에도 no-store.
+admin.use('/settings', noStore);
+admin.use('/settings/*', noStore);
 
 // /admin 아래 모든 경로는 관리자만.
 admin.use('*', requireRole('admin'));
 
 // 첫 화면: 처리할 일의 개수 + 오늘 사용량(T-05c, 사이트 전체 번역 호출·기업 메일 — 읽기 두 번). 개수만 읽고 개인정보는 읽지 않는다.
 admin.get('/', async (c) => {
+  // 한도 숫자는 관리자 설정 → 변수 → 기본값 (T-17, 설정 한 행 — todayUsage 안에서 함께 읽는다).
   const [counts, usage] = await Promise.all([adminCounts(c.env.DB), todayUsage(c.env, now())]);
   return render(c, <AdminHome locale={c.var.locale} counts={counts} usage={usage} />, 'admin.title');
 });
@@ -52,13 +57,16 @@ admin.get('/', async (c) => {
 admin.get('/system', async (c) => {
   const checks = configChecks(c.env);
   const ts = now();
+  // T-17: 지금 쓰는 한도와 출처(관리자 설정·설정 파일·기본값)·알림 켜기/끄기를 한 번 읽어 사용량 줄에도 같은 값을 쓴다.
+  const limits = await loadLimits(c.env);
+  const L = limitsFrom(limits);
   const [usage, retention, alertCounts, alertMail] = await Promise.all([
-    todayUsage(c.env, ts), loadRetention(c.env.DB), countAlertsByStatus(c.env.DB), todayAlertMail(c.env, ts),
+    todayUsage(c.env, ts, L), loadRetention(c.env.DB), countAlertsByStatus(c.env.DB), todayAlertMail(c.env, ts, L),
   ]);
   return render(c, (
     <SystemPage locale={c.var.locale} appEnv={c.env.APP_ENV} worst={worstLevel(checks)} checks={checks}
       secrets={secretSummary(c.env)} schedule={SCHEDULE} shared={SHARED_SLOTS} usage={usage} retention={retention}
-      alerts={{ ...alertCounts, mail: alertMail }} />
+      alerts={{ ...alertCounts, mail: alertMail }} limits={limits} />
   ), 'sys.title');
 });
 

@@ -26,14 +26,15 @@ export interface Env {
   AI?: { run(model: string, input: unknown): Promise<unknown> };
   // 예약 작업(T-12)의 하루 보고를 받을 운영자 주소. 비어 있으면 보고 메일을 보내지 않는다 (lib/maintenance.report).
   OPS_EMAIL?: string;
-  // 남용 방지 한도(T-05c, src/lib/quota.ts). 0 이상의 정수 문자열. 비었거나 잘못된 값이면 코드의 기본값을 쓴다.
+  // 남용 방지 한도(T-05c, src/lib/limits.ts). 0 이상의 정수 문자열. 비었거나 잘못된 값이면 코드의 기본값을 쓴다.
+  // T-17: 관리자 설정(site_settings 'limits', /admin/settings)이 있는 칸은 그 값이 먼저다 (관리자 설정 → 이 변수 → 기본값).
   LOCALIZE_PER_COMPANY_DAY?: string;
   LOCALIZE_SITE_DAY?: string;
   ADMIN_LOCALIZE_TEST_DAY?: string;
   MAIL_PER_COMPANY_DAY?: string;
   MAIL_SITE_DAY?: string;
   DRAFT_JOBS_PER_COMPANY?: string;
-  // 조건 알림(T-10): 사이트 전체 하루 알림 메일(기본 40, quota.ts) · 예약 작업 한 번에 처리하는 알림 수(기본 8, 최대 10 — lib/alerts.alertRunCap).
+  // 조건 알림(T-10): 사이트 전체 하루 알림 메일(기본 40) · 예약 작업 한 번에 처리하는 알림 수(기본 8, 최대 10 — lib/limits.alertRunCap). 관리자 설정이 먼저.
   ALERT_MAIL_SITE_DAY?: string;
   ALERT_SEND_PER_RUN?: string;
   // secrets

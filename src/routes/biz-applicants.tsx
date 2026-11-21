@@ -20,7 +20,8 @@ import { canEditJob, canViewApplication } from '../lib/authz';
 import { t } from '../lib/i18n';
 import { MESSAGE_MAX, translateMessage } from '../lib/localize/message';
 import { availableEngines } from '../lib/localize';
-import { QUOTA_MSG, limitsOf, quotaText, takeCompanyMail, takeLocalize, type QuotaTake } from '../lib/quota';
+import { QUOTA_MSG, loadLimits, quotaText, takeCompanyMail, takeLocalize, type QuotaTake } from '../lib/quota';
+import { limitsFrom } from '../lib/limits';
 import { render, renderError } from '../render';
 import { ApplicantList, CompanyApplicationNotice, CompanyApplicationPage } from '../views/applicants';
 import { InterviewCompose, InterviewPreview, isMailOpen, MailResultPage, RejectConfirm, tf, type MailHeadInfo } from '../views/applicant-mail';
@@ -72,27 +73,30 @@ bizApplicants.get('/jobs/:id/applicants', async (c) => {
   const job = await loadCompanyJob(c, ctx);
   if (!job) return renderError(c, 404);
   const q = (k: string) => c.req.query(k);
-  return renderList(c, ctx, job, { ok: listOk(c.var.locale, q), error: rejectLimitNote(c.var.locale, c.env, q) });
+  return renderList(c, ctx, job, { ok: listOk(c.var.locale, q), error: await rejectLimitNote(c.var.locale, c.env, q) });
 });
 
-/** 메일 한도에 걸린 몫의 안내 (T-05c). 숫자는 지금 설정의 한도. */
-function mailLimitText(l: Locale, env: Env, pool: 'company' | 'site'): string {
-  const L = limitsOf(env);
-  return pool === 'company' ? quotaText(l, QUOTA_MSG.mailCompany, { n: L.MAIL_PER_COMPANY_DAY }) : quotaText(l, QUOTA_MSG.mailSite, { n: L.MAIL_SITE_DAY });
+/** 메일 한도에 걸린 몫의 안내 (T-05c). n = 그 몫의 한도. */
+function mailLimitText(l: Locale, pool: 'company' | 'site', n: number): string {
+  return quotaText(l, pool === 'company' ? QUOTA_MSG.mailCompany : QUOTA_MSG.mailSite, { n });
 }
 
-/** 불합격 통보 결과의 한도 안내: ?ok=rejected&limited=K&pool=company|site (숫자·이름만). K 가 0 이면 없음. */
-function rejectLimitNote(l: Locale, env: Env, q: (k: string) => string | undefined): string | undefined {
+/**
+ * 불합격 통보 결과의 한도 안내: ?ok=rejected&limited=K&pool=company|site (숫자·이름만). K 가 0 이면 없음.
+ * 숫자는 지금 쓰는 한도 (T-17: 관리자 설정 → 변수 → 기본값) — 안내를 보일 때만 설정 한 행을 읽는다.
+ */
+async function rejectLimitNote(l: Locale, env: Env, q: (k: string) => string | undefined): Promise<string | undefined> {
   if (q('ok') !== 'rejected') return undefined;
   const unsent = batchNum(q, 'limited');
   if (!unsent) return undefined;
   const pool = q('pool') === 'site' ? 'site' : 'company';
-  return `${quotaText(l, QUOTA_MSG.rejectUnsent, { unsent })} ${mailLimitText(l, env, pool)}`;
+  const L = (await loadLimits(env)).values;
+  return `${quotaText(l, QUOTA_MSG.rejectUnsent, { unsent })} ${mailLimitText(l, pool, pool === 'company' ? L.MAIL_PER_COMPANY_DAY : L.MAIL_SITE_DAY)}`;
 }
 
-/** 메일 한도 잡기 결과 → 안내 글 (거절일 때만). */
-const mailRefusal = (l: Locale, env: Env, q: QuotaTake): string | null =>
-  q.ok ? null : mailLimitText(l, env, q.pool === 'site' ? 'site' : 'company');
+/** 메일 한도 잡기 결과 → 안내 글 (거절일 때만). 숫자는 거절한 몫의 한도 (잡을 때 쓴 값). */
+const mailRefusal = (l: Locale, q: QuotaTake): string | null =>
+  q.ok ? null : mailLimitText(l, q.pool === 'site' ? 'site' : 'company', q.limit);
 
 /** 이 기업 공고의 지원서만 (공고 수정 권한과 같은 조건). 없거나 남의 것이면 null → 404. */
 async function loadCompanyApp(c: Context<AppEnv>, ctx: CompanyCtx): Promise<ApplicationWithJob | null> {
@@ -246,7 +250,7 @@ bizApplicants.post('/applications/:id/interview/send', async (c) => {
   const onlyOriginal = f.only_original === '1';
   const translationKo = cleanTranslation(f.translation, m.text, onlyOriginal);
   // 하루 메일 한도 (T-05c): 보내기 전에 잡는다. 걸리면 보내지 않고(기록도 없음) 글을 지닌 미리 보기로.
-  const limitError = mailRefusal(l, c.env, await takeCompanyMail(c.env, ctx.company.id, now()));
+  const limitError = mailRefusal(l, await takeCompanyMail(c.env, ctx.company.id, now()));
   if (limitError) {
     const hidden = typeof f.translation === 'string' ? cleanTranslation(f.translation, m.text, false) : null;
     return render(c, (
@@ -329,12 +333,14 @@ bizApplicants.post('/jobs/:id/applicants/reject/send', async (c) => {
   if (p instanceof Response) return p;
   let sent = 0, failed = p.skipped, limited = 0;
   let pool: 'company' | 'site' = 'company';
+  // 한도(T-17)는 묶음 전체에 한 번만 읽는다 (한 통마다 읽지 않게).
+  const limits = limitsFrom(await loadLimits(c.env));
   // 차례로 하나씩 (요청 하나의 처리량을 작게, 메일 API 에 한꺼번에 몰리지 않게). 최대 REJECT_BATCH_MAX 건.
   for (const [i, id] of p.ids.entries()) {
     const app = await getApplicationWithJob(c.env.DB, id);
     if (!app || app.job_id !== p.job.id || !canEditJob(ctx.actor, refOf(app).job)) { failed++; continue; }
     // 하루 메일 한도 (T-05c): 한 통마다 보내기 전에. 처음 걸린 곳에서 멈추고 남은 건수는 보내지 않는다 (기록도 없다 — 핵심 함수는 보낸 뒤에만 기록한다).
-    const q = await takeCompanyMail(c.env, ctx.company.id, now());
+    const q = await takeCompanyMail(c.env, ctx.company.id, now(), limits);
     if (!q.ok) {
       limited = p.ids.length - i;
       pool = q.pool === 'site' ? 'site' : 'company';

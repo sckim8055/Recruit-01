@@ -491,3 +491,126 @@ describe.skipIf(!hasSqlite)('하위 요청 수 (무료 플랜: 실행당 50개)'
     expect(cnt.c.calls + mail.fetches).toBeLessThanOrEqual(8 + 3 * ALERT_RUN_DEFAULT);
   });
 });
+
+// ───────── T-17: 관리자 설정의 알림 켜기/끄기 · 한도 (site_settings 'limits')
+const setLimits = (raw: Raw, json: string) =>
+  raw.prepare(`INSERT INTO site_settings (key, value, updated_by, updated_at) VALUES ('limits',?,NULL,0)
+    ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(json);
+const alertState = (raw: Raw) => raw.prepare('SELECT id, status, paused_reason, next_due_at, checked_until, fail_count, last_sent_at, updated_at FROM alerts ORDER BY id').all().map((r) => ({ ...r }));
+
+describe.skipIf(!hasSqlite)('T-17 알림 발송 멈춤 (관리자가 끔 · 알림 메일 한도 0 · 처리 수 0)', () => {
+  for (const [name, json, vars] of [
+    ['관리자가 끔', '{"values":{},"alerts_enabled":false}', {}],
+    ['관리자 설정 ALERT_MAIL_SITE_DAY = 0', '{"values":{"ALERT_MAIL_SITE_DAY":0}}', {}],
+    ['관리자 설정 ALERT_SEND_PER_RUN = 0', '{"values":{"ALERT_SEND_PER_RUN":0}}', {}],
+    ['설정 파일 ALERT_MAIL_SITE_DAY = 0', null, { ALERT_MAIL_SITE_DAY: '0' }],
+  ] as const) {
+    it(`${name}: 메일 없음, 알림 상태·차례·확인 기준·실패 수 그대로, 몫·토큰·email_log 없음`, async () => {
+      const { raw, env, sent, mail } = setup(vars);
+      if (json) setLimits(raw, json);
+      job(raw);
+      for (let i = 0; i < 3; i++) await alert(raw, env, seeker(raw).id, { location: 'seoul' });
+      mail.fail = true; // 보냈다면 실패 수가 늘었을 것
+      const before = alertState(raw);
+      for (const at of [NOW, NOW + 4 * 3600, NOW + DAY]) {
+        const r = await sendAlerts(env, at);
+        expect(r.done).toMatchObject({ due: 0, sent: 0, failed: 0, auto_paused: 0, skipped_paused: 1 });
+      }
+      expect(sent).toHaveLength(0);
+      expect(mail.fetches).toBe(0);
+      expect(alertState(raw)).toEqual(before);
+      expect(n(raw, 'SELECT COUNT(*) AS n FROM usage_counters')).toBe(0);
+      expect(n(raw, 'SELECT COUNT(*) AS n FROM alert_unsub_tokens')).toBe(0);
+      expect(n(raw, 'SELECT COUNT(*) AS n FROM email_log')).toBe(0);
+    });
+  }
+
+  it('멈춘 동안 게재된 공고는 다시 켠 뒤 다음 메일에 들어간다 (최신 10건 + 외 N건)', async () => {
+    const { raw, env, sent } = setup();
+    job(raw, { published: NOW - 3 * DAY, title: '멈추기 전 공고' }); // 알림을 만든 때(NOW - 2일)보다 앞 — 보내지 않는다
+    const a = await alert(raw, env, seeker(raw).id, { location: 'seoul' });
+    const checkedBefore = row(raw, a).checked_until;
+    setLimits(raw, '{"values":{},"alerts_enabled":false}');
+    // 끈 동안 12건 게재 (NOW - 1일 ~), 예약 작업이 몇 번 돈다
+    for (let i = 0; i < 12; i++) job(raw, { published: NOW - DAY + i * 60, title: `멈춘 동안 ${String(i).padStart(2, '0')}` });
+    await sendAlerts(env, NOW);
+    await sendAlerts(env, NOW + 4 * 3600);
+    expect(sent).toHaveLength(0);
+    expect(row(raw, a).checked_until).toBe(checkedBefore);
+    // 다시 켬 (관리자 값 true — 기본값으로 되돌리기와 같은 결과)
+    setLimits(raw, '{"values":{},"alerts_enabled":true}');
+    const r = await sendAlerts(env, NOW + DAY);
+    expect(r.done).toMatchObject({ sent: 1, skipped_paused: 0 });
+    expect(sent).toHaveLength(1);
+    const text = sent[0]!.text;
+    expect(sent[0]!.subject).toContain('12건');
+    expect(text).toContain('멈춘 동안 11'); // 최신
+    expect(text).toContain('멈춘 동안 02');
+    expect(text).not.toContain('멈춘 동안 01'); // 10건만 적고
+    expect(text).toContain('외 2건');            // 나머지는 "외 N건"
+    expect(text).not.toContain('멈추기 전 공고');
+    expect(row(raw, a).checked_until).toBe(NOW + DAY - 1);
+  });
+
+  it('멈춘 동안에는 "12개월 쓰지 않은 알림" 을 지우지 않는다 (탈퇴 계정 알림·오래된 토큰 정리는 한다)', async () => {
+    const { raw, env } = setup();
+    const a = await alert(raw, env, seeker(raw).id, { location: 'seoul' }, { created: NOW - 400 * DAY });
+    raw.prepare('UPDATE alerts SET updated_at = ? WHERE id = ?').run(NOW - 400 * DAY, a);
+    setLimits(raw, '{"values":{},"alerts_enabled":false}');
+    expect((await sendAlerts(env, NOW)).done.swept_unused).toBe(0);
+    expect(n(raw, 'SELECT COUNT(*) AS n FROM alerts')).toBe(1);
+    setLimits(raw, '{"values":{}}');
+    expect((await sendAlerts(env, NOW)).done.swept_unused).toBe(1);
+  });
+
+  it('관리자 설정의 처리 수·하루 메일 한도가 변수보다 먼저 (다시 배포 없음)', async () => {
+    const { raw, env, sent } = setup({ ALERT_SEND_PER_RUN: '8', ALERT_MAIL_SITE_DAY: '40' });
+    job(raw);
+    for (let i = 0; i < 6; i++) await alert(raw, env, seeker(raw).id, { location: 'seoul' });
+    setLimits(raw, '{"values":{"ALERT_SEND_PER_RUN":2}}');
+    expect((await sendAlerts(env, NOW)).done.sent).toBe(2);
+    setLimits(raw, '{"values":{"ALERT_SEND_PER_RUN":10,"ALERT_MAIL_SITE_DAY":3}}');
+    expect((await sendAlerts(env, NOW + 4 * 3600)).done).toMatchObject({ sent: 1, quota_stopped: 1 });
+    expect(sent).toHaveLength(3);
+    // 범위 밖 값(DB)은 무시 → 변수
+    setLimits(raw, '{"values":{"ALERT_SEND_PER_RUN":50,"ALERT_MAIL_SITE_DAY":500}}');
+    expect((await sendAlerts(env, NOW + 6 * 3600)).done.sent).toBe(3);
+  });
+
+  it('설정 읽기는 보일 필터와 한 번에 (보내는 경로의 하위 요청 수는 8 + 3n 그대로), 멈춤이면 2', async () => {
+    const { raw, env, cnt, mail } = setup();
+    job(raw);
+    for (let i = 0; i < 15; i++) await alert(raw, env, seeker(raw).id, { location: 'seoul' });
+    cnt.c.calls = 0; mail.fetches = 0;
+    const r = await sendAlerts(env, NOW);
+    expect(cnt.c.calls + mail.fetches).toBe(7 + 3 * r.done.sent!); // T-17 이전과 같은 수 (이전: 정리·차례·필터‖항목 2·공고·몫 2 = 7, 지금: 필터+한도 1·정리·차례·항목·공고·몫 2 = 7)
+    setLimits(raw, '{"values":{},"alerts_enabled":false}');
+    cnt.c.calls = 0; mail.fetches = 0;
+    await sendAlerts(env, NOW + DAY);
+    expect(cnt.c.calls + mail.fetches).toBe(2);
+  });
+});
+
+describe.skipIf(!hasSqlite)('T-17 하위 요청 수: 관리자 설정의 최대 처리 수(10)', () => {
+  const totals: Record<number, number> = {};
+  for (const [hour, host] of [[0, 'report'], [4, 'dropOldRows'], [6, 'purgeVerificationDocs'], [10, 'dropOldRows']] as const) {
+    it(`${String(hour).padStart(2, '0')} UTC (${host} + sendAlerts, ALERT_SEND_PER_RUN = 10): 무료 플랜 50 이하`, async () => {
+      const { raw, env, cnt, mail, r2, sent } = setup({ OPS_EMAIL: 'fake.ops@example.test' });
+      setLimits(raw, '{"values":{"ALERT_SEND_PER_RUN":10}}');
+      for (let i = 0; i < 3; i++) job(raw);
+      for (let i = 0; i < 15; i++) await alert(raw, env, seeker(raw).id, { location: 'seoul' });
+      for (let i = 0; i < 3; i++) await alert(raw, env, seeker(raw).id, { location: 'busan' });
+      for (let i = 0; i < 8; i++) {
+        raw.prepare("INSERT INTO verification_docs (id, owner_type, owner_id, doc_type, r2_key, review_status, reviewed_at, created_at) VALUES (?, 'company', 'c1', 'biz_cert', ?, 'approved', 0, 0)")
+          .run(uid(), `vdocs/company/c1/${i}.pdf`);
+      }
+      const at = Math.floor(NOW / DAY) * DAY + hour * 3600 + (NOW % 3600);
+      cnt.c.calls = 0; mail.fetches = 0; r2.ops = 0;
+      const out = await runMaintenance(env, at);
+      expect(out.step).toBe(host);
+      expect(sent.filter((m) => m.subject.includes('새 공고')).length).toBe(10);
+      totals[hour] = cnt.c.calls + mail.fetches + r2.ops;
+      expect(totals[hour], `calls=${cnt.c.calls} fetch=${mail.fetches} r2=${r2.ops}`).toBeLessThanOrEqual(50);
+    });
+  }
+});
