@@ -5,7 +5,7 @@ import type { AppEnv, Role } from '../env';
 import { completeTotp, PENDING_COOKIE, totpStep } from '../lib/admin2fa';
 import { logout, requestCode, requireRole, setSessionCookie, TOTP_PENDING_TTL, verifyCode } from '../lib/auth';
 import { render } from '../render';
-import { LoginCode, LoginEmail, LoginTotp, MySeeker } from '../views/pages';
+import { LoginCode, LoginRoleNotice, LoginEmail, LoginTotp, MySeeker } from '../views/pages';
 
 export const auth = new Hono<AppEnv>();
 
@@ -42,6 +42,12 @@ auth.post('/login/verify', async (c) => {
     return c.redirect('/login/totp');
   }
   setSessionCookie(c, r.token, r.maxAge);
+  // 한 이메일은 한 유형의 계정이다. 이미 가입한 이메일로 다른 유형을 골랐으면 조용히 넘기지 않고 알려 준다.
+  // (인증코드를 통과한 본인에게만 보이므로 가입 여부를 남에게 알려 주는 것이 아니다.)
+  if (r.user.role !== role) {
+    c.set('user', r.user); // 이 응답의 머리글도 로그인 상태로 그린다
+    return render(c, <LoginRoleNotice locale={c.var.locale} actual={r.user.role} />, 'login.title');
+  }
   return c.redirect('/my');
 });
 

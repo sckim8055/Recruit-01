@@ -29,15 +29,25 @@ export const LoginEmail = ({ locale, error }: { locale: Locale; error?: string }
       <label>{t(locale, 'login.email')}
         <input type="email" name="email" required autocomplete="email" maxlength={254} />
       </label>
-      <label>{t(locale, 'login.role')}
-        <select name="role">
-          <option value="seeker">{t(locale, 'login.role.seeker')}</option>
-          <option value="company">{t(locale, 'login.role.company')}</option>
-        </select>
-      </label>
+      <fieldset>
+        <legend>{t(locale, 'login.role')}</legend>
+        <label class="check"><input type="radio" name="role" value="seeker" required />{t(locale, 'login.role.seeker')}</label>
+        <label class="check"><input type="radio" name="role" value="company" required />{t(locale, 'login.role.company')}</label>
+        <p class="hint">{t(locale, 'login.role.hint')}</p>
+      </fieldset>
       <button type="submit">{t(locale, 'login.send')}</button>
       <p class="muted">{t(locale, 'login.agree')}</p>
     </form>
+  </section>
+);
+
+/** 고른 유형과 계정의 유형이 다를 때: 로그인은 되었고, 어느 유형으로 들어왔는지 알려 준다. */
+export const LoginRoleNotice = ({ locale, actual }: { locale: Locale; actual: string }) => (
+  <section class="card">
+    <h1>{t(locale, 'login.rolenotice.title')}</h1>
+    <p>{t(locale, 'login.rolenotice.body').replace('{role}', t(locale, `login.role.${actual}`))}</p>
+    <p class="muted">{t(locale, 'login.rolenotice.hint')}</p>
+    <p><a class="button" href="/my">{t(locale, 'login.rolenotice.continue')}</a></p>
   </section>
 );
 
