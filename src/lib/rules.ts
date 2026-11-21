@@ -117,3 +117,34 @@ export function nextStatus(current: AppStatus, event: AppEvent): AppStatus {
   const target = EVENT_TO[event];
   return RANK[target] > RANK[current] ? target : current;
 }
+
+// ── 기업 검증: 기업정보 서류를 받지 않은 구인자는 승인할 수 없다 (승인되지 않으면 공고도 게재되지 않는다).
+export interface VerifyInput {
+  entity_type: 'kr_entity' | 'cn_hq';
+  biz_no: string | null;
+  docTypes: string[];          // 올라와 있는 서류 종류
+}
+export type VerifyBlock = 'no_document' | 'biz_no_missing' | 'biz_no_invalid';
+
+/** 빈 배열이면 관리자가 승인할 수 있다. */
+export function verifyBlocks(i: VerifyInput): VerifyBlock[] {
+  const out: VerifyBlock[] = [];
+  const need = i.entity_type === 'kr_entity' ? 'biz_cert' : 'cn_license';
+  if (!i.docTypes.includes(need)) out.push('no_document');
+  if (i.entity_type === 'kr_entity') {
+    if (!i.biz_no) out.push('biz_no_missing');
+    else if (!isValidBizNo(i.biz_no)) out.push('biz_no_invalid');
+  }
+  return out;
+}
+
+/** 한국 사업자등록번호 10자리 검증(체크섬). 하이픈은 무시한다. 실재 여부는 국세청 조회로 따로 확인한다. */
+export function isValidBizNo(raw: string): boolean {
+  const d = raw.replace(/-/g, '');
+  if (!/^\d{10}$/.test(d)) return false;
+  const w = [1, 3, 7, 1, 3, 7, 1, 3, 5];
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += Number(d[i]) * w[i]!;
+  sum += Math.floor((Number(d[8]) * 5) / 10);
+  return (10 - (sum % 10)) % 10 === Number(d[9]);
+}

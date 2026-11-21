@@ -65,3 +65,27 @@ export function canSeeZhSummary(a: Actor, app: ApplicationRef & { summary_approv
   const v = canViewApplication(a, app);
   return v.allow && app.summary_approved_at !== null && app.cross_border_consent_at !== null;
 }
+
+// ── 기업·검증 서류
+
+/** 기업 정보를 고치고 서류를 올릴 수 있는가: 그 기업의 담당자만. 관리자는 승인·반려만 한다. */
+export function canManageCompany(a: Actor, companyId: string): boolean {
+  return a.role === 'company' && a.companyIds.includes(companyId);
+}
+
+/** 담당자를 초대·삭제할 수 있는가: 그 기업의 대표 담당자(owner)만. */
+export function canManageMembers(a: Actor, companyId: string, memberRole: 'owner' | 'member' | null): boolean {
+  return canManageCompany(a, companyId) && memberRole === 'owner';
+}
+
+export interface VerificationDocRef { owner_type: 'company' | 'agency'; owner_id: string }
+
+/**
+ * 검증 서류(사업자등록증 등)를 볼 수 있는가: 올린 쪽 담당자와 관리자만.
+ * 허용되면 호출부는 access_log 에 기록한다 (files.ts 의 serveVerificationDoc 이 한다).
+ */
+export function canViewVerificationDoc(a: Actor, doc: VerificationDocRef): boolean {
+  if (a.role === 'admin') return true;
+  if (doc.owner_type === 'company') return a.role === 'company' && a.companyIds.includes(doc.owner_id);
+  return a.role === 'headhunter' && a.agencyIds.includes(doc.owner_id);
+}
