@@ -70,11 +70,15 @@ describe.skipIf(!hasSqlite)('메일 보내기', () => {
     raw.prepare("INSERT INTO applications (id, job_id, seeker_id, resume_snapshot, cross_border_consent_at, status, status_changed_at, created_at) VALUES ('a1','j1','s1',?,NULL,'viewed',10,10)").run(sealed);
     const sent: Array<Record<string, unknown>> = [];
     let mailStatus = 200;
-    vi.stubGlobal('fetch', vi.fn(async (_u: unknown, init?: RequestInit) => { sent.push(JSON.parse(String(init!.body))); return new Response('{}', { status: mailStatus }); }));
+    vi.stubGlobal('fetch', vi.fn(async (_u: unknown, init?: RequestInit) => {
+      if (mailStatus === -1) throw new TypeError('network down');
+      sent.push(JSON.parse(String(init!.body)));
+      return new Response('{}', { status: mailStatus });
+    }));
     const env = { ENC_KEY: KEY, DB: d1, APP_ENV: 'test', RESEND_API_KEY: 'k', MAIL_FROM: 'Recruit <no-reply@x.test>' } as unknown as Env;
     const load = async () => (await getApplicationWithJob(d1, 'a1'))!;
     const events = () => raw.prepare('SELECT event, actor_id FROM application_events ORDER BY at, id').all().map((r) => ({ ...r }));
-    return { raw, env, load, events, sent, failMail: () => { mailStatus = 500; } };
+    return { raw, env, load, events, sent, failMail: () => { mailStatus = 500; }, breakNetwork: () => { mailStatus = -1; } };
   };
   const local = mk({ id: 'm1', companyIds: ['c1'] });
   const msg = { companyName: '가짜전자', original: '请于11月25日来面试', translationKo: '11월 25일에 면접에 와 주세요', replyTo: 'm1@example.test' };
@@ -122,6 +126,13 @@ describe.skipIf(!hasSqlite)('메일 보내기', () => {
     expect(await sendInterviewRequest(env, local, await load(), msg, t)).toEqual({ ok: false, why: 'mail_failed' });
     expect(await sendRejection(env, local, await load(), msg, t)).toEqual({ ok: false, why: 'mail_failed' });
     expect([events().length, (await load()).status]).toEqual([0, 'viewed']);
+  });
+  it('메일 서버에 연결하지 못해도 예외가 아니라 "보내지 못함" 이고, 발송 기록에는 남는다', async () => {
+    const { env, load, events, breakNetwork, raw } = await setup();
+    breakNetwork();
+    expect(await sendInterviewRequest(env, local, await load(), msg, t)).toEqual({ ok: false, why: 'mail_failed' });
+    expect([events().length, (await load()).status]).toEqual([0, 'viewed']);
+    expect({ ...raw.prepare('SELECT template, result FROM email_log').get()! }).toEqual({ template: 'interview_request', result: 'error_network' });
   });
   it('열 수 없는 지원서에는 보내지 않는다', async () => {
     const { env, load, sent, raw } = await setup();

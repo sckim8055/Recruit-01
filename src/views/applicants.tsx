@@ -12,6 +12,8 @@ import type { ResumeBody } from '../lib/resume';
 import type { AccessLogRow, ApplicantListRow, ApplicationWithJob } from '../db/applicants';
 import { SnapshotFields } from './applications';
 import { Flash } from './company';
+import { ApplicationMailSection, isMailOpen, tf } from './applicant-mail';
+import { REJECT_BATCH_MAX } from '../lib/applicant-mail';
 
 const jobTitle = (l: Locale, title: string | null) => title || t(l, 'job.untitled');
 /** 기업·관리자 쪽 상태 이름 (구직자 쪽 app.status.* 와 다르다: "열람함", "면접 요청함" 처럼 기업이 한 일로 적는다). */
@@ -36,6 +38,11 @@ export interface ApplicantListProps {
   rows: ApplicantListRow[];
   /** 이 담당자가 중국 본사 소속이면 true — 국외 이전 동의가 없는 지원서는 열 수 없다 (authz.canViewApplication). */
   hq: boolean;
+  /** 지원별 면접 요청 메일 수 (T-09b, db/applicant-views.countInterviewMailsByJob). */
+  interviewCounts?: Record<string, number>;
+  /** 결과 표시 (이미 문구로 만든 글). */
+  ok?: string[];
+  error?: string;
 }
 
 export const ApplicantList = (p: ApplicantListProps) => {
@@ -50,21 +57,29 @@ export const ApplicantList = (p: ApplicantListProps) => {
         <p class="hint">{t(l, 'apl.list.order')}</p>
         {p.hq && <p class="hint">{t(l, 'apl.list.hq_note')}</p>}
       </div>
+      {p.ok?.map((x) => <p class="ok">{x}</p>)}
+      {p.error && <p class="error">{p.error}</p>}
       {p.rows.length === 0 ? <p class="muted">{t(l, 'apl.list.empty')}</p> : (
-        <div class="box">
+        <form method="post" action={`/biz/jobs/${p.job.id}/applicants/reject/confirm`} class="box">
           <table>
             <thead><tr>
+              <th>{t(l, 'aplm.list.select')}</th>
               <th>{t(l, 'apl.no')}</th><th>{t(l, 'app.applied_at')}</th><th>{t(l, 'app.status')}</th><th>{t(l, 'resume.f.attachment')}</th><th></th>
             </tr></thead>
             <tbody>
               {p.rows.map((r, i) => {
                 const withdrawn = r.status === 'withdrawn';
                 const blocked = !withdrawn && p.hq && r.cross_border_consent_at === null;
+                const ivCount = p.interviewCounts?.[r.id] ?? 0;
                 return (
                   <tr>
+                    <td>{!blocked && isMailOpen(r.status) && <input type="checkbox" name="id" value={r.id} aria-label={`${t(l, 'aplm.list.select')} ${i + 1}`} />}</td>
                     <td>{i + 1}</td>
                     <td>{fmtDate(r.created_at)}</td>
-                    <td><StatusBadge locale={l} status={r.status} /></td>
+                    <td>
+                      <StatusBadge locale={l} status={r.status} />
+                      {ivCount > 0 && <span class="hint">{tf(l, 'aplm.list.iv_count', { n: ivCount })}</span>}
+                    </td>
                     <td>{withdrawn ? '' : t(l, r.has_file === 1 ? 'common.yes' : 'apl.no_file')}</td>
                     <td>
                       {withdrawn ? <span class="muted">{t(l, 'apl.withdrawn_row')}</span>
@@ -76,7 +91,13 @@ export const ApplicantList = (p: ApplicantListProps) => {
               })}
             </tbody>
           </table>
-        </div>
+          {p.rows.some((r) => isMailOpen(r.status) && !(p.hq && r.cross_border_consent_at === null)) && (
+            <div class="spaced">
+              <p class="hint">{tf(l, 'aplm.list.reject_hint', { max: REJECT_BATCH_MAX })}</p>
+              <div class="actions"><button type="submit" class="plain">{t(l, 'aplm.list.reject_btn')}</button></div>
+            </div>
+          )}
+        </form>
       )}
       <p><a href={`/biz/jobs/${p.job.id}`}>{t(l, 'apl.back_job')}</a></p>
     </section>
@@ -85,7 +106,11 @@ export const ApplicantList = (p: ApplicantListProps) => {
 
 // ── 기업: 지원서 한 건
 
-export const CompanyApplicationPage = (p: { locale: Locale; app: ApplicationWithJob; status: string; body: ResumeBody }) => {
+export const CompanyApplicationPage = (p: {
+  locale: Locale; app: ApplicationWithJob; status: string; body: ResumeBody;
+  /** T-09b: 이 지원에 보낸 면접 요청 수와 답장 주소(로그인한 담당자 본인의 이메일). */
+  mail?: { sent: number; replyTo: string };
+}) => {
   const l = p.locale;
   const a = p.app;
   return (
@@ -107,6 +132,7 @@ export const CompanyApplicationPage = (p: { locale: Locale; app: ApplicationWith
         <p class="hint">{t(l, 'apl.page.content_note')}</p>
         <SnapshotFields locale={l} body={p.body} fileHref={a.file_r2_key ? `/biz/applications/${a.id}/file` : null} />
       </div>
+      {p.mail && <ApplicationMailSection locale={l} appId={a.id} jobId={a.job_id} status={p.status} sent={p.mail.sent} replyTo={p.mail.replyTo} />}
       <p><a href={`/biz/jobs/${a.job_id}/applicants`}>{t(l, 'apl.back_list')}</a></p>
     </section>
   );

@@ -1,7 +1,7 @@
 # 경로 목록
 
 화면은 서버 렌더링 + HTML 폼이다. `✅` 는 구현됨, 나머지는 docs/TASKS.md 의 해당 작업에서 만든다.
-모든 POST 는 같은 출처에서 온 요청만 받는다(`sameOrigin`). `/biz/jobs/:id/applicants`·`/biz/applications*`·`/admin/applications*`·`/admin/access-log` 는 모든 응답(로그인 리다이렉트·403 포함)이 `private, no-store` 이고 HEAD 는 405 다(T-09a). `/my/resumes*`·`/my/applications*`·`/jobs/:id/apply` 는 구직자만(비로그인 → /login, 기업·헤드헌터·관리자 403, 남의 이력서·지원 id 는 404), 모든 응답이 `Cache-Control: private, no-store`. "권한" 칸의 판단은 `authz.ts`·`requireRole` 을 쓴다.
+모든 POST 는 같은 출처에서 온 요청만 받는다(`sameOrigin`). `/biz/jobs/:id/applicants*`·`/biz/applications*`·`/admin/applications*`·`/admin/access-log` 는 모든 응답(로그인 리다이렉트·403 포함)이 `private, no-store` 이고 HEAD 는 405 다(T-09a). `/my/resumes*`·`/my/applications*`·`/jobs/:id/apply` 는 구직자만(비로그인 → /login, 기업·헤드헌터·관리자 403, 남의 이력서·지원 id 는 404), 모든 응답이 `Cache-Control: private, no-store`. "권한" 칸의 판단은 `authz.ts`·`requireRole` 을 쓴다.
 
 ## 공통
 | 경로 | 설명 | 권한 | 상태 |
@@ -56,11 +56,15 @@
 | POST /biz/jobs/:id/approve | 한국어 초안 승인 (본 rev 일 때만) | canEditJob | ✅ |
 | POST /biz/jobs/:id/publish | 게재 (`publishBlocks` 가 비어야 함) | canEditJob | ✅ |
 | POST /biz/jobs/:id/close | 마감 (게재 중 → 마감, 다시 열기 없음) | canEditJob | ✅ |
-| GET /biz/jobs/:id/applicants | 지원자 목록: 지원 순서 번호·지원일·기업용 상태 이름·첨부 여부만 (**개인정보 없음**, 정렬·추천·메모·내보내기·상태 변경 없음). 취소된 지원은 링크 없는 "지원 취소됨", 본사 소속 담당자에게 동의 없는 지원은 링크 없는 안내. 보는 것은 기록하지 않음 | canEditJob (남의 공고 404) | ✅ T-09a |
+| GET /biz/jobs/:id/applicants | 지원자 목록: 지원 순서 번호·지원일·기업용 상태 이름·첨부 여부만 (**개인정보 없음**, 정렬·추천·메모·내보내기·상태 변경 없음). T-09b: 진행 중인 줄마다 불합격 통보용 체크 칸(본사 담당자에게 동의 없는 줄은 없음) + "선택한 지원자에게 불합격 통보", 면접 요청을 보낸 줄에 "면접 요청 N회", 결과 표시 `?ok=interview`, `?ok=rejected&sent=N&failed=M`. 취소된 지원은 링크 없는 "지원 취소됨", 본사 소속 담당자에게 동의 없는 지원은 링크 없는 안내. 보는 것은 기록하지 않음 | canEditJob (남의 공고 404) | ✅ T-09a·b |
 | GET /biz/applications/:id | 지원서 열람: 이 기업 공고의 지원서가 아니면 404 → `openApplication` 한 번(access_log 한 줄, 처음 열면 `viewed` 이벤트로 상태 변경). 내용 = 구직자가 보낸 복사본 그대로 + 첨부 링크. 취소됨(삭제 안내)·국외 이전 동의 없음(403 안내)·열 수 없음은 기록 없이 안내. HEAD 405, 미리 가져오기 503 | canViewApplication | ✅ T-09a |
 | GET /biz/applications/:id/file | 지원서 첨부 내려받기 (`downloadApplicationFile`: 권한 → access_log → attachment, 상태 변경 없음). 볼 수 없거나 첨부 없음 404. HEAD 405 | canViewApplication | ✅ T-09a |
-| POST /biz/applications/:id/interview | 면접 요청 메일 (답장 주소 = 기업 담당자) → `interview_mail` | canViewApplication | T-09b |
-| POST /biz/jobs/:id/reject | 불합격 일괄 통보 → `reject_mail` | canEditJob | T-09b |
+| GET /biz/applications/:id (T-09b 추가) | 진행 중인 지원(새 지원·열람함·검토 중·면접 요청함)이면 아래에 "면접 요청 보내기" 칸(메시지 2000자, 남은 횟수 "N번 더 보낼 수 있습니다", 답장 주소 = 로그인한 담당자 본인 이메일)과 "불합격 통보" 입구(한 건으로 확인 화면). 횟수를 다 썼으면 안내만. 지원서는 이 요청에서 한 번만 연다 | canViewApplication | ✅ T-09b |
+| POST /biz/applications/:id/interview/compose | 쓰기 화면 (미리 보기의 "고치기"). 공고 제목·지원 순서 번호·지원일·상태 + 폼(글 유지)만 — 지원서를 열지 않음(기록 없음), 개인정보 없음 | canViewApplication | ✅ T-09b |
+| POST /biz/applications/:id/interview/preview | `message` → `readMessage`(비었거나 2000자 초과는 400 + 쓰기 화면, 글 유지) → `translateMessage`(엔진에는 메시지 글만) → 원문 \| 한국어 자동 번역 나란히 + "번역 없이 원문만 보내기" + 보내기/고치기. 엔진 없음·실패·원문과 같음이면 "원문만 보냅니다" 안내. 원문·번역은 숨은 칸으로 다음 단계에 | canViewApplication (+ 진행 중, 3번 미만) | ✅ T-09b |
+| POST /biz/applications/:id/interview/send | `message`·`translation`·`only_original` → 원문 다시 검사, 번역 정리(비었거나 원문만·원문과 같음·4배+200자 초과면 버림) → `sendInterviewRequest`(답장 주소 = 담당자 이메일) → 303 `/biz/jobs/:jobId/applicants?ok=interview`(지원서 화면으로 가지 않음 — 열람이 또 기록되므로). 끝난 지원·3번 초과·열 수 없음은 400 안내, 메일 실패는 400 + 글을 지닌 미리 보기, "메일은 보냈지만 기록되지 않음" 안내, 권한 없음 404 | canViewApplication (lib/applicant-mail) | ✅ T-09b |
+| POST /biz/jobs/:id/applicants/reject/confirm | 고른 `id`(여러 개, 중복 제거) → 0개·10개 초과는 400 + 목록, 이 공고의 지원이 아닌 id 가 섞이면 404, 끝난 지원·(본사 담당자) 동의 없는 지원은 빼고 센다(모두 빠지면 400). 확인 화면: 보낼 수, 보낼 정해진 글 그대로(`rejectMail`, 한국어 — 중국어 화면은 같은 문구 키의 중국어 참고도), 되돌릴 수 없음·지원자 상태가 "불합격"·답장 주소 안내 | canEditJob + canViewApplication | ✅ T-09b |
+| POST /biz/jobs/:id/applicants/reject/send | 확인과 같은 검사 → 한 건씩 차례로 `sendRejection` → 303 `/biz/jobs/:id/applicants?ok=rejected&sent=N&failed=M`(숫자만) | canEditJob + canViewApplication (lib/applicant-mail) | ✅ T-09b |
 
 ## 관리자
 | 경로 | 설명 | 작업 |
@@ -83,4 +87,4 @@
 | POST /admin/applications/:id/file | 사유와 함께 첨부 내려받기 (`downloadApplicationFile`, access_log 에 사유). 안 되면 400 + 지원서 화면 | ✅ T-09a |
 | GET /admin/access-log | 열람 기록: 최근 순 50건씩, `?type=application\|resume\|verification_doc`(그 밖의 값은 무시), `?before=<시각>` 커서. 시각·연 사람(이메일·역할)·대상·사유. 지원서 대상은 관리자 지원서 화면으로 연결 | ✅ T-09a |
 
-관리자에게 **없는** 기능: 공고 내용 수정, 이력서 전달, 구직자·기업에게 추천 발송, 지원자 목록·사람 검색, 지원서 수정·일괄 내려받기.
+관리자에게 **없는** 기능: 공고 내용 수정, 이력서 전달, 구직자·기업에게 추천 발송, 지원자에게 메일 보내기(면접 요청·불합격 통보는 기업 담당자만, T-09b), 지원자 목록·사람 검색, 지원서 수정·일괄 내려받기.

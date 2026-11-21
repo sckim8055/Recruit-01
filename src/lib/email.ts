@@ -20,18 +20,23 @@ export async function sendMail(env: Env, mail: Mail): Promise<boolean> {
       result = 'console';
     } else result = 'no_api_key';
   } else {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        from: env.MAIL_FROM,
-        to: [mail.to],
-        subject: mail.subject,
-        text: mail.text,
-        ...(mail.replyTo ? { reply_to: mail.replyTo } : {}),
-      }),
-    });
-    result = res.ok ? 'sent' : `error_${res.status}`;
+    // 연결 실패(예외)도 "보내지 못함" 으로 처리하고 기록을 남긴다 — 예외가 밖으로 나가면 호출부마다 따로 잡아야 하고 기록도 빠진다.
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          from: env.MAIL_FROM,
+          to: [mail.to],
+          subject: mail.subject,
+          text: mail.text,
+          ...(mail.replyTo ? { reply_to: mail.replyTo } : {}),
+        }),
+      });
+      result = res.ok ? 'sent' : `error_${res.status}`;
+    } catch {
+      result = 'error_network';
+    }
   }
   await insertEmailLog(env.DB, crypto.randomUUID(), await sha256Hex(mail.to.toLowerCase()), mail.template, result, now());
   return result === 'sent' || result === 'console';

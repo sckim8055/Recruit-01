@@ -21,8 +21,9 @@ import { countApplicationsByJob } from '../db/applicants';
 
 export const biz = new Hono<AppEnv>();
 
-// 지원자 화면(T-09a): 권한 검사보다 먼저 no-store·HEAD/미리 가져오기 거절을 건다 (로그인 리다이렉트·403 에도 붙게, 기록 전에 거절되게).
+// 지원자 화면(T-09a)·지원자 메일(T-09b): 권한 검사보다 먼저 no-store·HEAD/미리 가져오기 거절을 건다 (로그인 리다이렉트·403 에도 붙게, 기록 전에 거절되게).
 biz.use('/jobs/:id/applicants', noStore, humanGetOnly);
+biz.use('/jobs/:id/applicants/*', noStore, humanGetOnly); // 불합격 통보 (T-09b, POST 뿐)
 biz.use('/applications/*', noStore, humanGetOnly);
 
 // /biz 아래 모든 경로는 기업 담당자·헤드헌터만.
