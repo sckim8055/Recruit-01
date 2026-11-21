@@ -27,7 +27,7 @@
       "database_name": "recruit-test",
       // npx wrangler d1 create recruit-test 가 보여 주는 database_id 로 바꾼다 (docs/DEPLOY.md 2-3).
       // (이 값이 바뀌면 로컬 개발 DB 도 새로 만들어진다 — 로컬 D1 은 이 id 로 저장된다. 로컬 데이터는 가짜뿐이라 괜찮다.)
-      "database_id": "REPLACE_WITH_D1_ID",
+      "database_id": "b5478ded-7948-436a-8e2d-91507bd5ad30",
       "migrations_dir": "migrations"
     }
   ],

@@ -95,6 +95,9 @@ npx wrangler d1 create recruit-test
 (아래쪽 `"production"` 구역의 `REPLACE_WITH_PROD_D1_ID` 는 건드리지 않는다.)
 참고: 이 값을 바꾸면 내 PC 의 로컬 개발 DB 도 새로 만들어진다(로컬 DB 는 이 id 로 저장된다). 로컬 데이터는 가짜뿐이라 괜찮다 — start.bat 이 표를 다시 만든다.
 
+R2 는 계정에서 한 번 켜야 쓸 수 있다. 켜지 않았으면 아래 명령이 `Please enable R2 through the Cloudflare Dashboard. [code: 10042]` 로 실패한다.
+켜는 법: https://dash.cloudflare.com → 왼쪽 메뉴 **Storage & databases → R2 → Overview** → 화면의 안내대로 R2 를 신청(결제 수단 등록을 요구한다. 무료 범위: 저장 10GB·월, 그 안이면 청구되지 않는다). 그다음 아래 명령을 다시 실행한다.
+
 ```
 npx wrangler r2 bucket create recruit-test-files
 ```
