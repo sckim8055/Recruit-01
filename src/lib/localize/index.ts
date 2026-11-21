@@ -49,18 +49,24 @@ async function call(engine: LocalizeEngine, env: LocalizeEnv, req: Parameters<Lo
 /** 엔진 하나로 초안과 대조본을 만든다 (호출 두 번). 실패 사유는 짧은 코드로. */
 export async function runEngine(engine: LocalizeEngine, env: LocalizeEnv, input: LocalizeInput, clock: () => number = Date.now): Promise<EngineRun> {
   const t0 = clock();
-  const fail = (error: string): EngineRun => {
-    console.error(`localize: engine=${engine.id} failed=${error}`);
+  const fail = (error: string, detail?: string): EngineRun => {
+    // detail(제공자의 오류 설명)은 개발 환경에서만 찍는다. 개발 환경에는 가짜 데이터만 있다 (CLAUDE.md 규칙 10).
+    const more = detail && (env as { APP_ENV?: string }).APP_ENV === 'dev' ? ` detail=${detail}` : '';
+    console.error(`localize: engine=${engine.id} failed=${error}${more}`);
     return { ok: false, error, ms: clock() - t0 };
   };
   try {
-    const ko = parseLocalized(await call(engine, env, localizeRequest(input)));
-    if (!ko.ok) return fail(`output_${ko.why}`);
-    const back = parseBack(await call(engine, env, backRequest(ko)));
-    if (!back.ok) return fail(`back_output_${back.why}`);
+    // 모델이 낸 글의 앞부분(200자)은 형식이 틀렸을 때 진단용으로만 쓴다 — fail() 이 개발 환경에서만 찍는다.
+    const head = (s: string) => s.replace(/\s+/g, ' ').slice(0, 200);
+    const koRaw = await call(engine, env, localizeRequest(input));
+    const ko = parseLocalized(koRaw);
+    if (!ko.ok) return fail(`output_${ko.why}`, head(koRaw));
+    const backRaw = await call(engine, env, backRequest(ko));
+    const back = parseBack(backRaw);
+    if (!back.ok) return fail(`back_output_${back.why}`, head(backRaw));
     return { ok: true, title_ko: ko.title_ko, body_ko: ko.body_ko, back_zh: back.back_zh, ms: clock() - t0 };
   } catch (e) {
-    return fail(e instanceof EngineError ? e.message : 'error');
+    return e instanceof EngineError ? fail(e.message, e.detail) : fail('error');
   }
 }
 

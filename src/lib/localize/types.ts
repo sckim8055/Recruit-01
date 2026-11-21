@@ -29,7 +29,11 @@ export interface LocalizeEngine {
 
 /** 엔진 호출 실패. status 는 HTTP 상태(있으면). 메시지에 요청·응답 본문이나 키를 넣지 않는다. */
 export class EngineError extends Error {
-  constructor(readonly code: 'http' | 'timeout' | 'bad_response' | 'network', readonly status?: number) {
+  /**
+   * detail: 제공자가 돌려준 오류 설명(예: "model not found"). 진단용이며 **개발 환경(APP_ENV=dev)에서만** 콘솔에 찍는다
+   * (lib/localize/index.ts). 화면·메시지에는 넣지 않는다. 운영·테스트 환경에서는 버린다.
+   */
+  constructor(readonly code: 'http' | 'timeout' | 'bad_response' | 'network', readonly status?: number, readonly detail?: string) {
     super(status ? `${code}_${status}` : code);
   }
 }

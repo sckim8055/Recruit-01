@@ -9,14 +9,33 @@ export async function postJson(url: string, headers: Record<string, string>, bod
     throw new EngineError(signal.aborted ? 'timeout' : 'network');
   }
   if (!res.ok) {
-    // 오류 본문은 읽어서 버린다 (연결 정리). 내용은 남기지 않는다.
-    await res.body?.cancel().catch(() => {});
-    throw new EngineError('http', res.status);
+    // 오류 본문에서 제공자의 오류 설명만 짧게 꺼낸다 (진단용, 개발 환경에서만 찍힌다 — EngineError.detail).
+    throw new EngineError('http', res.status, await errorDetail(res));
   }
   try {
     return await res.json();
   } catch {
     throw new EngineError(signal.aborted ? 'timeout' : 'bad_response');
+  }
+}
+
+/** 오류 응답에서 설명 문장만 뽑는다: {error:{message,status}} (Google·Anthropic·OpenAI 공통 모양) 또는 {errors:[{message}]} (Cloudflare). 300자까지. */
+export async function errorDetail(res: Response): Promise<string | undefined> {
+  try {
+    const text = (await res.text()).slice(0, 4000);
+    let msg = '';
+    try {
+      const j: unknown = JSON.parse(text);
+      if (isObj(j)) {
+        const e = j.error;
+        if (isObj(e)) msg = [e.status, e.type, e.code, e.message].filter((x) => typeof x === 'string' || typeof x === 'number').join(' ');
+        else if (typeof e === 'string') msg = e;
+        else if (Array.isArray(j.errors) && isObj(j.errors[0]) && typeof j.errors[0].message === 'string') msg = j.errors[0].message;
+      }
+    } catch { /* JSON 이 아니면 설명 없이 */ }
+    return msg ? msg.replace(/\s+/g, ' ').slice(0, 300) : undefined;
+  } catch {
+    return undefined;
   }
 }
 
