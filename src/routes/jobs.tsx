@@ -1,7 +1,7 @@
 // 공개 공고 목록·상세 (/jobs, /jobs/:id) 와 홈(/). 누구나 볼 수 있다.
 // 공개 조건은 db/public-jobs.publicJobWhere (= lib/public-jobs.isPubliclyVisible) 하나다. 보이지 않는 공고는 보통의 404 — 있는지 알리지 않는다.
 // 로그인하지 않은 요청은 lib/page-cache 의 캐시를 거친다 (60초).
-import { Hono, type Context } from 'hono';
+import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { flagsOf, now, type AppEnv } from '../env';
 import { findPublicJob, listPublicJobs } from '../db/public-jobs';
 import { listOptions } from '../db/options';
@@ -11,13 +11,26 @@ import {
   canonicalJobHref, canonicalJobsHref, filterChoices, HOME_JOB_COUNT, isJobId, pageOf, pageQuery, parseEnabledFilters, parseJobFilter, parsePage,
   PUBLIC_FILTERS_SETTING,
 } from '../lib/public-jobs';
-import { pageCache } from '../lib/page-cache';
+import { pageCache, PAGE_VARY, PRIVATE_CACHE_CONTROL } from '../lib/page-cache';
 import { render, renderError } from '../render';
 import { Home } from '../views/pages';
 import { PublicJobList, PublicJobPage, type ApplyState } from '../views/public-jobs';
 import { hasApplied } from '../db/applications';
 
 export const jobs = new Hono<AppEnv>();
+
+/**
+ * 홈의 캐시 (index.tsx 에서 '/' 에 붙인다). 탈퇴 직후의 `?bye=1` 요청은 page-cache 를 거치지 않고 no-store 로 그린다 —
+ * 안내 문구가 든 화면이 공유 캐시에 들어가지 않게. 안내 문구는 이 경로에서만 그려지므로(homePage 가 bye=1 일 때만 그림)
+ * 캐시되는 홈(`/`, 그 밖의 검색 조건)에는 들어가지 않는다.
+ */
+export const homeCache: MiddlewareHandler<AppEnv> = async (c, next) => {
+  if (c.req.query('bye') !== '1') return pageCache(c, next);
+  await next();
+  c.res.headers.set('Cache-Control', PRIVATE_CACHE_CONTROL);
+  c.res.headers.set('Vary', PAGE_VARY);
+  c.res.headers.set('X-Page-Cache', 'bypass');
+};
 
 /** 홈 (index.tsx 에서 '/' 에 붙인다). */
 // 직무·업계·근무지 이름(job_options, T-06e)은 캐시에 없는 요청마다 listOptions 한 번으로 읽는다 (약 50행). 따로 캐시하지 않는다 (메모리 전역 없음).
@@ -26,7 +39,7 @@ export async function homePage(c: Context<AppEnv>) {
     listPublicJobs(c.env.DB, { flags: flagsOf(c.env), now: now(), filter: {}, limit: HOME_JOB_COUNT, offset: 0 }),
     listOptions(c.env.DB),
   ]);
-  return render(c, <Home locale={c.var.locale} jobs={rows} options={buildOptionSet(optionRows)} />);
+  return render(c, <Home locale={c.var.locale} jobs={rows} options={buildOptionSet(optionRows)} bye={c.req.query('bye') === '1'} />);
 }
 
 /** 요청 주소(경로 + 검색 조건)가 정규화 주소와 다른가. */

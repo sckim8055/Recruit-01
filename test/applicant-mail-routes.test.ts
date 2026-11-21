@@ -5,6 +5,7 @@ import app from '../src/index';
 import { INTERVIEW_MAIL_MAX, rejectMail } from '../src/lib/applicant-mail';
 import { b64url, sha256Hex } from '../src/lib/crypto';
 import { t } from '../src/lib/i18n';
+import { agreeRequired } from './consent-fixture';
 import { hasSqlite, migratedDb } from './sqlite-d1';
 
 const ENC_KEY = b64url(new Uint8Array(32).fill(7)).replace(/-/g, '+').replace(/_/g, '/');
@@ -76,6 +77,7 @@ function world(o: { engine?: string } = {}) {
       const token = `tok-${who}`;
       raw.prepare('INSERT OR IGNORE INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?)')
         .run(await sha256Hex(`${PEPPER}|${token}`), who, 0, 4_000_000_000, who === 'adm' ? 1 : 0);
+      agreeRequired(raw, who); // T-11 동의 확인을 통과하게 (test/consent-fixture.ts)
       sessions.set(who, token);
     }
     return { cookie: `sid=${sessions.get(who)}; lang=${lang}` };

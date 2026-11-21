@@ -5,7 +5,7 @@ import type { ConsentRow } from '../lib/consent';
 /** 그 회원의 terms·privacy 동의 (철회 여부 포함). 요청마다 한 번 읽는다 — idx_consents_user(user_id, type). */
 export async function listRequiredConsents(db: D1Database, userId: string): Promise<ConsentRow[]> {
   const r = await db.prepare(
-    "SELECT type, version, withdrawn_at FROM consents WHERE user_id = ? AND type IN ('terms','privacy')",
+    "SELECT type, version, withdrawn_at, agreed_at FROM consents WHERE user_id = ? AND type IN ('terms','privacy')",
   ).bind(userId).all<ConsentRow>();
   return r.results;
 }

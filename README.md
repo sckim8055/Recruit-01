@@ -102,3 +102,26 @@ npx wrangler d1 execute DB --local --command "UPDATE users SET role='admin' WHER
 ```
 npx wrangler d1 execute DB --local --command "UPDATE users SET totp_secret=NULL, totp_last_step=NULL WHERE email='내이메일@example.com'"
 ```
+
+## 이용약관·개인정보처리방침 (운영 전에 반드시 채울 것)
+
+- 글이 있는 곳: `src/legal/terms.ts`(이용약관) · `src/legal/privacy.ts`(개인정보처리방침), 운영자 정보(상호·대표자·주소·문의 이메일·보호책임자)는 `src/legal/types.ts` 의 `OPERATOR`.
+  한국어가 기준이고 중국어는 참고 번역이다. 화면은 `/terms`, `/privacy` (모든 화면 아래쪽에 링크).
+- **운영 서버에 올리기 전에** 할 일:
+  1. 위 세 파일에서 `【확인 필요` / `【待确认` 로 표시된 곳을 모두 채운다 (상호·대표자·주소·문의 이메일·보호책임자·신고번호·시행일·동의 기록 보관 기간·위탁 계약 여부).
+  2. 문서를 노무·개인정보 전문가에게 검토받는다. 문서에 적힌 내용(수집 항목·보관 기간·국외 보관·탈퇴 때 지워지는 것)이 실제 동작과 같아야 한다.
+  3. 시행일을 정해 `effective` 줄에 적는다.
+  4. 모두 채웠으면 `test/account.test.ts` 의 마지막 테스트("운영자가 채워야 할 표시가 남아 있다")를 `toBe(0)` 으로 바꾼다.
+- **글을 고칠 때마다** `src/lib/consent.ts` 의 `TERMS_VERSION`(약관) 또는 `PRIVACY_VERSION`(방침)을 새 값(예: `2026-12-1`)으로 올린다.
+  올리면 로그인한 회원은 다음 요청 때 동의 화면(`/consent`)으로 가서 바뀐 문서에 다시 동의한다. 오타만 고친 경우에도 올릴지는 운영자가 정한다.
+- 지원할 때 받는 중국 본사 담당자 열람(국외 이전) 동의 문구는 `src/locales/ko.ts`·`zh.ts` 의 `apply.consent.*` 이고, 방침 5항과 같은 내용이어야 한다. 바꾸면 `src/lib/application.ts` 의 `CROSS_BORDER_VERSION` 을 올린다.
+
+## 회원 탈퇴
+
+회원은 **계정**(`/my/account`) → "탈퇴 절차 보기" 에서 로그인 이메일을 입력해 스스로 탈퇴한다. 무엇이 지워지고 남는지는 docs/ARCHITECTURE.md 13절.
+- 다른 담당자가 있는 기업의 대표 담당자는 탈퇴할 수 없다(대표를 넘기는 화면이 아직 없다). 다른 담당자를 내보낸 뒤 탈퇴하게 안내한다.
+- 관리자 계정은 화면에서 탈퇴할 수 없다. 꼭 지워야 하면 먼저 역할을 구직자로 바꾼 뒤(아래 명령), 그 계정으로 로그인해 계정 화면에서 탈퇴한다.
+
+```
+npx wrangler d1 execute DB --remote --command "UPDATE users SET role='seeker', totp_secret=NULL WHERE email='지울관리자@example.com'"
+```

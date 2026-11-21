@@ -12,7 +12,15 @@ import { companies } from './routes/companies';
 import { homePage, jobs } from './routes/jobs';
 import { resumes } from './routes/resumes';
 import { applications, apply } from './routes/applications';
-import { pageCache } from './lib/page-cache';
+import { missingConsents, needsConsentCheck, safeNext } from './lib/consent';
+import { listRequiredConsents } from './db/consents';
+import { PUBLIC_FILES } from './lib/static-files';
+import { render } from './render';
+import { account } from './routes/account';
+import { legal } from './routes/legal';
+import { NO_STORE } from './routes/guards';
+import { ConsentRequired } from './views/account';
+import { homeCache } from './routes/jobs';
 
 const app = new Hono<AppEnv>();
 
@@ -26,12 +34,34 @@ app.use('*', async (c, next) => {
   await next();
 });
 
+// 이용약관·개인정보 동의 확인 (T-11). 로그인한 회원(관리자 제외)이 지금 판에 동의하지 않았으면 서비스 화면을 열 수 없다.
+// - 비로그인 요청은 여기서 아무것도 읽지 않는다 (캐시되는 공개 화면이 D1 을 읽지 않게). 로그인한 요청은 요청마다 작은 읽기 한 번
+//   (consents 의 idx_consents_user). 따로 캐시하지 않는다.
+// - 예외 주소(문서·동의 화면·로그인·로그아웃·언어·계정/탈퇴, lib/consent.consentExempt)와 public/ 의 정적 파일은 확인하지 않는다.
+// - GET·HEAD → /consent?next=<원래 경로+검색 조건> (safeNext 가 받는 경로일 때만), 그 밖의 메서드 → 403 (아무것도 처리하지 않는다).
+app.use('*', async (c, next) => {
+  const u = c.var.user;
+  const path = c.req.path;
+  if (!u || PUBLIC_FILES.has(path) || !needsConsentCheck(u.role, path)) return next();
+  if (!missingConsents(await listRequiredConsents(c.env.DB, u.id)).length) return next();
+  c.header('Cache-Control', NO_STORE);
+  if (c.req.method === 'GET' || c.req.method === 'HEAD') {
+    const url = new URL(c.req.url);
+    const orig = url.pathname + url.search;
+    return c.redirect(safeNext(orig) === orig ? `/consent?next=${encodeURIComponent(orig)}` : '/consent');
+  }
+  return render(c, <ConsentRequired locale={c.var.locale} />, 'consent.gate.title', 403);
+});
+
 // 홈·공고 화면은 로그인하지 않은 요청을 60초 캐시한다 (lib/page-cache.ts).
-app.get('/', pageCache, homePage);
+// ?bye=1 (탈퇴 직후 안내)은 캐시를 거치지 않는다 (routes/jobs.homeCache).
+app.get('/', homeCache, homePage);
 app.get('/api/health', (c) => c.json({ ok: true, env: c.env.APP_ENV }));
 app.route('/my/resumes', resumes);
 app.route('/my/applications', applications);
 app.route('/', auth);
+app.route('/', legal);
+app.route('/', account);
 app.route('/biz', biz);
 app.route('/admin', admin);
 app.route('/companies', companies);

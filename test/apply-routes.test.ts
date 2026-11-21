@@ -5,6 +5,7 @@ import app from '../src/index';
 import { CROSS_BORDER_VERSION } from '../src/lib/application';
 import { b64url, importEncKey, sha256Hex } from '../src/lib/crypto';
 import { openResume } from '../src/lib/resume';
+import { agreeRequired } from './consent-fixture';
 import { hasSqlite, migratedDb } from './sqlite-d1';
 
 const te = new TextEncoder();
@@ -78,6 +79,7 @@ function world() {
       const token = `tok-${who}`;
       raw.prepare('INSERT OR IGNORE INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?)')
         .run(await sha256Hex(`${PEPPER}|${token}`), who, 0, 4_000_000_000, who === 'adm' ? 1 : 0);
+      agreeRequired(raw, who); // T-11 동의 확인을 통과하게 (test/consent-fixture.ts)
       sessions.set(who, token);
     }
     return { cookie: `sid=${sessions.get(who)}; lang=${lang}` };
@@ -95,6 +97,7 @@ function world() {
   const resumes = (user = 's1') => raw.prepare('SELECT id, title, body, file_r2_key FROM resumes WHERE user_id = ? ORDER BY created_at, rowid').all(user) as {
     id: string; title: string; body: string; file_r2_key: string | null;
   }[];
+  // table 에 WHERE 를 붙여 쓸 수 있다 (T-11: 로그인한 테스트 사용자에게는 이용약관·개인정보 동의 행이 있으므로 국외 이전 동의만 센다)
   const count = (table: string) => Number(raw.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()!.n);
   return { raw, env, store, sw, get, post, apps, resumes, count };
 }
@@ -194,7 +197,7 @@ describe.skipIf(!hasSqlite)('지원 화면', () => {
     expect(new TextDecoder('latin1').decode(w.store.get(a!.file_r2_key!)!)).not.toContain(SECRET_IN_FILE);
     expect(w.store.has(r.file_r2_key!)).toBe(true);
     // 선택 동의를 하지 않았으므로 동의 기록이 없다
-    expect(w.count('consents')).toBe(0);
+    expect(w.count("consents WHERE type = 'cross_border'")).toBe(0);
 
     // 결과 화면: 고친 내용, 동의하지 않음, 첨부 링크
     const page = await w.get(`/my/applications/${id}?ok=applied`);
@@ -237,7 +240,7 @@ describe.skipIf(!hasSqlite)('지원 화면', () => {
     expect(res.status).toBe(302);
     const [a] = w.apps();
     expect(a!.cross_border_consent_at).not.toBeNull();
-    expect({ ...w.raw.prepare('SELECT user_id, type, version, ref_id FROM consents').get()! })
+    expect({ ...w.raw.prepare("SELECT user_id, type, version, ref_id FROM consents WHERE type = 'cross_border'").get()! })
       .toEqual({ user_id: 's1', type: 'cross_border', version: CROSS_BORDER_VERSION, ref_id: a!.id });
     expect(await (await w.get(`/my/applications/${a!.id}`)).text()).toContain('동의함');
   });
@@ -252,7 +255,7 @@ describe.skipIf(!hasSqlite)('지원 화면', () => {
     const res = await w.post(`/jobs/${J4}/apply`, applyForm(r.id, { consent: '1' }));
     expect(res.status).toBe(302);
     expect(w.apps()[0]!.cross_border_consent_at).toBeNull();
-    expect(w.count('consents')).toBe(0);
+    expect(w.count("consents WHERE type = 'cross_border'")).toBe(0);
     expect(await (await w.get('/my/applications')).text()).toContain('기업명 비공개');
   });
 
@@ -275,7 +278,7 @@ describe.skipIf(!hasSqlite)('지원 화면', () => {
     const ok = await w.post(`/jobs/${J2}/apply`, applyForm(r.id, { consent: '1' }));
     expect(ok.status).toBe(302);
     expect(w.apps()[0]!.cross_border_consent_at).not.toBeNull();
-    expect(w.count('consents')).toBe(1);
+    expect(w.count("consents WHERE type = 'cross_border'")).toBe(1);
     expect(w.store.size).toBe(objects + 1);
   });
 
@@ -451,7 +454,7 @@ describe.skipIf(!hasSqlite)('지원 화면', () => {
     expect(w.store.has(key)).toBe(false);
     expect(w.store.has(r.file_r2_key!)).toBe(true); // 이력서 원본 파일은 그대로
     expect({ ...w.raw.prepare('SELECT application_id, event, actor_id FROM application_events').get()! }).toEqual({ application_id: id, event: 'withdrawn', actor_id: 's1' });
-    expect(w.raw.prepare('SELECT withdrawn_at FROM consents').get()!.withdrawn_at).not.toBeNull();
+    expect(w.raw.prepare("SELECT withdrawn_at FROM consents WHERE type = 'cross_border'").get()!.withdrawn_at).not.toBeNull();
 
     const page = await (await w.get(`/my/applications/${id}?ok=withdrawn`)).text();
     expect(page).toContain('지원을 취소해 내용이 삭제되었습니다');

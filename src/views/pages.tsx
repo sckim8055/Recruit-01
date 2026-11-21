@@ -5,8 +5,9 @@ import type { PublicJobListRow } from '../db/public-jobs';
 import { PublicJobItem } from './public-jobs';
 
 /** 홈: 짧은 소개 + 최신 공개 공고 몇 건(목록과 같은 줄 모양) + 전체 목록 링크. */
-export const Home = ({ locale, jobs, options }: { locale: Locale; jobs: PublicJobListRow[]; options: OptionSet }) => (
+export const Home = ({ locale, jobs, options, bye }: { locale: Locale; jobs: PublicJobListRow[]; options: OptionSet; bye?: boolean }) => (
   <>
+    {bye && <p class="ok">{t(locale, 'home.bye')}</p>}
     <section class="hero">
       <h1>{t(locale, 'site.tagline')}</h1>
       <p>{t(locale, 'home.lead')}</p>
@@ -36,7 +37,7 @@ export const LoginEmail = ({ locale, error }: { locale: Locale; error?: string }
         <p class="hint">{t(locale, 'login.role.hint')}</p>
       </fieldset>
       <button type="submit">{t(locale, 'login.send')}</button>
-      <p class="muted">{t(locale, 'login.agree')}</p>
+      <p class="muted">{t(locale, 'login.agree')} <a href="/terms">{t(locale, 'footer.terms')}</a> · <a href="/privacy">{t(locale, 'footer.privacy')}</a></p>
     </form>
   </section>
 );
@@ -75,6 +76,8 @@ export const MySeeker = ({ locale, email }: { locale: Locale; email: string }) =
     <p class="muted">{t(locale, 'my.seeker.resumes_note')}</p>
     <p><a href="/my/applications">{t(locale, 'my.seeker.applications')}</a></p>
     <p class="muted">{t(locale, 'my.seeker.applications_note')}</p>
+    <p><a href="/my/account">{t(locale, 'my.account')}</a></p>
+    <p class="muted">{t(locale, 'my.account_note')}</p>
     <p class="muted">{email}</p>
   </section>
 );

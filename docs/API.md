@@ -1,12 +1,12 @@
 # 경로 목록
 
 화면은 서버 렌더링 + HTML 폼이다. `✅` 는 구현됨, 나머지는 docs/TASKS.md 의 해당 작업에서 만든다.
-모든 POST 는 같은 출처에서 온 요청만 받는다(`sameOrigin`). `/biz/jobs/:id/applicants*`·`/biz/applications*`·`/admin/applications*`·`/admin/access-log` 는 모든 응답(로그인 리다이렉트·403 포함)이 `private, no-store` 이고 HEAD 는 405 다(T-09a). `/my/resumes*`·`/my/applications*`·`/jobs/:id/apply` 는 구직자만(비로그인 → /login, 기업·헤드헌터·관리자 403, 남의 이력서·지원 id 는 404), 모든 응답이 `Cache-Control: private, no-store`. "권한" 칸의 판단은 `authz.ts`·`requireRole` 을 쓴다.
+모든 POST 는 같은 출처에서 온 요청만 받는다(`sameOrigin`). `/biz/jobs/:id/applicants*`·`/biz/applications*`·`/admin/applications*`·`/admin/access-log` 는 모든 응답(로그인 리다이렉트·403 포함)이 `private, no-store` 이고 HEAD 는 405 다(T-09a). `/consent`·`/my/account*` 의 모든 응답도 `private, no-store` 다(T-11). `/my/resumes*`·`/my/applications*`·`/jobs/:id/apply` 는 구직자만(비로그인 → /login, 기업·헤드헌터·관리자 403, 남의 이력서·지원 id 는 404), 모든 응답이 `Cache-Control: private, no-store`. "권한" 칸의 판단은 `authz.ts`·`requireRole` 을 쓴다.
 
 ## 공통
 | 경로 | 설명 | 권한 | 상태 |
 |---|---|---|---|
-| GET / | 홈 (소개 + 최신 공개 공고 5건). 비로그인은 60초 캐시 | 누구나 | ✅ |
+| GET / | 홈 (소개 + 최신 공개 공고 5건). 비로그인은 60초 캐시. `?bye=1`(탈퇴 직후)은 한 줄 안내를 그리고 캐시하지 않음(`private, no-store`) | 누구나 | ✅ |
 | GET /login · POST /login/request · POST /login/verify | 이메일 인증코드 로그인·가입 | 누구나 | ✅ |
 | POST /logout | 로그아웃 | 로그인 | ✅ |
 | GET·POST /login/totp | 관리자 2단계 인증 (최초에는 인증 앱 등록) | 인증코드를 통과한 관리자 | ✅ |
@@ -15,7 +15,13 @@
 | GET /biz | 기업 첫 화면 (소속 없음: 받은 초대 + 기업 등록 폼 / 소속 있음: 검증 상태·남은 할 일·새 지원 요약 "새 지원 M건 · 전체 N건"(새 지원자 알림 메일이 이 주소로 연결)). 헤드헌터는 임시 화면 | company, headhunter | ✅ |
 | GET /api/health | 상태 확인 | 누구나 | ✅ |
 | (없는 경로) · 권한 없음 | 404 · 403 화면 (공통 레이아웃, 한국어·중국어) | 누구나 | ✅ |
-| GET /terms · /privacy | 약관·개인정보처리방침 | 누구나 | T-11 |
+| GET /terms · /privacy | 이용약관·개인정보처리방침 (`src/legal/`, 현재 언어). 비로그인은 60초 캐시. 동의 없이도 열림 | 누구나 | ✅ T-11 |
+| (모든 경로) 동의 확인 | 로그인한 회원(관리자 제외)이 지금 판의 약관·개인정보 동의가 없으면 GET·HEAD → `/consent?next=<경로>`, 그 밖은 403. 비로그인·예외 주소(`/consent` `/terms` `/privacy` `/logout` `/login*` `/lang/*` `/my/account*` `/api/health`)·정적 파일은 확인하지 않음. `private, no-store` (ARCHITECTURE 13절) | — | ✅ T-11 |
+| GET /consent | 동의 화면: 빠진 종류의 체크 칸만(미리 체크 없음), 이미 동의한 종류는 안내, 수집 항목·목적·보유 기간·국외 보관 요약, 탈퇴·로그아웃 안내, 숨은 `next`. 빠진 것이 없으면 `safeNext(next)` 로 302. 비로그인 → /login, 관리자 → /admin | 로그인 (관리자 제외) | ✅ T-11 |
+| POST /consent | `terms=1`·`privacy=1`·`next` → 빠진 종류가 모두 체크돼야 함(아니면 400, 기록 없음) → 빠진 종류만 `consents` 에 기록 → 303 `safeNext(next)`(밖으로 나가는 주소·예외 주소는 `/my`) | 로그인 (관리자 제외) | ✅ T-11 |
+| GET /my/account | 계정: 로그인 이메일·유형·동의 내역(판)·문서 링크·회원 탈퇴 입구. 관리자·다른 담당자가 있는 기업의 대표 담당자는 입구 대신 이유 | 로그인 | ✅ T-11 |
+| GET /my/account/delete | 탈퇴 확인 화면(지워지는 것·남는 것, 로그인 이메일 입력 칸). 막히는 계정은 계정 화면 | 로그인 | ✅ T-11 |
+| POST /my/account/delete | `confirm`(로그인 이메일) 다르면 400(아무것도 안 바뀜) → `deleteAccount` → 막히면 400 + 계정 화면 → 세션 쿠키 삭제, 303 `/?bye=1`(홈에 한 줄 안내, 이 요청은 캐시 안 함) | 로그인 | ✅ T-11 |
 
 ## 구직자
 | 경로 | 설명 | 권한 | 작업 |

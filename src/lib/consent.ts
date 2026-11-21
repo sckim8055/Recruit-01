@@ -16,7 +16,7 @@ export const REQUIRED_CONSENTS: Array<{ type: RequiredConsent; version: string }
   { type: 'privacy', version: PRIVACY_VERSION },
 ];
 
-export interface ConsentRow { type: string; version: string; withdrawn_at: number | null }
+export interface ConsentRow { type: string; version: string; withdrawn_at: number | null; agreed_at?: number }
 
 /** 아직 받지 않은 필수 동의. 빈 배열이면 통과. 철회한 동의·옛 판의 동의는 세지 않는다. */
 export function missingConsents(rows: ConsentRow[]): RequiredConsent[] {

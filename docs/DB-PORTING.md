@@ -23,6 +23,8 @@
 | `src/db/applications.ts` | applications · application_events · consents(cross_border): 지원 여부, 기업 담당자 수(본사/그 밖)·알림 주소(활성 계정), 공개 조건·중복을 다시 확인하는 조건부 추가(+ 동의), 내 지원 한 건·목록, 취소(이벤트 + 상태 + 내용 삭제 + 동의 철회), 파일 키 목록. 구직자 쪽 문장은 모두 `seeker_id` 조건 |
 | `src/db/application-views.ts` | applications + jobs + companies (지원 현황 화면: 내가 지원한 공고 중 지금 공개 중인 공고 id, `publicJobWhere` 재사용, 읽기만) |
 | `src/db/applicants.ts` | applications + jobs + access_log + users (기업·관리자 쪽, T-09): 공고의 지원 목록(내용 없음), 기업의 공고별 지원 수, 지원 한 건 + 공고 소속(권한 판단용, 암호문 포함 — `lib/applicants.openApplication` 만 쓴다), `viewed` 이벤트 + 상태, 열람 기록 목록(관리자)·지원서별 열람 기록(구직자, 역할·시각만) |
+| `src/db/consents.ts` | consents (type `terms`·`privacy`): 그 회원의 필수 동의 읽기(요청마다 한 번, `idx_consents_user`), 같은 판의 유효한 동의가 없을 때만 추가. 국외 이전(`cross_border`)은 `applications.ts` |
+| `src/db/account.ts` | 회원 탈퇴(T-11): 다른 담당자가 있는 기업의 대표인지 세기, 한 트랜잭션으로 지우기 — applications·application_events·consents·resumes·seeker_profiles·alerts·jobs(혼자 맡던 기업의 게재 중 공고 마감)·company_members·agency_members·company_invites·sessions·admin_totp_pending·auth_codes·users(이메일 익명화, `status = 'deleted'`) |
 | `src/db/applicant-views.ts` | application_events + applications (기업 지원자 목록 화면, T-09b): 공고 하나의 지원별 면접 요청 메일 수 — `GROUP BY` 한 번, 읽기만. `COUNT(*)` 는 `Number()` 로 바꿔 쓴다 (PostgreSQL bigint 대비) |
 
 - 스키마는 `migrations/` (SQLite 문법). 판단 규칙(`rules.ts`·`authz.ts`)·TTL·횟수 제한은 DB 와 무관하므로 옮길 때 고치지 않는다.
@@ -78,6 +80,9 @@
 | `applicants.countApplicationsByJob` | `SUM(CASE …)` 가 숫자로 옴 | bigint/numeric → 숫자 변환(확인 필요). 호출부가 `Number()` 로 감싼다 |
 | `applicants.markViewed` | batch 두 문장(이벤트 `INSERT … SELECT … WHERE status = 이전 상태` → `UPDATE … WHERE status = 이전 상태`). 판단은 두 번째 문장의 영향 행 수 | `BEGIN … COMMIT`, 순서 그대로 (바꾸면 이벤트 가드가 바뀐 상태를 본다). 두 사람이 동시에 처음 열면 PostgreSQL READ COMMITTED 에서 둘 다 INSERT 가 통과할 수 있다(4장) — `viewed` 가 두 줄 남지 않게 잠금 또는 UPDATE 를 먼저 하고 RETURNING 으로 확인 |
 | `applicants.listAccessLog` | `(? IS NULL OR l.at < ?)` — 같은 값을 두 번 바인딩하는 선택 조건 | PostgreSQL 은 `$1 IS NULL` 의 형을 정하지 못할 수 있다 → `$1::bigint IS NULL OR l.at < $1` / `$2::text` (확인 필요) |
+| `consents.insertConsents` | batch(종류마다 `INSERT … SELECT ?,… WHERE NOT EXISTS (같은 판의 유효한 동의)`) | `BEGIN … COMMIT`. FROM 없는 SELECT 의 매개변수 형 지정이 필요할 수 있다(확인 필요). 동시 두 요청은 4장 — 같은 판 동의가 두 줄 생길 수 있지만 판단(`missingConsents`)에는 영향 없음 |
+| `account.eraseUser` | batch 14문장 = 한 트랜잭션. 이벤트 id 를 **`lower(hex(randomblob(16)))`** 로 SQL 안에서 만든다(다른 곳의 UUID 와 모양이 다르다: 하이픈 없는 32자). 세션·2단계 대기 삭제를 뺀 모든 문장이 "아직 탈퇴 전"(`EXISTS … status != 'deleted'`)을 조건으로 하고 `users` 갱신이 맨 마지막 — 순서를 바꾸면 앞 문장들이 실행되지 않는다. 판단은 마지막 문장의 영향 행 수 | `gen_random_uuid()::text`(또는 앱에서 id 를 만들어 바인딩), `BEGIN … COMMIT`, 순서 그대로 |
+| `account.countOwnedCompaniesWithOthers` | `COUNT(*)` 가 숫자로 옴 | `COUNT(*)::int` 또는 변환(호출부가 `Number()` 로 감싼다) |
 | `migrations/0007_job_options.sql` | 기본 행의 시각 `strftime('%s','now')` | `extract(epoch from now())::bigint` |
 | `companies.listPublicCompanies` | `ORDER BY name_ko` = 바이트 순서 | DB 콜레이션에 따라 한글 정렬이 달라질 수 있음 (`COLLATE "C"` 로 맞춤) |
 

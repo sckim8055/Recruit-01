@@ -1,7 +1,7 @@
 // 약관·개인정보처리방침 문서의 모양. 본문은 terms.ts · privacy.ts 에 한국어·중국어로 둔다.
 // 한국어가 기준이다. 중국어는 참고용 번역이며, 두 글이 다르면 한국어를 따른다고 문서에 적는다.
 // 본문을 고치면 src/lib/consent.ts 의 TERMS_VERSION · PRIVACY_VERSION 을 올린다 (회원에게 다시 동의를 받는다).
-// 【확인 필요】 표시가 남아 있는 동안은 운영 환경에 올리지 않는다 (test/legal.test.ts 가 표시 개수를 알려 준다).
+// 【확인 필요】 표시가 남아 있는 동안은 운영 환경에 올리지 않는다 (test/account.test.ts 의 "문서 본문" 이 표시가 남았는지 확인한다).
 export interface LegalSection { h: string; items: string[] }
 export interface LegalDoc { title: string; effective: string; intro: string[]; sections: LegalSection[] }
 

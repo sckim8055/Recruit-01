@@ -34,6 +34,7 @@ export const Layout = (p: LayoutProps) => {
               <>
                 {p.user.role === 'seeker' && <><a href="/my/applications">{t(p.locale, 'nav.applications')}</a><a href="/my/resumes">{t(p.locale, 'nav.resumes')}</a></>}
                 <a href="/my">{t(p.locale, 'nav.my')}</a>
+                <a href="/my/account">{t(p.locale, 'nav.account')}</a>
                 <form method="post" action="/logout" class="inline">
                   <button type="submit" class="link">{t(p.locale, 'nav.logout')}</button>
                 </form>
@@ -47,6 +48,7 @@ export const Layout = (p: LayoutProps) => {
         <main>{p.children}</main>
         <footer>
           <p>{t(p.locale, 'footer.disclaimer')}</p>
+          <p><a href="/terms">{t(p.locale, 'footer.terms')}</a> · <a href="/privacy">{t(p.locale, 'footer.privacy')}</a></p>
           {p.registrationNo && <p>{t(p.locale, 'footer.registration')}: {p.registrationNo}</p>}
         </footer>
       </body>

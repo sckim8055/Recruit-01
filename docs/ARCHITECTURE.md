@@ -41,11 +41,16 @@ src/
     resume.ts · resume-files.ts  이력서 항목 검사·암호화, 첨부파일 검사·암호화·R2 (4절)
     application.ts · application-files.ts  지원 가능 여부·국외 이전 동의·복사본·취소, 지원서 첨부 내려받기 (11절)
     applicants.ts    본인 아닌 사람이 지원서·첨부를 여는 유일한 길 openApplication · downloadApplicationFile (12절)
+    consent.ts       이용약관·개인정보 필수 동의 판단(판, 빠진 동의, 예외 주소, 돌아갈 주소) — 순수 함수 (13절)
+    account.ts       회원 탈퇴: 막는 경우 판단 → 파일 키 모으기 → DB 지우기 → R2 지우기 (13절)
+    static-files.ts  public/ 의 파일 주소 (동의 확인에서 건너뜀)
     localize/        현지화 엔진 층 (7절)
   db/                SQL 과 D1 호출은 여기에만 (T-05d). users · sessions(인증코드·세션·TOTP 대기) · companies(기업·담당자·초대·서류 행)
                      · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수) · settings(site_settings) · options(job_options) · resumes(이력서)
-                     · applications(지원·동의·취소) · application-views(지원 현황 화면용 읽기) · applicants(기업·관리자 쪽: 내용 없는 지원자 목록·개수·지원 한 건·viewed·열람 기록 읽기). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
+                     · applications(지원·동의·취소) · application-views(지원 현황 화면용 읽기) · applicants(기업·관리자 쪽: 내용 없는 지원자 목록·개수·지원 한 건·viewed·열람 기록 읽기)
+                     · consents(이용약관·개인정보 동의 읽기·쓰기) · account(탈퇴 트랜잭션). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
                      PostgreSQL 로 옮길 때 고칠 곳과 SQLite 전용 문법 목록은 docs/DB-PORTING.md
+  legal/             이용약관(terms.ts)·개인정보처리방침(privacy.ts) 본문, 운영자 정보(types.ts OPERATOR). 한국어 기준 + 중국어 참고 번역 (13절)
   locales/ko.ts zh.ts  화면 문구
   routes/            화면·API 라우트 (기능별 파일)
   views/             JSX 화면 조각
@@ -279,3 +284,29 @@ docs/                이 문서, API.md, TASKS.md
 - **열람과의 관계:** 쓰기·미리 보기·확인 화면은 지원서를 열지 않는다(개인정보 없음: 공고 제목·지원 순서 번호·지원일·상태). 보낸 뒤에는 지원자 목록으로 리다이렉트한다 — 지원서 화면으로 보내면 열람 기록이 하나 더 남기 때문이다.
   모든 응답은 `private, no-store`.
 - **구직자 화면:** 상태가 "면접 요청 받음"·"불합격" 으로 바뀐다(`app.status.*`). 메시지 내용은 사이트에 남지 않으므로 메일로만 받는다.
+
+## 13. 약관·개인정보 동의와 회원 탈퇴 (T-11)
+
+- **문서:** `src/legal/terms.ts`·`privacy.ts`(한국어 기준, 중국어 참고 번역, `【확인 필요】` 표시는 운영자가 채운다), 화면 `/terms`·`/privacy`(누구나, 비로그인은 page-cache 60초, JSX 로만 출력, 주소는 글자 그대로).
+  모든 화면 바닥글과 로그인 화면에서 연결한다. 본문을 고치면 `lib/consent.ts` 의 `TERMS_VERSION`·`PRIVACY_VERSION` 을 올린다 → 회원에게 다시 묻는다.
+- **동의 확인 (`src/index.tsx`, 세션·언어 미들웨어 뒤, 라우트 앞):** 로그인한 회원 중 관리자가 아닌 사람(`needsConsentCheck`)은 요청마다 `db/consents.listRequiredConsents` 한 번(작은 색인 읽기,
+  `idx_consents_user`)으로 지금 판의 `terms`·`privacy` 동의(철회되지 않은 것)를 확인한다(`missingConsents`). 따로 캐시하지 않는다.
+  빠졌으면 GET·HEAD 는 `/consent?next=<원래 경로+검색 조건>`(`safeNext` 가 받는 경로일 때만, 아니면 `next` 없이)으로 302, 그 밖의 메서드는 403(처리하지 않음, 동의 화면 링크). 모두 `private, no-store`.
+  - 확인하지 않는 것: **비로그인 요청**(아무것도 읽지 않는다 — 캐시되는 공개 화면이 D1 을 읽지 않게), 관리자, 예외 주소(`consentExempt`: `/consent` `/terms` `/privacy` `/logout` `/login*` `/lang/*` `/my/account*` `/api/health`),
+    `public/` 의 파일(`lib/static-files.PUBLIC_FILES`; 배포 환경에서는 정적 파일이 Worker 앞에서 나가므로 원래 여기까지 오지 않는다).
+  - 동의하지 않은 회원도 문서 읽기·언어 바꾸기·로그아웃·계정 화면·**탈퇴**는 할 수 있다 (거부한 사람이 나갈 수 있어야 한다).
+- **동의 화면 `/consent`:** 비로그인 → `/login`, 관리자 → `/admin`, 빠진 것이 없으면 `safeNext(next)` 로. 빠진 종류의 체크 칸만 보이고(미리 체크하지 않음, 오류로 다시 그릴 때도),
+  개인정보 칸에는 수집 항목·목적·보유 기간·국외 보관(Cloudflare·Resend, 방침 6항)을 요약한다. 지금 판에 이미 동의한 종류는 "이미 동의함" 으로만 보이고 폼 검사(`readConsentForm`)에서 체크된 것으로 본다.
+  POST 는 빠진 종류만 `insertConsents`(같은 판의 유효한 동의가 있으면 건너뛴다) → 303 `safeNext(next)`. 하나라도 빠지면 400 + 아무것도 기록하지 않는다. **동의는 이 POST 에서만 기록한다.**
+- **계정 `/my/account`:** 모든 로그인 회원(관리자 포함). 로그인 이메일·유형·동의 내역(종류별 판 — `listRequiredConsents` 가 동의 시각을 돌려주지 않아 시각은 보이지 않는다)·문서 링크·회원 탈퇴 입구.
+  막히는 경우(`deletionBlocksFor`): 관리자(화면에서 탈퇴 불가), 다른 담당자가 있는 기업의 대표 담당자(먼저 담당자를 내보내거나 운영자에게 대표 변경 요청 — 대표를 넘기는 화면은 아직 없다).
+- **탈퇴 `/my/account/delete`:** 확인 화면(무엇이 지워지고 남는지 + 로그인 이메일 입력) → POST `confirmMatches`(대소문자·앞뒤 공백 무시) → `deleteAccount` → 막히면 400 + 계정 화면,
+  끝났으면(이미 탈퇴한 계정 포함) 로그아웃과 같은 `logout()` 으로 세션 쿠키를 지우고 303 `/?bye=1`. 홈은 `bye=1` 일 때만 한 줄 안내를 그리고, 이 요청은 page-cache 를 거치지 않는다
+  (`routes/jobs.homeCache`, `private, no-store`) — 캐시되는 홈에는 안내가 들어가지 않는다. `/consent`·`/my/account*` 의 모든 응답은 `private, no-store`.
+- **탈퇴 때 지워지는 것 (`db/account.eraseUser`, 한 트랜잭션):** 이력서 행, 지원서 내용(암호문 → `''`)·파일 키·`summary_zh`(진행 중이던 지원은 `withdrawn` 이벤트 + 상태 `withdrawn`, 끝난 지원은 상태 유지, `purge_after` = 탈퇴 시각),
+  프로필, 알림 조건, 세션, 인증코드, 관리자 2단계 대기·비밀값, 기업·헤드헌터 소속, 받은(수락 전) 초대. 혼자 맡던 기업의 게재 중 공고는 `closed`.
+  `users` 행은 지우지 않고 **이메일을 `deleted-<무작위>@deleted.invalid` 로 바꾸고** `status = 'deleted'` (같은 이메일로 다시 가입하면 새 계정, 동의도 새로 받는다).
+  R2 파일(이력서·지원서 첨부)은 지우기 전에 키를 모아 두었다가 트랜잭션 뒤에 지운다(실패하면 고아 객체 → T-12, 콘솔에는 개수만).
+- **남는 것:** 지원했다는 사실(행·상태·이벤트, 내용 없음), 동의 기록(`withdrawn_at` 을 채움), 열람 기록(`access_log`), 그 회원이 만든 공고와 기업 정보(기업의 자료), 기업이 낸 검증 서류.
+  보관 기간은 개인정보처리방침 3항(동의 기록·지원 사실 2년은 【확인 필요】). 기간이 지난 행을 지우는 작업은 T-12.
+

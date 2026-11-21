@@ -148,6 +148,7 @@ export const BizStart = (p: { locale: Locale; invites: InviteView[]; input: Comp
       <p class="muted">{t(p.locale, 'co.register.lead')}</p>
       <CompanyForm locale={p.locale} action="/biz/company" input={p.input} errors={p.errors} mode="register" />
     </div>
+    <p class="muted"><a href="/my/account">{t(p.locale, 'nav.account')}</a></p>
   </section>
 );
 
@@ -185,6 +186,7 @@ export const BizHome = (p: {
         <li><a href="/biz/company/docs">{t(p.locale, 'doc.title')}</a></li>
         <li><a href="/biz/members">{t(p.locale, 'mem.title')}</a></li>
         <li><a href="/biz/jobs">{t(p.locale, 'job.list.title')}</a></li>
+        <li><a href="/my/account">{t(p.locale, 'nav.account')}</a></li>
       </ul>
       <div class="box">
         <h2>{t(p.locale, 'biz.apl.title')}</h2>

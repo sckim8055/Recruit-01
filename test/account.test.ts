@@ -1,7 +1,7 @@
 // T-11 핵심: 약관·개인정보 동의 판단, 동의 기록, 회원 탈퇴(무엇이 지워지고 무엇이 남는지), 문서 본문의 일관성.
 import { describe, expect, it } from 'vitest';
 import { confirmMatches, deleteAccount, deletedMarker, deletionBlocks } from '../src/lib/account';
-import { CROSS_BORDER_VERSION } from '../src/lib/application';
+import { CROSS_BORDER_VERSION, WITHDRAWABLE } from '../src/lib/application';
 import {
   consentExempt, missingConsents, needsConsentCheck, readConsentForm, safeNext, PRIVACY_VERSION, TERMS_VERSION,
 } from '../src/lib/consent';
@@ -101,6 +101,12 @@ describe.skipIf(!hasSqlite)('회원 탈퇴', () => {
   };
   const erase = (d1: D1Database, id: string, email: string) => eraseUser(d1, { id, email, marker: `deleted-${id}@deleted.invalid`, ts: 500 });
 
+  it('탈퇴 문장의 "진행 중" 상태 목록은 취소할 수 있는 상태(WITHDRAWABLE)와 같다', async () => {
+    const fsMod = 'node:fs';
+    const src = ((await import(fsMod)) as { readFileSync(p: string, e: 'utf8'): string }).readFileSync('src/db/account.ts', 'utf8');
+    const m = /const ACTIVE = "\(([^)]*)\)"/.exec(src);
+    expect(m![1]!.split(',').map((x) => x.trim().replace(/'/g, '')).sort()).toEqual([...WITHDRAWABLE].sort());
+  });
   it('구직자: 이력서·지원서 내용·세션이 지워지고, 진행 중이던 지원은 취소로 남는다', async () => {
     const { d1, one, n, raw } = setup();
     expect(await erase(d1, 's1', 's1@example.test')).toBe(true);

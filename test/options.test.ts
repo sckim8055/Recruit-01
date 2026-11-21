@@ -8,6 +8,7 @@ import {
   validateOptionAdd, validateOptionEdit, type OptionInput, type OptionRow,
 } from '../src/lib/options';
 import { canonicalJobsHref, FILTER_KEYS, filterChoices, parseJobFilter } from '../src/lib/public-jobs';
+import { agreeRequired } from './consent-fixture';
 import { optionRows, SEED_OPTIONS } from './option-seed';
 
 const row = (p: Partial<OptionRow> & Pick<OptionRow, 'kind' | 'code'>): OptionRow =>
@@ -327,6 +328,7 @@ describe.skipIf(!DatabaseSync)('/admin/options 와 공개 화면', () => {
     raw.exec("INSERT INTO companies (id, name_ko, entity_type, verify_status, created_at) VALUES ('c1','가짜기업','kr_entity','verified',0)");
     raw.exec(`INSERT INTO jobs (id, company_id, created_by, title_ko, status, published_at, industry, location, created_at, updated_at)
               VALUES ('${JOB_ID}','c1','adm1','영업 담당','published',${NOW - 10},'trade','seoul',0,0)`);
+    agreeRequired(raw, 'adm1'); // T-11 동의 확인을 통과하게 (구직자·기업 역할로 바꿔 쓰는 세션도 이 id 다)
     const inner = d1(raw);
     const session = role ? { id: 'adm1', email: 'a@example.test', role, locale: 'ko', mfa: role === 'admin' ? 1 : 0 } : null;
     const db = {

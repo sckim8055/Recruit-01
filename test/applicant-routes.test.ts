@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import app from '../src/index';
 import { b64url, sha256Hex } from '../src/lib/crypto';
 import { AdminHome } from '../src/views/pages';
+import { agreeRequired } from './consent-fixture';
 import { hasSqlite, migratedDb } from './sqlite-d1';
 
 const te = new TextEncoder();
@@ -62,6 +63,7 @@ function world() {
       const token = `tok-${who}`;
       raw.prepare('INSERT OR IGNORE INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?)')
         .run(await sha256Hex(`${PEPPER}|${token}`), who, 0, 4_000_000_000, who === 'adm' ? 1 : 0);
+      agreeRequired(raw, who); // T-11 동의 확인을 통과하게 (test/consent-fixture.ts)
       sessions.set(who, token);
     }
     return { cookie: `sid=${sessions.get(who)}; lang=${lang}` };

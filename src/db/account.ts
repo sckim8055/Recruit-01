@@ -34,7 +34,9 @@ export async function eraseUser(db: D1Database, u: { id: string; email: string; 
       `INSERT INTO application_events (id, application_id, event, actor_id, at)
        SELECT lower(hex(randomblob(16))), id, 'withdrawn', ?, ? FROM applications WHERE seeker_id = ? AND status IN ${ACTIVE} AND ${alive}`,
     ).bind(u.id, u.ts, u.id, u.id),
-    // 2) 모든 지원서의 내용을 지운다. 진행 중이던 것은 '취소' 로, 이미 끝난 것은 상태를 그대로 둔다
+    // 2) 모든 지원서의 내용을 지운다. 진행 중이던 것은 '취소' 로, 이미 끝난 것은 상태를 그대로 둔다.
+    //    여러 건을 한 문장으로 바꾸므로 SQL 의 CASE 로 쓴다 — 뜻은 rules.nextStatus(s, 'withdrawn') 와 같아야 하고,
+    //    ACTIVE 목록이 lib/application.WITHDRAWABLE 과 같은지는 test/account.test.ts 가 확인한다.
     db.prepare(
       `UPDATE applications SET
          status = CASE WHEN status IN ${ACTIVE} THEN 'withdrawn' ELSE status END,
