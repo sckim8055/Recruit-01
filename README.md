@@ -22,12 +22,14 @@ copy .dev.vars.example .dev.vars
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
-위 명령의 출력값을 `ENC_KEY=6enMSNs9EXmfM5w1+YH+cuEDss3ZFOTpJsGAgVUrSvo=` 뒤에 붙이고, `SESSION_PEPPER=6enMSNs9EXmfM5w1+YH+cuEDss3ZFOTpJsGAgVUrSvo=` 뒤에는 임의의 긴 문자열을 적는다.
+위 명령의 출력값을 `ENC_KEY=` 뒤에 붙이고, `SESSION_PEPPER=` 뒤에는 임의의 긴 문자열을 적는다. (이 값들은 README 나 대화창에 적지 않는다.)
 
 ```
 npm run db:local
 npx wrangler dev --var APP_ENV:dev
 ```
+
+Windows 에서는 위 두 줄 대신 폴더의 **`start.bat` 을 더블클릭**해도 된다 (패키지 설치 확인 → 로컬 DB 갱신 → 서버 시작을 한 번에 한다. 끝낼 때는 창에서 Ctrl+C).
 
 브라우저에서 http://localhost:8787 을 연다. 로그인 인증코드는 메일로 가지 않고 **터미널 창**에 출력된다.
 
