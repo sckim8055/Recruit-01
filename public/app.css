@@ -268,3 +268,7 @@ details > summary{cursor:pointer;color:var(--accent);font-size:14px}
   .box,.facts li{box-shadow:none;border-color:#bbb;break-inside:avoid}
   a{color:inherit}
 }
+
+/* 관리자 2단계 인증 등록의 QR 코드 (흰 바탕 유지 — 스캔되게) */
+.qr { margin: var(--s4) 0; }
+.qr svg { display: block; max-width: 100%; height: auto; background: #fff; border: 1px solid #d0d5dd; border-radius: 6px; }

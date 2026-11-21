@@ -1,5 +1,6 @@
 import type { Locale } from '../env';
 import { t } from '../lib/i18n';
+import { qrSvgPath } from '../lib/qr';
 import type { OptionSet } from '../lib/options';
 import type { PublicJobListRow } from '../db/public-jobs';
 import { PublicJobItem } from './public-jobs';
@@ -164,6 +165,20 @@ export const MaintenancePage = ({ locale }: { locale: Locale }) => (
   </section>
 );
 
+/** 인증 앱으로 스캔하는 QR 코드. 서버에서 SVG 로 그린다 (외부 서비스·스크립트 없음, lib/qr.ts). 주소가 너무 길면 그리지 않는다. */
+const TotpQr = ({ uri, label }: { uri: string; label: string }) => {
+  const qr = qrSvgPath(uri);
+  if (!qr) return null;
+  return (
+    <p class="qr">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox={`0 0 ${qr.size} ${qr.size}`} width="220" height="220" role="img" aria-label={label} shape-rendering="crispEdges">
+        <rect width={qr.size} height={qr.size} fill="#fff" />
+        <path d={qr.d} fill="#000" />
+      </svg>
+    </p>
+  );
+};
+
 /** 관리자 2단계 인증. setup 이 있으면 최초 등록 화면(비밀키 표시)이다. */
 export const LoginTotp = ({ locale, setup, error }: { locale: Locale; setup?: { secret: string; uri: string }; error?: string }) => (
   <section class="card">
@@ -171,6 +186,8 @@ export const LoginTotp = ({ locale, setup, error }: { locale: Locale; setup?: { 
     {setup && (
       <>
         <p>{t(locale, 'totp.setup.lead')}</p>
+        <TotpQr uri={setup.uri} label={t(locale, 'totp.setup.qr_alt')} />
+        <p class="muted">{t(locale, 'totp.setup.manual')}</p>
         <p class="secret">{setup.secret.replace(/(.{4})/g, '$1 ').trim()}</p>
         <p class="muted"><a href={setup.uri}>{t(locale, 'totp.setup.link')}</a></p>
         <p class="muted">{t(locale, 'totp.setup.keep')}</p>
