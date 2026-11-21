@@ -3,8 +3,9 @@ import { describe, expect, it } from 'vitest';
 import app from '../src/index';
 import { filterWhere, publicJobListSql, publicJobWhere, type PublicJobDetail, type PublicJobListRow } from '../src/db/public-jobs';
 import {
-  activeFilterCount, isJobId, isPubliclyVisible, jobsHref, MAX_PAGE, pageOf, pageQuery, parseJobFilter, parsePage, PUBLIC_PAGE_SIZE,
-  type VisibilityInput,
+  activeFilterCount, canonicalJobsHref, DEFAULT_PUBLIC_FILTERS, FILTER_KEYS, isJobId, isPubliclyVisible, jobsHref, MAX_PAGE, pageOf, pageQuery,
+  parseEnabledFilters, parseJobFilter, parsePage, PUBLIC_PAGE_SIZE, readEnabledFiltersForm, serializeEnabledFilters,
+  type FilterKey, type VisibilityInput,
 } from '../src/lib/public-jobs';
 import { pageCacheKey, PRIVATE_CACHE_CONTROL, PUBLIC_CACHE_CONTROL } from '../src/lib/page-cache';
 import { closesText, publicSalaryText } from '../src/views/public-jobs';
@@ -196,12 +197,14 @@ const detailRow: PublicJobDetail = {
   ...listRow, body_ko: '<img src=x onerror=alert(1)>\n둘째 줄', work_hours: '09:00-18:00', contact_email: 'hr@example-corp.test', company_name_zh: null,
 };
 
-function fakeDb(o: { rows?: PublicJobListRow[]; detail?: PublicJobDetail | null; session?: unknown }) {
+function fakeDb(o: { rows?: PublicJobListRow[]; detail?: PublicJobDetail | null; session?: unknown; setting?: string | null }) {
   return {
     prepare(sql: string) {
       const stmt = {
         bind: () => stmt,
-        first: async () => (sql.includes('FROM sessions') ? o.session ?? null : o.detail ?? null),
+        first: async () => (sql.includes('FROM sessions') ? o.session ?? null
+          : sql.includes('FROM site_settings') ? (o.setting == null ? null : { value: o.setting })
+          : o.detail ?? null),
         all: async () => ({ results: o.rows ?? [] }),
       };
       return stmt;
@@ -291,9 +294,195 @@ describe('정규화 주소', async () => {
     expect(pathAndSearch('http://x.test/jobs?location=seoul&lang=zh')).toBe('/jobs?location=seoul');
     expect(pathAndSearch('http://x.test/jobs?lang=zh')).toBe('/jobs');
   });
-  it('정규화되지 않은 /jobs 주소는 302 (DB 를 읽지 않는다)', async () => {
-    const res = await get('/jobs?chinese_level=&location=seoul', { prepare() { throw new Error('DB 를 읽으면 안 된다'); } });
+  it('정규화되지 않은 /jobs 주소는 302 (설정 한 행만 읽고 공고는 읽지 않는다)', async () => {
+    const read: string[] = [];
+    const db = {
+      prepare(sql: string) {
+        read.push(sql);
+        if (!sql.includes('FROM site_settings')) throw new Error('공고를 읽으면 안 된다');
+        const stmt = { bind: () => stmt, first: async () => null };
+        return stmt;
+      },
+    };
+    const res = await get('/jobs?chinese_level=&location=seoul', db);
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/jobs?location=seoul');
+    expect(read).toHaveLength(1);
+  });
+});
+
+// ── 보일 필터 설정 (T-06d)
+
+describe('parseEnabledFilters', () => {
+  it('설정이 없으면 기본값 세 개 (중국어 수준·보고 라인·근무지)', () => {
+    expect(parseEnabledFilters(null)).toEqual(['chinese_level', 'report_line', 'location']);
+    expect([...DEFAULT_PUBLIC_FILTERS]).toEqual(['chinese_level', 'report_line', 'location']);
+  });
+  it('JSON 아님·배열 아님·문자열 아닌 원소 → 기본값', () => {
+    for (const raw of ['', 'not json', '{"a":1}', '"location"', 'null', '1', '[1,2]', '["location",null]']) {
+      expect(parseEnabledFilters(raw), raw).toEqual(['chinese_level', 'report_line', 'location']);
+    }
+  });
+  it('모르는 이름·중복은 버린다', () => {
+    expect(parseEnabledFilters('["industry","nope","industry","__proto__"]')).toEqual(['industry']);
+    expect(parseEnabledFilters('["nope"]')).toEqual([]);
+  });
+  it('빈 배열은 "검색 칸 없음" 으로 그대로 쓴다', () => expect(parseEnabledFilters('[]')).toEqual([]));
+  it('순서는 저장 순서가 아니라 FILTER_KEYS 순서', () => {
+    expect(parseEnabledFilters('["location","industry","chinese_level"]')).toEqual(['chinese_level', 'industry', 'location']);
+    expect(parseEnabledFilters(JSON.stringify([...FILTER_KEYS].reverse()))).toEqual(FILTER_KEYS);
+  });
+});
+
+describe('관리자 설정 폼 값 (readEnabledFiltersForm)', () => {
+  it('체크한 것만, 모르는 값은 버리고, FILTER_KEYS 순서로', () => {
+    expect(readEnabledFiltersForm(['location', 'x', 'industry', 'location'])).toEqual(['industry', 'location']);
+    expect(readEnabledFiltersForm('salary_basis')).toEqual(['salary_basis']);
+    expect(readEnabledFiltersForm('nope')).toEqual([]);
+  });
+  it('아무것도 체크하지 않으면(값 없음) 빈 목록', () => {
+    expect(readEnabledFiltersForm(undefined)).toEqual([]);
+    expect(readEnabledFiltersForm([])).toEqual([]);
+  });
+  it('파일 등 문자열이 아닌 값은 버린다', () => {
+    expect(readEnabledFiltersForm([{ name: 'x' }, 'report_line'])).toEqual(['report_line']);
+  });
+  it('저장값은 다시 읽으면 같은 목록 (빈 목록 포함)', () => {
+    for (const keys of [[], ['location'], FILTER_KEYS] as FilterKey[][]) {
+      expect(parseEnabledFilters(serializeEnabledFilters(keys))).toEqual(keys);
+    }
+    expect(serializeEnabledFilters(['location', 'chinese_level'])).toBe('["chinese_level","location"]');
+  });
+});
+
+describe('숨긴 필터는 모르는 조건과 같다', () => {
+  const enabled: FilterKey[] = ['chinese_level', 'location'];
+  it('parseJobFilter: 숨긴 필터는 걸러지지 않고 개수에도 들지 않는다', () => {
+    const f = parseJobFilter({ chinese_level: 'business', industry: 'trade', location: 'seoul', report_line: 'cn_hq' }, enabled);
+    expect(f).toEqual({ chinese_level: 'business', location: 'seoul' });
+    expect(activeFilterCount(f)).toBe(2);
+    expect(parseJobFilter({ industry: 'trade' }, [])).toEqual({});
+  });
+  it('canonicalJobsHref: 숨긴 필터를 지운다', () => {
+    expect(canonicalJobsHref({ industry: 'trade', location: 'seoul', page: '2', lang: 'zh' }, enabled)).toBe('/jobs?location=seoul&page=2&lang=zh');
+    expect(canonicalJobsHref({ industry: 'trade' }, [])).toBe('/jobs');
+    expect(canonicalJobsHref({ industry: 'trade' }, ['industry'])).toBe('/jobs?industry=trade');
+  });
+});
+
+describe('/jobs 와 보일 필터 설정', () => {
+  const selects = (html: string) => [...html.matchAll(/<select name="([a-z_]+)"/g)].map((m) => m[1]);
+  it('설정이 없으면 기본 세 개만 (FILTER_KEYS 순서)', async () => {
+    const res = await get('/jobs', fakeDb({ rows: [listRow] }));
+    expect(selects(await res.text())).toEqual(['chinese_level', 'report_line', 'location']);
+  });
+  it('저장된 설정의 필터만, 저장 순서와 관계없이 FILTER_KEYS 순서', async () => {
+    const res = await get('/jobs', fakeDb({ rows: [listRow], setting: '["location","industry"]' }));
+    expect(selects(await res.text())).toEqual(['industry', 'location']);
+  });
+  it('빈 설정이면 검색 칸(폼·검색 버튼·적용 개수) 자체가 없고, 목록 줄은 그대로', async () => {
+    const res = await get('/jobs', fakeDb({ rows: [listRow], setting: '[]' }));
+    const html = await res.text();
+    expect(html).not.toContain('action="/jobs"');
+    expect(html).not.toContain('<select');
+    expect(html).not.toContain('>검색<');
+    expect(html).not.toContain('적용된 조건');
+    expect(html).toContain(`/jobs/${listRow.id}`);
+    expect(html).toContain('class="facts-line"');
+  });
+  it('숨긴 필터가 붙은 주소는 그 조건을 지운 주소로 302', async () => {
+    const res = await get('/jobs?industry=trade&location=seoul', fakeDb({ setting: '["location"]' }));
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/jobs?location=seoul');
+    const res2 = await get('/jobs?industry=trade', fakeDb({ setting: '[]' }));
+    expect(res2.headers.get('location')).toBe('/jobs');
+  });
+  it('보이는 필터는 SQL 에 들어가고, 숨긴 필터는 들어가지 않는다', async () => {
+    const seen: { sql: string; binds: unknown[] }[] = [];
+    const db = {
+      prepare(sql: string) {
+        const stmt = {
+          bind: (...b: unknown[]) => { seen.push({ sql, binds: b }); return stmt; },
+          first: async () => (sql.includes('FROM site_settings') ? { value: '["industry"]' } : null),
+          all: async () => ({ results: [listRow] }),
+        };
+        return stmt;
+      },
+    };
+    const res = await get('/jobs?industry=trade', db);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('적용된 조건 1개');
+    const list = seen.find((x) => x.sql.includes('FROM jobs'))!;
+    expect(list.sql).toContain('j.industry = ?');
+    expect(list.binds).toContain('trade');
+  });
+  it('상세는 설정과 관계없이 모든 항목을 보인다', async () => {
+    const res = await get(`/jobs/${listRow.id}`, fakeDb({ detail: detailRow, setting: '[]' }));
+    const html = await res.text();
+    for (const label of ['직무', '업계', '근무지', '보고 라인', '중국어 수준']) expect(html).toContain(label);
+  });
+});
+
+describe('/admin/settings 권한', () => {
+  it('비로그인은 로그인 화면으로, 구직자·기업 담당자는 403', async () => {
+    const anon = await get('/admin/settings', fakeDb({}));
+    expect(anon.status).toBe(302);
+    expect(anon.headers.get('location')).toBe('/login');
+    for (const role of ['seeker', 'company']) {
+      const session = { id: 'u1', email: 'x@example.test', role, locale: 'ko', mfa: 0 };
+      const res = await get('/admin/settings', fakeDb({ session }), { cookie: 'sid=abc' });
+      expect(res.status, role).toBe(403);
+    }
+  });
+});
+
+describe('/admin/settings (관리자)', () => {
+  const admin = { id: 'adm1', email: 'a@example.test', role: 'admin', locale: 'ko', mfa: 1 };
+  function adminDb(setting: string | null) {
+    const writes: unknown[][] = [];
+    return {
+      writes,
+      prepare(sql: string) {
+        let b: unknown[] = [];
+        const stmt = {
+          bind: (...x: unknown[]) => { b = x; return stmt; },
+          first: async () => (sql.includes('FROM sessions') ? admin : sql.includes('FROM site_settings') ? (setting == null ? null : { value: setting }) : null),
+          all: async () => ({ results: [] }),
+          run: async () => { if (sql.includes('INSERT INTO site_settings')) writes.push(b); return { meta: { changes: 1 } }; },
+        };
+        return stmt;
+      },
+    };
+  }
+  it('GET: 필터마다 체크박스, 현재 설정이 체크됨 (설정 없음 = 기본값), 안내 문구', async () => {
+    const res = await get('/admin/settings', adminDb(null), { cookie: 'sid=abc' });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    const boxes = [...html.matchAll(/<input type="checkbox" name="filters" value="([a-z_]+)"( checked="")?/g)].map((m) => [m[1], !!m[2]]);
+    expect(boxes.map((b) => b[0])).toEqual(FILTER_KEYS);
+    expect(boxes.filter((b) => b[1]).map((b) => b[0])).toEqual(['chinese_level', 'report_line', 'location']);
+    expect(html).toContain('숨긴 조건도 공고 내용에는 그대로 표시됩니다');
+    expect(html).toContain('60초');
+  });
+  it('POST: 모르는 값은 버리고 FILTER_KEYS 순서 JSON 으로 저장, 누가·언제 함께', async () => {
+    const db = adminDb(null);
+    const body = new URLSearchParams([['filters', 'location'], ['filters', 'bogus'], ['filters', 'industry']]);
+    const res = await app.fetch(new Request('http://localhost/admin/settings', {
+      method: 'POST', body, headers: { cookie: 'sid=abc', origin: 'http://localhost', 'content-type': 'application/x-www-form-urlencoded' },
+    }) as never, env(db));
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/admin/settings?ok=saved');
+    expect(db.writes).toHaveLength(1);
+    const [key, value, by, at] = db.writes[0]!;
+    expect([key, value, by]).toEqual(['public_job_filters', '["industry","location"]', 'adm1']);
+    expect(typeof at).toBe('number');
+  });
+  it('POST: 모두 끄면 빈 배열을 저장', async () => {
+    const db = adminDb('["location"]');
+    const res = await app.fetch(new Request('http://localhost/admin/settings', {
+      method: 'POST', body: new URLSearchParams(), headers: { cookie: 'sid=abc', origin: 'http://localhost', 'content-type': 'application/x-www-form-urlencoded' },
+    }) as never, env(db));
+    expect(res.status).toBe(302);
+    expect(db.writes[0]![1]).toBe('[]');
   });
 });

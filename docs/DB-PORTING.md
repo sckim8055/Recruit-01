@@ -17,6 +17,7 @@
 | `src/db/public-jobs.ts` | jobs + companies (공개 공고 목록·상세, 읽기만) |
 | `src/db/logs.ts` | access_log, email_log |
 | `src/db/admin.ts` | 관리자 첫 화면 개수 (companies·agencies·jobs·reports) |
+| `src/db/settings.ts` | site_settings (사이트 설정 이름 → 값, upsert) |
 
 - 스키마는 `migrations/` (SQLite 문법). 판단 규칙(`rules.ts`·`authz.ts`)·TTL·횟수 제한은 DB 와 무관하므로 옮길 때 고치지 않는다.
 
@@ -58,7 +59,7 @@
 | `public-jobs.ts` (`LIST_COLS`) | `CASE WHEN j.company_name_public = 1` — INTEGER 0/1 | integer 로 두면 그대로. boolean 이면 `WHEN j.company_name_public` |
 | `companies.listPublicCompanies` | `ORDER BY name_ko` = 바이트 순서 | DB 콜레이션에 따라 한글 정렬이 달라질 수 있음 (`COLLATE "C"` 로 맞춤) |
 
-PostgreSQL 에서도 그대로 되는 것(표시하지 않음): `ON CONFLICT … DO UPDATE … excluded`, `EXISTS (…)` 가드, `UPDATE … WHERE … AND EXISTS`,
+PostgreSQL 에서도 그대로 되는 것(표시하지 않음): `ON CONFLICT … DO UPDATE … excluded`(`settings.setSetting` 포함), `EXISTS (…)` 가드, `UPDATE … WHERE … AND EXISTS`,
 `ORDER BY 식 = '값' DESC`(참/거짓 정렬), `CASE`, `LIMIT`, `rev = rev + 1`.
 `public-jobs.ts` 의 `LIMIT ? OFFSET ?`, `CASE WHEN … END`(ELSE 없으면 NULL)도 그대로 된다. 목록 정렬 `published_at DESC, id DESC` 의 id 는 TEXT 이므로
 PostgreSQL 콜레이션에 따라 같은 시각 안의 순서만 달라질 수 있다(페이지가 겹치지 않으려면 `COLLATE "C"` 권장, 확인 필요).

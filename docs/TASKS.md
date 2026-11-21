@@ -44,6 +44,12 @@
       `Vary: Cookie, Accept-Language`), 로그인 쿠키가 있으면 캐시를 거치지 않고 `private, no-store`. 언어 전환 링크가 검색 조건을 유지하도록 render 수정.
       목록 질의는 기존 `idx_jobs_status(status, job_family, published_at)` 를 순서대로 읽어 새 인덱스는 추가하지 않음(마이그레이션 없음).
       wrangler dev + Chromium(Playwright)으로 필터·페이지·상세·언어 전환·로그인/로그아웃 머리글·캐시 hit/miss 확인
+- [x] T-06d 공개 필터 표시 설정: `site_settings`(0006, key/value, `updated_by`·`updated_at`)와 `db/settings.ts`(getSetting·setSetting upsert).
+      `public_job_filters` = `/jobs` 에 보일 필터의 JSON 배열(`lib/public-jobs.parseEnabledFilters`: 없으면 중국어 수준·보고 라인·근무지, 잘못된 값은 기본값,
+      모르는 이름은 버림, 빈 배열 = 검색 칸 없음, 표시는 `FILTER_KEYS` 순서). 숨긴 필터는 모르는 조건과 같게 처리(`parseJobFilter`·`canonicalJobsHref` 에 목록을 넘김:
+      걸러지지 않음, 개수에 안 듦, 정규화 302 에서 빠짐). 목록 줄·상세·공고 작성 폼·홈은 그대로. 관리자 `/admin/settings`(체크박스, 모르는 값 버림, 관리자 첫 화면에 링크).
+      `/jobs` 는 캐시에 없는 요청마다 설정 한 행을 읽음(따로 캐시하지 않음) → 비로그인 화면 반영은 최대 60초(page-cache TTL).
+      기존 테스트 "정규화 302 는 DB 를 읽지 않는다" 는 "설정 한 행만 읽고 공고는 읽지 않는다" 로 바꿈
 ## 운영자 설정 (사람이 하는 일 — 안내 문서를 먼저 써서 건넨다)
 - [ ] O-1 GitHub 저장소에 이 폴더 올리기
 - [ ] O-2 Cloudflare: D1 `recruit-test` 생성 → `wrangler.jsonc` 의 `database_id` 교체, R2 `recruit-test-files` 생성

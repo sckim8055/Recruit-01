@@ -9,8 +9,8 @@ import { activeFilterCount, FILTER_CHOICES, FILTER_KEYS, jobsHref, type FilterKe
 import type { PublicJobDetail, PublicJobListRow } from '../db/public-jobs';
 import { salaryText } from './jobs';
 
-/** 필터 이름 → [칸 이름 문구 키, 값 문구 키 앞부분]. 공고 작성·기업 정보 화면의 문구를 그대로 쓴다. */
-const FILTER_LABELS: Record<FilterKey, [string, string]> = {
+/** 필터 이름 → [칸 이름 문구 키, 값 문구 키 앞부분]. 공고 작성·기업 정보 화면의 문구를 그대로 쓴다 (관리자 설정 화면도 쓴다). */
+export const FILTER_LABELS: Record<FilterKey, [string, string]> = {
   chinese_level: ['job.f.chinese_level', 'job.chinese_level'],
   role_category: ['job.f.role_category', 'job.role'],
   industry: ['job.f.industry', 'job.industry'],
@@ -61,12 +61,14 @@ export const PublicJobItem = ({ locale, row }: { locale: Locale; row: PublicJobL
 
 // ── 목록
 
-const FilterForm = ({ locale, filter }: { locale: Locale; filter: JobFilter }) => {
+/** 검색 칸. enabled(관리자 설정, FILTER_KEYS 순서)에 있는 필터만 보인다. 하나도 없으면 폼 전체를 그리지 않는다. */
+const FilterForm = ({ locale, filter, enabled }: { locale: Locale; filter: JobFilter; enabled: readonly FilterKey[] }) => {
+  if (enabled.length === 0) return null;
   const n = activeFilterCount(filter);
   return (
     <form method="get" action="/jobs" class="box">
       <div class="grid3">
-        {FILTER_KEYS.map((k) => {
+        {FILTER_KEYS.filter((k) => enabled.includes(k)).map((k) => {
           const [labelKey, prefix] = FILTER_LABELS[k];
           return (
             <label>{t(locale, labelKey)}
@@ -96,6 +98,8 @@ const FilterForm = ({ locale, filter }: { locale: Locale; filter: JobFilter }) =
 export interface PublicJobListProps {
   locale: Locale;
   filter: JobFilter;
+  /** 보일 필터 (lib/public-jobs.parseEnabledFilters). 목록 줄·상세는 이 값과 관계없이 모든 항목을 보인다. */
+  enabled: readonly FilterKey[];
   rows: PublicJobListRow[];
   page: number;
   hasPrev: boolean;
@@ -106,7 +110,7 @@ export const PublicJobList = (p: PublicJobListProps) => (
   <section class="wide">
     <h1>{t(p.locale, 'pj.title')}</h1>
     <p class="muted sub">{t(p.locale, 'pj.lead')}</p>
-    <FilterForm locale={p.locale} filter={p.filter} />
+    <FilterForm locale={p.locale} filter={p.filter} enabled={p.enabled} />
     {p.rows.length === 0 ? (
       <div class="box">
         <p>{t(p.locale, p.page > 1 ? 'pj.empty_page' : 'pj.empty')}</p>

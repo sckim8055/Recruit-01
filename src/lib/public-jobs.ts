@@ -56,13 +56,54 @@ export type FilterKey = keyof typeof FILTER_CHOICES;
 export const FILTER_KEYS = Object.keys(FILTER_CHOICES) as FilterKey[];
 export type JobFilter = Partial<Record<FilterKey, string>>;
 
+// ── 화면에 보일 필터 (T-06d, 관리자 설정 /admin/settings)
+
+/** site_settings 의 키. 값은 보일 필터 이름의 JSON 배열 (예: `["chinese_level","location"]`). */
+export const PUBLIC_FILTERS_SETTING = 'public_job_filters';
+
+/** 설정이 없을 때 보일 필터. 공고가 적은 초기에는 조건이 많으면 오히려 헷갈리므로 세 개만 둔다. */
+export const DEFAULT_PUBLIC_FILTERS: readonly FilterKey[] = ['chinese_level', 'report_line', 'location'];
+
+const isFilterKey = (v: unknown): v is FilterKey => typeof v === 'string' && (FILTER_KEYS as string[]).includes(v);
+
+/** 이름 목록 → FILTER_KEYS 순서의 필터 목록 (모르는 이름·중복은 버린다). 화면 순서는 저장 순서가 아니라 항상 이 순서다. */
+const inCanonicalOrder = (names: readonly unknown[]): FilterKey[] => FILTER_KEYS.filter((k) => names.includes(k));
+
+/**
+ * 저장된 설정값 → 보일 필터 목록.
+ * - 설정 없음(null) · JSON 이 아님 · 배열이 아님 · 문자열이 아닌 원소가 있음 → 기본값 (DEFAULT_PUBLIC_FILTERS)
+ * - 배열 안의 모르는 이름은 버린다 (나중에 없어진 필터 등). 남은 것만 쓴다.
+ * - 빈 배열은 "검색 칸을 보이지 않음" 이라는 뜻으로 그대로 쓴다 (관리자가 모두 끈 경우).
+ */
+export function parseEnabledFilters(raw: string | null): FilterKey[] {
+  if (raw == null) return [...DEFAULT_PUBLIC_FILTERS];
+  let v: unknown;
+  try { v = JSON.parse(raw); } catch { return [...DEFAULT_PUBLIC_FILTERS]; }
+  if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) return [...DEFAULT_PUBLIC_FILTERS];
+  return inCanonicalOrder(v);
+}
+
+/**
+ * 관리자 설정 폼(POST /admin/settings)의 체크박스 값 → 저장할 필터 목록. 체크박스는 고른 것만 보내므로
+ * 값이 없으면(모두 끔) 빈 목록이다. 모르는 값은 버린다 (오류로 보지 않는다).
+ */
+export function readEnabledFiltersForm(v: unknown): FilterKey[] {
+  const arr = Array.isArray(v) ? v : v === undefined ? [] : [v];
+  return inCanonicalOrder(arr.filter(isFilterKey));
+}
+
+/** 저장할 설정값 (FILTER_KEYS 순서의 JSON 배열). */
+export const serializeEnabledFilters = (keys: readonly FilterKey[]): string => JSON.stringify(inCanonicalOrder(keys));
+
 /**
  * 주소의 검색 조건을 정규화한다. 모르는 이름·값, 빈 값, 같은 이름이 여러 번 온 경우의 뒤쪽 값은 버린다 (오류로 보지 않는다).
+ * enabled 에 없는 필터(관리자가 숨긴 조건)도 모르는 이름과 똑같이 버린다 — 걸러지지도, 적용된 조건으로 세지도 않는다.
  * 결과에는 목록에 있는 값만 들어간다 — DB 계층은 이 값을 바인딩 매개변수로만 쓴다.
  */
-export function parseJobFilter(q: Record<string, string | undefined>): JobFilter {
+export function parseJobFilter(q: Record<string, string | undefined>, enabled: readonly FilterKey[] = FILTER_KEYS): JobFilter {
   const out: JobFilter = {};
   for (const k of FILTER_KEYS) {
+    if (!enabled.includes(k)) continue;
     const v = q[k];
     if (typeof v === 'string' && (FILTER_CHOICES[k] as readonly string[]).includes(v)) out[k] = v;
   }
@@ -111,9 +152,10 @@ const withLang = (href: string, lang: string | undefined): string => (lang ? `${
 /**
  * /jobs 의 정규화 주소. 필터 폼(GET)은 고르지 않은 칸도 빈 값으로 보내므로(`?chinese_level=&location=seoul…`),
  * 같은 조건이 여러 주소가 되어 캐시가 나뉜다. 요청 주소가 이것과 다르면 이 주소로 보낸다 (모르는 이름·값, page=1 도 지운다).
+ * 숨긴 필터(enabled 에 없음)도 지운다 — 예전에 저장한 주소도 그대로 열리고, 캐시 키가 나뉘지 않는다.
  */
-export const canonicalJobsHref = (q: Record<string, string | undefined>): string =>
-  withLang(jobsHref(parseJobFilter(q), parsePage(q.page)), langOf(q));
+export const canonicalJobsHref = (q: Record<string, string | undefined>, enabled: readonly FilterKey[] = FILTER_KEYS): string =>
+  withLang(jobsHref(parseJobFilter(q, enabled), parsePage(q.page)), langOf(q));
 
 /** /jobs/:id 의 정규화 주소: 검색 조건은 lang 만 남긴다. */
 export const canonicalJobHref = (id: string, q: Record<string, string | undefined>): string => withLang(`/jobs/${id}`, langOf(q));

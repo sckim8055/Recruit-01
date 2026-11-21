@@ -39,7 +39,7 @@ src/
     page-cache.ts    공개 화면 캐시 (비로그인만, 60초) (9절)
     localize/        현지화 엔진 층 (7절)
   db/                SQL 과 D1 호출은 여기에만 (T-05d). users · sessions(인증코드·세션·TOTP 대기) · companies(기업·담당자·초대·서류 행)
-                     · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
+                     · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수) · settings(site_settings). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
                      PostgreSQL 로 옮길 때 고칠 곳과 SQLite 전용 문법 목록은 docs/DB-PORTING.md
   locales/ko.ts zh.ts  화면 문구
   routes/            화면·API 라우트 (기능별 파일)
@@ -161,9 +161,21 @@ docs/                이 문서, API.md, TASKS.md
     200 이고 Set-Cookie 가 없는 응답만 저장한다. 404·302 는 `private, no-store`.
   - 로그인 쿠키가 있으면(만료된 쿠키라도) 캐시를 읽지도 쓰지도 않고 `private, no-store` (머리글에 계정 메뉴가 나오므로).
   - 필터 폼은 빈 칸도 보내므로 `/jobs` 는 정규화 주소(`jobsHref`)가 아니면 302 로 보내 같은 조건이 한 캐시 항목을 쓰게 한다.
+    숨긴 필터(아래 "보일 필터")도 정규화 주소에서 빠지므로 캐시 키에 설정을 따로 넣지 않는다.
   - **알려진 한계:** 마감·차단·게재 중단·기업 승인 취소된 공고도 **최대 60초** 캐시에서 보일 수 있다 (마감일이 지난 공고도 마찬가지).
     그래서 TTL 을 짧게 둔다. 배포 직후에도 이전 화면이 최대 60초 보일 수 있다. Cache API 는 데이터센터별이라 지역마다 따로 채워진다.
   - `X-Page-Cache: hit | miss | bypass` 머리글로 확인할 수 있다.
 - **페이지:** 20건씩, `published_at DESC, id DESC`. 전체 개수를 세지 않고 21건을 읽어 다음 페이지 여부만 안다. 100페이지(2,000건) 넘게는 줄인다.
 - **인덱스:** 기본 목록(생산직 플래그 꺼짐)은 기존 `idx_jobs_status(status, job_family, published_at)` 를 최신 순으로 읽고 LIMIT 에서 멈춘다
   (같은 게재 시각 안에서만 id 로 정렬). 필터는 이 순서로 읽으며 조건을 확인한다. 공고가 많아지면 T-06c 에서 다시 본다.
+- **보일 필터 (T-06d):** `/jobs` 검색 칸에 어떤 조건을 보일지는 관리자가 `/admin/settings` 에서 고른다 (코드 수정 없이).
+  - 저장: `site_settings`(0006, 이름 → 문자열 값) 의 `public_job_filters` = 보일 필터 이름의 JSON 배열. 읽고 쓰는 곳은 `db/settings.ts`(`getSetting`·`setSetting`, upsert, `updated_by`·`updated_at`).
+  - 해석: `lib/public-jobs.parseEnabledFilters`. 행이 없으면 **기본값 `chinese_level`·`report_line`·`location`** (공고가 적은 초기에 조건 7개는 헷갈리므로).
+    JSON 이 아니거나 배열이 아니면 기본값, 배열 안의 모르는 이름은 버린다. 빈 배열은 "검색 칸 없음" 이다. 표시 순서는 저장 순서와 관계없이 `FILTER_KEYS` 순서.
+  - 동작: 숨긴 필터는 **모르는 검색 조건과 똑같이** 다룬다 — `parseJobFilter`·`canonicalJobsHref` 에 보일 필터 목록을 넘겨, 걸러지지 않고 적용 개수에도 들지 않으며
+    정규화 302 에서 주소에서 빠진다 (예전에 저장한 주소도 그 조건 없이 열린다). 하나도 없으면 검색 칸(폼·검색 버튼·적용 개수)을 그리지 않는다.
+    목록 줄·상세·공고 작성 폼·홈은 바뀌지 않는다 (숨긴 조건도 공고 내용에는 그대로 보인다).
+  - 읽기: 캐시에 없는 `/jobs` 요청(302 포함)마다 기본 키 한 행을 읽는다. 비로그인 캐시 hit 은 D1 을 읽지 않는다. 설정을 따로 캐시하지 않는다(메모리 전역 없음).
+  - **반영 시간:** 설정을 바꿔도 비로그인 방문자에게는 이미 캐시된 화면이 **최대 60초**(page-cache TTL, 브라우저 `max-age=60` 도 같다) 보인다.
+    그동안은 숨긴 필터가 붙은 예전 주소의 캐시된 화면(걸러진 목록·예전 검색 칸)도 그대로 보일 수 있다. 캐시를 지우지 않고 TTL 로 만료되기를 기다린다.
+    로그인한 사용자(관리자 포함)는 캐시를 거치지 않으므로 바로 바뀐다.

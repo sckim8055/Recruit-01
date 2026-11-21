@@ -11,6 +11,7 @@ import { render, renderError } from '../render';
 import { AdminCompanyDetail, AdminCompanyList } from '../views/admin-company';
 import { AdminHome } from '../views/pages';
 import { adminJobs } from './admin-jobs';
+import { adminSettings } from './admin-settings';
 import { adminCounts } from '../db/admin';
 import {
   approveCompany, listCompaniesForAdmin, loadCompanyDetail, rejectCompany, revokeCompany, type CompanyDetail,
@@ -114,3 +115,6 @@ admin.get('/docs/:id', async (c) => {
 
 // 공고 검토·차단·현지화 엔진 비교 (/admin/jobs, /admin/localize-test)
 admin.route('/', adminJobs);
+
+// 사이트 설정: 채용정보 목록에 보일 검색 조건 (/admin/settings)
+admin.route('/', adminSettings);
