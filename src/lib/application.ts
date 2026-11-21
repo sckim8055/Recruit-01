@@ -10,8 +10,8 @@ import type { AppStatus } from './rules';
 import { nextStatus } from './rules';
 import type { ResumeBody } from './resume';
 
-/** 국외 이전 동의 문구의 판(版). 문구를 바꾸면 이 값을 올린다 (consents.version 에 남는다). 문구는 T-11 에서 운영자가 확정한다. */
-export const CROSS_BORDER_VERSION = '2026-11-draft';
+/** 국외 이전 동의 문구의 판(版). 문구를 바꾸면 이 값을 올린다 (consents.version 에 남는다). 문구(locales 의 apply.consent.*)는 개인정보처리방침 5항(src/legal/privacy.ts)과 같은 내용이어야 한다. */
+export const CROSS_BORDER_VERSION = '2026-11-1';
 
 // ── 국외 이전 동의
 
