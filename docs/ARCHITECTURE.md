@@ -7,7 +7,7 @@
 
 - **무엇:** 한국에 진출한 중국기업의 채용 공고와 기업 정보를 보여주는 사이트. 기업은 중국어로 공고를 쓰고, 구직자는 한국어로 본다.
 - **법적 형태:** 직업정보제공사업. 직업소개(알선)는 하지 않는다. 구직자와 기업은 직접 연결된다.
-- **구성:** Cloudflare Worker 하나(Hono). 화면은 서버 렌더링, DB 는 D1, 파일은 R2, 메일은 Resend, 번역은 Claude API.
+- **구성:** Cloudflare Worker 하나(Hono). 화면은 서버 렌더링, DB 는 D1, 파일은 R2, 메일은 Resend, 번역은 현지화 엔진 층(Claude · Gemini · Workers AI 중 설정으로 선택, 7절).
 - **환경:** dev(로컬) → test(recruit.kimbbob.xyz, 가짜 데이터) → production(kimbbob.com, 신고 후).
 
 ```
@@ -15,7 +15,7 @@
                           ├─ 정적 파일 public/
                           ├─ D1  (migrations/)
                           ├─ R2  (이력서 파일·검증 서류, 비공개)
-                          └─ 외부 API: Resend · Claude · 국세청 사업자 상태조회   ← Worker 에서만 호출
+                          └─ 외부 API: Resend · 현지화 엔진(Claude·Gemini·Workers AI) · 국세청 사업자 상태조회   ← Worker 에서만 호출
 ```
 
 기술설계서는 Pages + Workers 로 적었지만, 배포 단위를 하나로 줄이기 위해 **정적 파일을 포함한 Worker 하나**로 구현했다. 기능 차이는 없다.
@@ -34,6 +34,8 @@ src/
     crypto.ts        AES-GCM 암호화, 해시, 인증코드·토큰 생성
     email.ts         Resend 발송 + email_log
     i18n.ts          언어 판별, 문구 조회
+    jobs.ts          공고 폼 검사, 저장 시 상태 계산(planJobSave), 숫자 대조 — 순수 함수
+    localize/        현지화 엔진 층 (7절)
   locales/ko.ts zh.ts  화면 문구
   routes/            화면·API 라우트 (기능별 파일)
   views/             JSX 화면 조각
@@ -108,11 +110,29 @@ docs/                이 문서, API.md, TASKS.md
 | production | kimbbob.com | 실제 | Resend (kimbbob.com SPF/DKIM/DMARC) |
 
 - production 은 `wrangler.jsonc` 에 `env.production` 으로 별도 D1·R2 를 둔다 (T-13). test 와 DB·버킷을 공유하지 않는다.
-- 비밀값(`ENC_KEY`, `SESSION_PEPPER`, `RESEND_API_KEY`, `ANTHROPIC_API_KEY`)은 `wrangler secret put` 으로 환경마다 따로 넣는다.
+- 비밀값(`ENC_KEY`, `SESSION_PEPPER`, `RESEND_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`)은 `wrangler secret put` 으로 환경마다 따로 넣는다.
 - `ENC_KEY` 를 잃으면 이력서와 백업을 복구할 수 없다. 운영자는 오프라인 사본을 보관한다.
 - 무료 플랜 한도: Workers 요청 10만/일·CPU 10ms/요청, D1 읽기 500만 행/일·쓰기 10만 행/일. 실제 이력서를 받는 시점부터는 유료 플랜(월 5달러)을 권장한다.
 
-## 7. 아직 정해지지 않은 것
+## 7. 공고 현지화 (T-05)
+
+흐름: 기업이 중국어로 제목·본문 작성 → 현지화 엔진이 한국어 초안을 만들고, **별도 호출**로 그 한국어를 다시 중국어로 옮긴 대조본(`back_zh`)을 만든다
+→ 기업이 원문 | 한국어 | 대조본을 나란히 보고 승인 → `publishBlocks()` 가 빈 배열이면 게재. 연봉·근무시간·근무지 등은 구조 항목으로 받아 번역하지 않는다.
+
+- **엔진 층** `src/lib/localize/`: `types.ts`(LocalizeEngine 인터페이스), `prompt.ts`(프롬프트·JSON 출력 해석), `index.ts`(순서·시간 제한·`localizeJob`),
+  `registry.ts`(엔진 목록), `engines/`(claude · gemini · workers_ai, OpenAI 호환 엔진 만들기 `openai-compat.ts`).
+- **순서:** `LOCALIZE_ENGINE` 이 쓸 수 있으면 먼저, 나머지는 claude → gemini → workers_ai 중 키·바인딩이 있는 것. 엔진당 한 번(재시도 없음), 호출당 25초,
+  전체 55초를 넘기면 다음 엔진을 시작하지 않는다. "다시 만들기" 는 지난번 엔진(`jobs.localize_engine`) 다음부터. 모두 안 되면 수동 입력.
+- **보내는 것:** 중국어 제목·본문뿐. 원문에 이메일·전화번호가 있으면 저장 단계에서 거부한다. 연락처·연봉 등 구조 항목은 프롬프트에 넣지 않는다.
+- **출력:** JSON 만 받는다. 빈 값·JSON 아님·길이 초과는 실패로 보고 다음 엔진으로. 엔진 출력은 믿을 수 없는 글이므로 화면에는 JSX 이스케이프로만 출력한다.
+- **기록:** 콘솔에는 엔진 id 와 오류 종류(HTTP 상태)만. 기업 화면에는 엔진 이름을 보여주지 않는다(관리자 화면에만).
+- **캐시:** `translations` 테이블은 쓰지 않는다 (결과는 공고 행에 저장되고, "다시 만들기" 는 새 결과가 필요하다).
+- **변수:** `LOCALIZE_ENGINE`, `LOCALIZE_CLAUDE_MODEL`, `LOCALIZE_GEMINI_MODEL`, `LOCALIZE_WORKERS_AI_MODEL`(비우면 코드 기본값). 비밀값 `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`.
+  Workers AI 는 `wrangler.jsonc` 의 `"ai"` 바인딩을 켜야 한다(로그인 필요, 로컬 `wrangler dev` 에서도 원격 호출).
+- **상태:** 원문·한국어가 바뀌면 `localize_status = review`, 게재 중이면 미게재로(`jobs.planJobSave`). 기업이 한국어를 직접 고치면 대조본을 지운다.
+  숫자 대조(`jobs.digitDiff`)는 경고만 하고 게재 조건이 아니다. 모든 쓰기는 `jobs.rev`(내용 버전)가 화면을 연 때와 같을 때만 반영한다.
+
+## 8. 아직 정해지지 않은 것
 
 - 1350 답변에 따라 바뀌는 것: 헤드헌터 공고, 이력서 중국어 요약, 통역 서비스, 한국법인 없는 본사의 검증 서류(营业执照).
 - 브랜드명: 화면의 `Recruit` 는 임시다 (`src/locales/` 의 `site.name`).

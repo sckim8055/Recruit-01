@@ -96,14 +96,14 @@ export const LoginTotp = ({ locale, setup, error }: { locale: Locale; setup?: { 
   </section>
 );
 
-/** 관리자 첫 화면: 처리할 일의 개수만 보여준다. 기업 검증 목록은 /admin/companies, 나머지 목록은 T-05·T-09 에서 만든다. */
+/** 관리자 첫 화면: 처리할 일의 개수만 보여준다. 기업 검증 목록은 /admin/companies, 공고 검토는 /admin/jobs, 신고 목록은 T-09 에서 만든다. */
 export const AdminHome = ({ locale, counts }: { locale: Locale; counts: { companies: number; agencies: number; jobReviews: number; reports: number } }) => (
   <section class="wide">
     <h1>{t(locale, 'admin.title')}</h1>
     <ul class="stats">
       <li><a class="stat" href="/admin/companies"><b>{counts.companies}</b><span>{t(locale, 'admin.count.companies')}</span></a></li>
       <li><b>{counts.agencies}</b><span>{t(locale, 'admin.count.agencies')}</span></li>
-      <li><b>{counts.jobReviews}</b><span>{t(locale, 'admin.count.job_reviews')}</span></li>
+      <li><a class="stat" href="/admin/jobs"><b>{counts.jobReviews}</b><span>{t(locale, 'admin.count.job_reviews')}</span></a></li>
       <li><b>{counts.reports}</b><span>{t(locale, 'admin.count.reports')}</span></li>
     </ul>
     <p class="muted">{t(locale, 'admin.note')}</p>

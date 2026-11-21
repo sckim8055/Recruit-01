@@ -26,6 +26,15 @@
     "FLAG_PRODUCTION_JOBS": "off",
     "FLAG_HEADHUNTER_POSTING": "off",
     "FLAG_RESUME_ZH_SUMMARY": "off",
-    "FLAG_PAID_LABEL": "off"
+    "FLAG_PAID_LABEL": "off",
+    // 공고 현지화 엔진: claude · gemini · workers_ai 중 먼저 쓸 엔진. 비워 두면 claude → gemini → workers_ai 순서로
+    // 키·바인딩이 있는 것을 쓴다. 키는 wrangler secret put ANTHROPIC_API_KEY / GEMINI_API_KEY 로 넣는다 (README).
+    "LOCALIZE_ENGINE": "",
+    // 엔진별 모델. 비워 두면 코드의 기본값(src/lib/localize/engines/*.ts 의 DEFAULT_*_MODEL)을 쓴다.
+    "LOCALIZE_WORKERS_AI_MODEL": "",
+    "LOCALIZE_GEMINI_MODEL": "",
+    "LOCALIZE_CLAUDE_MODEL": ""
   }
+  // Workers AI 를 쓰려면: Cloudflare 에 로그인(npx wrangler login)한 뒤 아래 줄의 맨 앞 // 를 지우고, 위 "vars" 의 } 뒤에 쉼표를 붙인다.
+  // "ai": { "binding": "AI" }
 }

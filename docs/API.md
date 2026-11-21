@@ -40,10 +40,14 @@
 | GET /biz/members | 담당자·대기 초대 목록 (대표 담당자가 아니면 읽기만) | canManageCompany | ✅ |
 | POST /biz/members/invite · /biz/members/:userId/remove · /biz/invites/:id/cancel | 담당자 초대(초대 메일 `company_invite` 발송, 실패해도 초대 유지)·내보내기·초대 취소 | canManageMembers (owner) | ✅ |
 | POST /biz/invites/:id/accept | 초대 수락 (초대받은 이메일 본인, 소속 없을 때만) | company | ✅ |
-| GET /biz/jobs · GET·POST /biz/jobs/new · /biz/jobs/:id | 공고 작성(중국어)·수정 | canEditJob | T-05 |
-| POST /biz/jobs/:id/localize | AI 현지화 초안 + 대조본 생성 | canEditJob | T-05 |
-| POST /biz/jobs/:id/publish | 게재 (`publishBlocks` 가 비어야 함) | canEditJob | T-05 |
-| POST /biz/jobs/:id/close | 마감 | canEditJob | T-05 |
+| GET /biz/jobs · GET·POST /biz/jobs/new | 공고 목록 · 새 공고(중국어 원문 + 조건). 남의 공고는 404 | 소속 기업 담당자 | ✅ |
+| GET /biz/jobs/:id | 확인 화면: 원문 \| 한국어 초안 \| 대조본, 숫자 대조 경고, 게재 조건 목록 | canEditJob | ✅ |
+| GET·POST /biz/jobs/:id/edit | 원문·조건 편집 (마감된 공고는 불가). 글을 고치면 승인이 풀리고 게재 중이면 게재 중단 | canEditJob | ✅ |
+| POST /biz/jobs/:id/localize | 현지화 초안 + 대조본 생성 (`again=1` 이면 지난번 다음 엔진부터). 엔진이 없으면 수동 입력 안내 | canEditJob | ✅ |
+| POST /biz/jobs/:id/korean | 한국어 초안 직접 입력·수정 (대조본 지움, 다시 승인 필요) | canEditJob | ✅ |
+| POST /biz/jobs/:id/approve | 한국어 초안 승인 (본 rev 일 때만) | canEditJob | ✅ |
+| POST /biz/jobs/:id/publish | 게재 (`publishBlocks` 가 비어야 함) | canEditJob | ✅ |
+| POST /biz/jobs/:id/close | 마감 (게재 중 → 마감, 다시 열기 없음) | canEditJob | ✅ |
 | GET /biz/jobs/:id/applicants | 지원자 목록 | canEditJob | T-09 |
 | GET /biz/applications/:id | 지원서 열람 → `viewed` 이벤트 + access_log | canViewApplication | T-09 |
 | POST /biz/applications/:id/interview | 면접 요청 메일 (답장 주소 = 기업 담당자) → `interview_mail` | canViewApplication | T-09 |
@@ -52,12 +56,14 @@
 ## 관리자
 | 경로 | 설명 | 작업 |
 |---|---|---|
-| GET /admin | 처리할 일 개수 (검증 대기·검토 대기·신고). 검증 대기 기업 → /admin/companies, 나머지 목록은 T-05·T-09 | ✅ |
+| GET /admin | 처리할 일 개수 (검증 대기·검토 대기·신고). 검증 대기 기업 → /admin/companies, 검토 대기 공고 → /admin/jobs, 신고 목록은 T-09 | ✅ |
 | GET /admin/companies · /admin/companies/:id | 기업 목록(검증 대기 먼저)·상세 (담당자 이메일, 서류, `verifyBlocks` 결과) | ✅ |
 | POST /admin/companies/:id/verify | 기업 승인(`verifyBlocks` 가 비어야 함)·반려(사유 필수, `reject_docs` 체크 시 서류도 반려). 검증 대기 상태에서만 | ✅ |
 | POST /admin/companies/:id/revoke | 승인 취소(사유 필수, `reject_docs` 체크 시 서류도 반려). 검증 완료 상태에서만. 기업은 반려 상태, 게재 중 공고는 `closed` | ✅ |
 | GET /admin/docs/:id | 검증 서류 내려받기 (access_log) | ✅ |
-| POST /admin/jobs/:id/block · /clear-review | 공고 차단 · 기술유출 검토 통과 | T-05 |
+| GET /admin/jobs · /admin/jobs/:id | 검토 대기(기술유출 필터)·차단 공고 목록·상세 (한국어·원문·대조본·사유) | ✅ |
+| POST /admin/jobs/:id/clear-review · /block · /unblock | 검토 통과(본 rev 일 때만) · 차단(사유 필수) · 차단 해제(→ 미게재). 내용 수정·게재는 없다 | ✅ |
+| GET·POST /admin/localize-test | 현지화 엔진 비교 (같은 글을 엔진별로, 초안·대조본·시간·오류). 저장하지 않음 | ✅ |
 | GET /admin/applications/:id?reason= | 사유 입력 후 지원서 열람 (access_log) | T-09 |
 | GET /admin/access-log | 열람 기록 | T-09 |
 

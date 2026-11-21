@@ -15,11 +15,19 @@ export interface Env {
   FLAG_HEADHUNTER_POSTING: string;
   FLAG_RESUME_ZH_SUMMARY: string;
   FLAG_PAID_LABEL: string;
+  // 공고 현지화 엔진 (src/lib/localize/). 비어 있으면 기본 순서(claude → gemini → workers_ai) 중 쓸 수 있는 것을 쓴다.
+  LOCALIZE_ENGINE?: string;
+  LOCALIZE_WORKERS_AI_MODEL?: string;
+  LOCALIZE_GEMINI_MODEL?: string;
+  LOCALIZE_CLAUDE_MODEL?: string;
+  // Workers AI 바인딩. wrangler.jsonc 의 "ai" 설정을 켜야 생긴다 (운영자가 Cloudflare 에 로그인한 뒤).
+  AI?: { run(model: string, input: unknown): Promise<unknown> };
   // secrets
   ENC_KEY: string;
   SESSION_PEPPER: string;
   RESEND_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
+  GEMINI_API_KEY?: string;
 }
 
 export interface SessionUser {

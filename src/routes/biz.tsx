@@ -1,5 +1,5 @@
 // 기업 담당자·헤드헌터 화면. 첫 화면·기업 등록·초대 수락·서류 내려받기는 여기,
-// 기업 정보 편집·서류 올리기는 biz-company.tsx, 담당자 관리는 biz-members.tsx.
+// 기업 정보 편집·서류 올리기는 biz-company.tsx, 담당자 관리는 biz-members.tsx, 공고는 biz-jobs.tsx.
 // 기업 id 는 폼·주소에서 받지 않는다 — 항상 로그인 사용자의 소속(biz-ctx.ts)에서 정한다.
 import { Hono } from 'hono';
 import { now, type AppEnv } from '../env';
@@ -12,6 +12,7 @@ import { BizHome, BizStart, Notice, type InviteView } from '../views/company';
 import { Placeholder } from '../views/pages';
 import { companyDocTypes, hasCompany, loadBizCtx } from './biz-ctx';
 import { bizCompany } from './biz-company';
+import { bizJobs } from './biz-jobs';
 import { bizMembers } from './biz-members';
 
 export const biz = new Hono<AppEnv>();
@@ -124,3 +125,4 @@ biz.get('/docs/:id', async (c) => {
 
 biz.route('/', bizCompany);
 biz.route('/', bizMembers);
+biz.route('/', bizJobs);

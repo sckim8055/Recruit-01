@@ -182,8 +182,9 @@ export const BizHome = (p: { locale: Locale; company: CompanyRow; isOwner: boole
         <li><a href="/biz/company/edit">{t(p.locale, 'co.edit.title')}</a></li>
         <li><a href="/biz/company/docs">{t(p.locale, 'doc.title')}</a></li>
         <li><a href="/biz/members">{t(p.locale, 'mem.title')}</a></li>
+        <li><a href="/biz/jobs">{t(p.locale, 'job.list.title')}</a></li>
       </ul>
-      <p class="muted">{t(p.locale, 'biz.soon')}</p>
+      <p class="muted">{t(p.locale, 'biz.soon_applicants')}</p>
     </section>
   );
 };

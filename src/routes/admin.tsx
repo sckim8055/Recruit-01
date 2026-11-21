@@ -11,6 +11,7 @@ import { render, renderError } from '../render';
 import { AdminCompanyDetail, AdminCompanyList, type AdminCompanyListRow } from '../views/admin-company';
 import type { DocView, MemberView } from '../views/company';
 import { AdminHome } from '../views/pages';
+import { adminJobs } from './admin-jobs';
 import { COMPANY_COLS, type CompanyRow } from './biz-ctx';
 
 export const admin = new Hono<AppEnv>();
@@ -180,3 +181,6 @@ admin.get('/docs/:id', async (c) => {
   const r = await serveVerificationDoc(c.env, actor, c.req.param('id'));
   return r ?? renderError(c, 404);
 });
+
+// 공고 검토·차단·현지화 엔진 비교 (/admin/jobs, /admin/localize-test)
+admin.route('/', adminJobs);

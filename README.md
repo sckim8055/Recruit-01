@@ -31,6 +31,29 @@ npx wrangler dev --var APP_ENV:dev
 
 브라우저에서 http://localhost:8787 을 연다. 로그인 인증코드는 메일로 가지 않고 **터미널 창**에 출력된다.
 
+## 현지화 엔진 (공고 한국어 초안)
+
+엔진 키가 없어도 사이트는 동작한다. 이때 기업은 한국어 초안을 직접 입력한다(수동 입력).
+자동으로 만들려면 아래 중 하나 이상을 준비한다.
+
+1. **Claude**: https://platform.claude.com 에서 API 키를 만든다.
+2. **Gemini**: https://aistudio.google.com 에서 API 키를 만든다.
+3. **Workers AI**: 키가 필요 없다. `npx wrangler login` 으로 Cloudflare 에 로그인한 뒤, `wrangler.jsonc` 맨 아래 `"ai"` 줄의 설명대로 켠다.
+
+로컬에서는 `.dev.vars` 에 키를 한 줄씩 적는다 (이 파일은 git 에 올라가지 않는다).
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+GEMINI_API_KEY=AIza...
+```
+
+테스트·운영 서버에는 `npx wrangler secret put ANTHROPIC_API_KEY` (또는 `GEMINI_API_KEY`) 를 실행하고 키를 붙여 넣는다.
+
+어느 엔진을 먼저 쓸지는 `wrangler.jsonc` 의 `"LOCALIZE_ENGINE"` 에 `claude`, `gemini`, `workers_ai` 중 하나를 적어 정한다.
+비워 두면 claude → gemini → workers_ai 순서로 키가 있는 것을 쓰고, 실패하면 다음 엔진으로 넘어간다.
+모델을 바꾸려면 `LOCALIZE_CLAUDE_MODEL` · `LOCALIZE_GEMINI_MODEL` · `LOCALIZE_WORKERS_AI_MODEL` 에 모델 id 를 적는다(비우면 기본값).
+키를 넣은 뒤 관리자 화면의 "현지화 엔진 비교"(`/admin/localize-test`)에서 엔진별 결과와 걸린 시간을 비교해 볼 수 있다.
+
 ## 확인 명령
 
 ```

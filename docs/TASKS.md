@@ -19,6 +19,16 @@
       (새 서류를 올려야 다시 승인 가능), 담당자 초대 메일 발송(`company_invite`, 기업 이름·로그인 주소만, 한국어+중국어, 실패해도 초대는 유지,
       검증 완료 기업만 발송 — 미검증 기업명이 담긴 메일을 임의 주소로 보내는 통로를 막기 위함).
       국세청 상태조회는 T-04c 로 분리
+- [x] T-05 공고 작성·현지화·게재: 기업 공고 목록·작성·편집(`/biz/jobs`). 중국어 원문은 제목(`title_zh`, 0005 에서 추가)과 본문(`source_zh`)으로 나눠 저장하고,
+      직무·업계·근무지·중국어 수준·보고 라인은 선택형, 연봉(만원/년, 퇴직금 기준 필수)·근무시간(시작·종료)·마감일은 숫자·날짜 입력(번역하지 않음).
+      원문에 이메일·전화번호가 있으면 저장을 거부(엔진에 연락처가 가지 않게). 현지화 엔진 층(`src/lib/localize/`: claude·gemini·workers_ai,
+      `LOCALIZE_ENGINE` 으로 우선 엔진 지정, 실패 시 다음 엔진, 엔진당 1회·25초 제한, 같은 공고 20초 간격 제한)으로 한국어 초안 + 별도 호출로 중국어 대조본(`back_zh`).
+      엔진이 없거나 모두 실패하면 수동 입력(대조본 없음 안내). 기업이 한국어를 직접 고치면 대조본을 지운다. 원문 | 한국어 | 대조본 3열 확인 화면,
+      숫자 대조 경고(게재 조건 아님), 승인 → `publishBlocks()` 가 빈 배열일 때만 게재(WHERE 에서 상태·rev·승인·검토·기업 검증 재확인), 마감.
+      원문·한국어를 고치면 `localize_status` 는 review, 게재 중이면 게재 중단(`planJobSave`). 조건만 고친 게재 중 공고는 바뀐 값으로도 `publishBlocks` 가 비어야 유지.
+      저장할 때마다 `techLeakFlag()` → `review_flag`, 걸린 글이 바뀌면 `review_cleared_by` 해제. 관리자: 검토 대기·차단 공고 목록·상세(`/admin/jobs`),
+      검토 통과(본 rev 일 때만)·차단(사유 필수, `block_reason`)·차단 해제(→ 미게재), 엔진 비교 화면(`/admin/localize-test`, 저장 안 함).
+      `translations` 캐시는 쓰지 않음(결과는 공고 행에 저장되고 "다시 만들기" 는 새 결과가 필요). 세 엔진 어댑터는 실제 API 로 호출해 보지 않았다(키 없음) — T-05b
 
 ## 운영자 설정 (사람이 하는 일 — 안내 문서를 먼저 써서 건넨다)
 - [ ] O-1 GitHub 저장소에 이 폴더 올리기
@@ -26,13 +36,14 @@
 - [ ] O-3 비밀값 넣기: `wrangler secret put ENC_KEY` · `SESSION_PEPPER` (ENC_KEY 는 오프라인 사본 보관)
 - [ ] O-4 `npm run db:remote` → `npm run deploy` → 사용자 지정 도메인 recruit.kimbbob.xyz 연결
 - [ ] O-5 Cloudflare Access 로 recruit.kimbbob.xyz 를 운영자만 접속하게 잠그기
-- [ ] O-6 (나중) Resend 키, Anthropic API 키, 공공데이터포털 국세청 사업자 상태조회 키 발급
+- [ ] O-6 (나중) Resend 키, 현지화 엔진 키(Anthropic 또는 Gemini, 또는 Workers AI 바인딩 켜기 — README "현지화 엔진"), 공공데이터포털 국세청 사업자 상태조회 키 발급
 - [ ] O-7 (나중) 고용노동부 1350 문의 → 답에 따라 기능 플래그 결정
 
 ## 개발
-- [ ] T-05 공고: 중국어 작성 폼(연봉·근무시간·보고 라인은 선택형 입력) → 현지화 초안(Claude API, 키 없으면 "수동 입력" 모드)
-      → 한국어 초안을 다시 중국어로 옮긴 대조본(`back_zh`) → 기업 승인 → `publishBlocks()` 통과 시 게재.
-      저장할 때마다 `techLeakFlag()` 로 `review_flag` 갱신. 관리자 차단·검토 통과. 숫자는 번역하지 않는다
+- [ ] T-05b 현지화 엔진 실호출 확인 (운영자가 키를 넣은 뒤): `/admin/localize-test` 로 claude·gemini·workers_ai 각각 호출해
+      응답 모양·소요 시간(25초 안인지)·JSON 준수·숫자 보존을 확인하고, 기본 모델(`DEFAULT_*_MODEL`)이 맞는지 정한다.
+      Gemini `thinkingLevel`, Workers AI 모델의 출력 모양(`choices` / `response`)과 `max_tokens` 인식 여부, Claude `anthropic-version` 을 새 버전(2026-10-21)으로 올릴지 함께 본다
+- [ ] T-05c 공고 남용 방지: 기업당 초안 개수 한도, 기업당 하루 현지화 호출 한도(지금은 같은 공고 20초 간격만 있다)
 - [ ] T-06 공고 목록·상세: 필터(중국어 수준, 직무, 업계, 진출 단계, 연봉 기준, 보고 라인, 근무지), 페이지네이션.
       `published` + `office` 만 노출. 상세에 구인 기업·연락처 표시
 - [ ] T-06b 디자인 패스: 공고 목록·상세·로그인 화면이 생긴 뒤 한 번에 한다. 밝은 톤, 사무직·전문직 대상의 차분한 인상.

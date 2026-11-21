@@ -61,3 +61,23 @@ tbody tr:last-child td{border-bottom:0}
 .stats a.stat{display:block;color:inherit}
 .stats a.stat:hover{text-decoration:none}
 .stats a.stat:hover b{color:#1d4ed8}
+.badge.s-published{background:#ecf8ef;color:#146c2e}
+.badge.s-blocked{background:#fef3f2;color:#b42318}
+.badge.l-review{background:#fef3c7;color:#78350f}
+.badge.l-approved{background:#ecf8ef;color:#146c2e}
+a.button{display:inline-block;padding:10px 16px;border-radius:6px;background:#1d4ed8;color:#fff;font-size:15px}
+a.button:hover{text-decoration:none;background:#1e40af}
+button.plain{background:#fff;color:#1d4ed8;border:1px solid #c9ced6}
+.actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:12px 0 0}
+.cols3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:0 0 12px}
+.cols3 > div{border:1px solid #e3e6ea;border-radius:8px;padding:12px 14px;background:#fbfcfd;min-width:0}
+.cols3 h3{font-size:14px;color:#5b6472;margin:0 0 8px;font-weight:600}
+.col-title{font-weight:600;margin:0 0 8px;word-break:break-word}
+.warn{color:#78350f;background:#fef3c7;border-radius:6px;padding:8px 12px;font-size:14px;margin:0 0 12px}
+.warn p{margin:4px 0}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 16px}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 16px}
+fieldset{border:1px solid #e3e6ea;border-radius:8px;padding:4px 14px 10px;margin:12px 0}
+legend{font-size:14px;padding:0 6px}
+main:has(.cols3){max-width:1120px}
+@media (max-width:720px){.cols3,.grid2,.grid3{grid-template-columns:1fr}}
