@@ -14,12 +14,13 @@ const RESEND_GAP = 60;
 const MAX_ATTEMPTS = 5;
 const SESSION_TTL = 30 * 24 * 3600;
 const ADMIN_SESSION_TTL = 12 * 3600;
+export const TOTP_PENDING_TTL = 10 * 60;
 const COOKIE = 'sid';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const normalizeEmail = (raw: string): string => raw.trim().toLowerCase();
 const codeHash = (env: Env, email: string, code: string) => sha256Hex(`${env.SESSION_PEPPER}|${email}|${code}`);
-const tokenHash = (env: Env, token: string) => sha256Hex(`${env.SESSION_PEPPER}|${token}`);
+export const tokenHash = (env: Env, token: string) => sha256Hex(`${env.SESSION_PEPPER}|${token}`);
 
 export type RequestCodeResult = 'sent' | 'invalid_email' | 'too_soon' | 'mail_failed';
 
@@ -44,7 +45,9 @@ export async function requestCode(env: Env, rawEmail: string, locale: Locale): P
 }
 
 export type VerifyResult =
-  | { ok: true; user: SessionUser; token: string; maxAge: number }
+  | { ok: true; kind: 'session'; user: SessionUser; token: string; maxAge: number }
+  // 관리자는 여기서 세션을 받지 못한다. TOTP 를 통과해야 한다 (src/lib/admin2fa.ts).
+  | { ok: true; kind: 'totp'; pendingToken: string }
   | { ok: false; why: 'invalid' | 'expired' | 'locked' | 'suspended' };
 
 /**
@@ -78,12 +81,27 @@ export async function verifyCode(
     if (user.status !== 'active') return { ok: false, why: 'suspended' };
     await env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').bind(ts, user.id).run();
   }
-  // TODO(T-03): role 이 admin 이면 여기서 세션을 만들지 말고 TOTP 2단계를 거친다.
+  const su: SessionUser = { id: user.id, email: user.email, role: user.role, locale: user.locale };
+  if (su.role === 'admin') {
+    // 관리자는 이메일 인증코드만으로 로그인할 수 없다. 2단계(TOTP) 대기 상태만 만든다.
+    const pendingToken = randomToken();
+    await env.DB.prepare('DELETE FROM admin_totp_pending WHERE user_id = ? OR expires_at < ?').bind(su.id, ts).run();
+    await env.DB.prepare('INSERT INTO admin_totp_pending (id, user_id, attempts, expires_at) VALUES (?,?,0,?)')
+      .bind(await tokenHash(env, pendingToken), su.id, ts + TOTP_PENDING_TTL).run();
+    return { ok: true, kind: 'totp', pendingToken };
+  }
+  const { token, maxAge } = await createSession(env, su, false);
+  return { ok: true, kind: 'session', user: su, token, maxAge };
+}
+
+/** 세션을 만든다. mfa = true 는 TOTP 를 통과했다는 뜻이며 admin2fa.ts 만 true 로 부른다. */
+export async function createSession(env: Env, user: SessionUser, mfa: boolean): Promise<{ token: string; maxAge: number }> {
+  const ts = now();
   const maxAge = user.role === 'admin' ? ADMIN_SESSION_TTL : SESSION_TTL;
   const token = randomToken();
-  await env.DB.prepare('INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES (?,?,?,?)')
-    .bind(await tokenHash(env, token), user.id, ts, ts + maxAge).run();
-  return { ok: true, user: { id: user.id, email: user.email, role: user.role, locale: user.locale }, token, maxAge };
+  await env.DB.prepare('INSERT INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?)')
+    .bind(await tokenHash(env, token), user.id, ts, ts + maxAge, mfa ? 1 : 0).run();
+  return { token, maxAge };
 }
 
 export function setSessionCookie(c: Context<AppEnv>, token: string, maxAge: number): void {
@@ -98,16 +116,22 @@ export async function logout(c: Context<AppEnv>): Promise<void> {
   deleteCookie(c, COOKIE, { path: '/' });
 }
 
+/** 이 세션으로 해당 역할을 쓸 수 있는가. 순수 함수 (test/auth.test.ts). */
+export function sessionUsable(role: Role, mfa: number): boolean {
+  return role !== 'admin' || mfa === 1;
+}
+
 /** 모든 요청에서 세션을 읽어 c.var.user 에 넣는다 (없으면 null). */
 export const loadUser: MiddlewareHandler<AppEnv> = async (c, next) => {
   c.set('user', null);
   const token = getCookie(c, COOKIE);
   if (token) {
     const row = await c.env.DB.prepare(
-      `SELECT u.id, u.email, u.role, u.locale FROM sessions s JOIN users u ON u.id = s.user_id
+      `SELECT u.id, u.email, u.role, u.locale, s.mfa FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.id = ? AND s.expires_at > ? AND u.status = 'active'`,
-    ).bind(await tokenHash(c.env, token), now()).first<SessionUser>();
-    if (row) c.set('user', row);
+    ).bind(await tokenHash(c.env, token), now()).first<SessionUser & { mfa: number }>();
+    // 관리자는 TOTP 를 통과한 세션만 인정한다. 그렇지 않은 세션은 로그인하지 않은 것으로 본다.
+    if (row && sessionUsable(row.role, row.mfa)) c.set('user', { id: row.id, email: row.email, role: row.role, locale: row.locale });
   }
   await next();
 };

@@ -1,10 +1,11 @@
 // 로그인·로그아웃 화면과 처리. 자바스크립트 없이 폼 전송만으로 동작한다.
 import { Hono } from 'hono';
-import { setCookie } from 'hono/cookie';
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppEnv, Role } from '../env';
-import { logout, requestCode, requireRole, setSessionCookie, verifyCode } from '../lib/auth';
+import { completeTotp, PENDING_COOKIE, totpStep } from '../lib/admin2fa';
+import { logout, requestCode, requireRole, setSessionCookie, TOTP_PENDING_TTL, verifyCode } from '../lib/auth';
 import { render } from '../render';
-import { LoginCode, LoginEmail, MySeeker } from '../views/pages';
+import { LoginCode, LoginEmail, LoginTotp, MySeeker } from '../views/pages';
 
 export const auth = new Hono<AppEnv>();
 
@@ -33,8 +34,39 @@ auth.post('/login/verify', async (c) => {
   const role = signupRole(f.role, c.env.FLAG_HEADHUNTER_POSTING === 'on');
   const r = await verifyCode(c.env, email, String(f.code ?? '').trim(), role, c.var.locale);
   if (!r.ok) return render(c, <LoginCode locale={c.var.locale} email={email} role={role} error={r.why} />, 'login.title');
+  if (r.kind === 'totp') {
+    // 관리자: 세션 대신 2단계 대기 쿠키만 준다 (10분, /login 경로에서만 전송).
+    setCookie(c, PENDING_COOKIE, r.pendingToken, {
+      httpOnly: true, secure: c.env.APP_ENV !== 'dev', sameSite: 'Lax', path: '/login', maxAge: TOTP_PENDING_TTL,
+    });
+    return c.redirect('/login/totp');
+  }
   setSessionCookie(c, r.token, r.maxAge);
   return c.redirect('/my');
+});
+
+// 관리자 2단계 인증. 처음이면 인증 앱 등록 화면이 함께 나온다.
+auth.get('/login/totp', async (c) => {
+  const step = await totpStep(c.env, getCookie(c, PENDING_COOKIE));
+  if (step.state === 'none') return c.redirect('/login');
+  return render(c, <LoginTotp locale={c.var.locale} setup={step.state === 'setup' ? step : undefined} />, 'totp.title');
+});
+
+auth.post('/login/totp', async (c) => {
+  const f = await c.req.parseBody();
+  const token = getCookie(c, PENDING_COOKIE);
+  const r = await completeTotp(c.env, token, String(f.code ?? ''));
+  if (r.ok) {
+    deleteCookie(c, PENDING_COOKIE, { path: '/login' });
+    setSessionCookie(c, r.token, r.maxAge);
+    return c.redirect('/admin');
+  }
+  const step = await totpStep(c.env, token);
+  if (r.why === 'none' || step.state === 'none') {
+    deleteCookie(c, PENDING_COOKIE, { path: '/login' });
+    return c.redirect('/login');
+  }
+  return render(c, <LoginTotp locale={c.var.locale} setup={step.state === 'setup' ? step : undefined} error="totp_invalid" />, 'totp.title');
 });
 
 auth.post('/logout', async (c) => {

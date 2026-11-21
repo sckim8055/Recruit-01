@@ -9,6 +9,7 @@
 | GET / | 홈 | 누구나 | ✅ |
 | GET /login · POST /login/request · POST /login/verify | 이메일 인증코드 로그인·가입 | 누구나 | ✅ |
 | POST /logout | 로그아웃 | 로그인 | ✅ |
+| GET·POST /login/totp | 관리자 2단계 인증 (최초에는 인증 앱 등록) | 인증코드를 통과한 관리자 | ✅ |
 | GET /lang/:l | 언어 전환 (ko/zh) | 누구나 | ✅ |
 | GET /my | 역할별 첫 화면 (구직자: 지원 현황 자리, 기업·헤드헌터 → /biz, 관리자 → /admin) | 로그인 | ✅ |
 | GET /biz | 기업·헤드헌터 첫 화면 | company, headhunter | ✅ (임시 화면) |
@@ -47,7 +48,7 @@
 ## 관리자
 | 경로 | 설명 | 작업 |
 |---|---|---|
-| GET /admin | 검증 대기·검토 대기·신고·사용량 | T-03 (T-02 에서 임시 화면 ✅) |
+| GET /admin | 처리할 일 개수 (검증 대기·검토 대기·신고). 목록 화면은 T-04·T-05·T-09 | ✅ |
 | POST /admin/companies/:id/verify | 기업 승인·반려 | T-04 |
 | POST /admin/jobs/:id/block · /clear-review | 공고 차단 · 기술유출 검토 통과 | T-05 |
 | GET /admin/applications/:id?reason= | 사유 입력 후 지원서 열람 (access_log) | T-09 |

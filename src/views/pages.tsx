@@ -73,3 +73,39 @@ export const ErrorPage = ({ locale, code }: { locale: Locale; code: 403 | 404 })
     </section>
   );
 };
+
+/** 관리자 2단계 인증. setup 이 있으면 최초 등록 화면(비밀키 표시)이다. */
+export const LoginTotp = ({ locale, setup, error }: { locale: Locale; setup?: { secret: string; uri: string }; error?: string }) => (
+  <section class="card">
+    <h1>{t(locale, 'totp.title')}</h1>
+    {setup && (
+      <>
+        <p>{t(locale, 'totp.setup.lead')}</p>
+        <p class="secret">{setup.secret.replace(/(.{4})/g, '$1 ').trim()}</p>
+        <p class="muted"><a href={setup.uri}>{t(locale, 'totp.setup.link')}</a></p>
+        <p class="muted">{t(locale, 'totp.setup.keep')}</p>
+      </>
+    )}
+    {error && <p class="error">{t(locale, `err.${error}`)}</p>}
+    <form method="post" action="/login/totp">
+      <label>{t(locale, 'totp.code')}
+        <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength={6} required autocomplete="one-time-code" autofocus />
+      </label>
+      <button type="submit">{t(locale, 'login.verify')}</button>
+    </form>
+  </section>
+);
+
+/** 관리자 첫 화면: 처리할 일의 개수만 보여준다. 각 목록 화면은 T-04·T-05·T-09 에서 만든다. */
+export const AdminHome = ({ locale, counts }: { locale: Locale; counts: { companies: number; agencies: number; jobReviews: number; reports: number } }) => (
+  <section class="wide">
+    <h1>{t(locale, 'admin.title')}</h1>
+    <ul class="stats">
+      <li><b>{counts.companies}</b><span>{t(locale, 'admin.count.companies')}</span></li>
+      <li><b>{counts.agencies}</b><span>{t(locale, 'admin.count.agencies')}</span></li>
+      <li><b>{counts.jobReviews}</b><span>{t(locale, 'admin.count.job_reviews')}</span></li>
+      <li><b>{counts.reports}</b><span>{t(locale, 'admin.count.reports')}</span></li>
+    </ul>
+    <p class="muted">{t(locale, 'admin.note')}</p>
+  </section>
+);
