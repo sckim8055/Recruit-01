@@ -89,3 +89,28 @@ export function canViewVerificationDoc(a: Actor, doc: VerificationDocRef): boole
   if (doc.owner_type === 'company') return a.role === 'company' && a.companyIds.includes(doc.owner_id);
   return a.role === 'headhunter' && a.agencyIds.includes(doc.owner_id);
 }
+
+// ── 이력서 원본 (구직자가 저장해 둔 이력서)
+
+export interface ResumeRef { user_id: string }
+
+/**
+ * 이력서 원본(resumes)을 볼 수 있는가.
+ * - 구직자: 본인 것만
+ * - 관리자: 사유를 입력해야 열린다 (needsReason). 호출부는 access_log 에 사유를 남긴다
+ * - 기업 담당자·헤드헌터: 볼 수 없다. 기업이 보는 것은 구직자가 직접 지원해서 생긴 지원서(복사본)뿐이다
+ *   (canViewApplication). 지원하지 않은 구직자의 이력서는 누구에게도 넘어가지 않는다 (CLAUDE.md 규칙 1).
+ * 첨부파일을 내려줄 때는 호출부가 access_log 에 기록한다 (lib/resume-files.serveResumeFile).
+ */
+export function canViewResume(a: Actor, r: ResumeRef): ViewDecision {
+  if (a.role === 'seeker') {
+    return a.id === r.user_id ? { allow: true, needsReason: false } : { allow: false, why: 'not_related' };
+  }
+  if (a.role === 'admin') return { allow: true, needsReason: true };
+  return { allow: false, why: 'not_related' };
+}
+
+/** 이력서를 만들고 고치고 지울 수 있는가: 구직자 본인만. 관리자도 고칠 수 없다. */
+export function canEditResume(a: Actor, r: ResumeRef): boolean {
+  return a.role === 'seeker' && a.id === r.user_id;
+}
