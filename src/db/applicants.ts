@@ -78,6 +78,37 @@ export async function markViewed(db: D1Database, v: { id: string; actorId: strin
   return res[1]?.meta.changes === 1;
 }
 
+/** 이 지원에 그 이벤트가 몇 번 있었는가 (면접 요청 메일 횟수 제한에 쓴다). */
+export async function countEvents(db: D1Database, applicationId: string, event: string): Promise<number> {
+  const r = await db.prepare('SELECT COUNT(*) AS n FROM application_events WHERE application_id = ? AND event = ?').bind(applicationId, event).first<{ n: number }>();
+  return Number(r?.n ?? 0);
+}
+
+/**
+ * 기업이 메일을 보냈다는 이벤트('interview_mail' · 'reject_mail')를 남기고 상태를 옮긴다 (규칙 3).
+ * 상태가 from 이고 같은 이벤트가 maxSame 번 미만일 때만 이벤트가 들어간다. to 는 호출부가 rules.nextStatus 로 계산한 값이며,
+ * from 과 같으면(이미 그 상태) 이벤트만 남는다. 이벤트가 들어갔으면 true.
+ */
+export async function recordMailEvent(
+  db: D1Database, m: { id: string; actorId: string; event: 'interview_mail' | 'reject_mail'; from: string; to: string; maxSame: number; ts: number },
+): Promise<boolean> {
+  const eventId = crypto.randomUUID();
+  const res = await db.batch([
+    db.prepare(
+      `INSERT INTO application_events (id, application_id, event, actor_id, at)
+       SELECT ?, a.id, ?, ?, ? FROM applications a
+       WHERE a.id = ? AND a.status = ?
+         AND (SELECT COUNT(*) FROM application_events e WHERE e.application_id = a.id AND e.event = ?) < ?`,
+    ).bind(eventId, m.event, m.actorId, m.ts, m.id, m.from, m.event, m.maxSame),
+    // 방금 넣은 이벤트가 있을 때만 상태를 옮긴다 (이벤트 없이 상태만 바뀌는 일이 없게).
+    db.prepare(
+      `UPDATE applications SET status = ?, status_changed_at = ?
+       WHERE id = ? AND status = ? AND status != ? AND EXISTS (SELECT 1 FROM application_events WHERE id = ?)`,
+    ).bind(m.to, m.ts, m.id, m.from, m.to, eventId),
+  ]);
+  return res[0]?.meta.changes === 1;
+}
+
 export interface AccessLogRow {
   id: string;
   actor_id: string;

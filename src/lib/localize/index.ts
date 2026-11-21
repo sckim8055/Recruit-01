@@ -34,7 +34,7 @@ export const availableEngines = (env: LocalizeEnv, engines: readonly LocalizeEng
     }
   });
 
-async function call(engine: LocalizeEngine, env: LocalizeEnv, req: Parameters<LocalizeEngine['complete']>[1]): Promise<string> {
+export async function callEngine(engine: LocalizeEngine, env: LocalizeEnv, req: Parameters<LocalizeEngine['complete']>[1]): Promise<string> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), ENGINE_TIMEOUT_MS);
   try {
@@ -58,10 +58,10 @@ export async function runEngine(engine: LocalizeEngine, env: LocalizeEnv, input:
   try {
     // 모델이 낸 글의 앞부분(200자)은 형식이 틀렸을 때 진단용으로만 쓴다 — fail() 이 개발 환경에서만 찍는다.
     const head = (s: string) => s.replace(/\s+/g, ' ').slice(0, 200);
-    const koRaw = await call(engine, env, localizeRequest(input));
+    const koRaw = await callEngine(engine, env, localizeRequest(input));
     const ko = parseLocalized(koRaw);
     if (!ko.ok) return fail(`output_${ko.why}`, head(koRaw));
-    const backRaw = await call(engine, env, backRequest(ko));
+    const backRaw = await callEngine(engine, env, backRequest(ko));
     const back = parseBack(backRaw);
     if (!back.ok) return fail(`back_output_${back.why}`, head(backRaw));
     return { ok: true, title_ko: ko.title_ko, body_ko: ko.body_ko, back_zh: back.back_zh, ms: clock() - t0 };
