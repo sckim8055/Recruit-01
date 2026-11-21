@@ -1,7 +1,8 @@
 // 기업·관리자의 지원서 열람 (T-09 핵심): 여는 길은 openApplication 하나 — 권한 → 사유 → 복호화 → 기록 → 상태.
 import { describe, expect, it } from 'vitest';
 import type { Actor } from '../src/lib/authz';
-import { cleanReason, openApplication, refOf, ADMIN_REASON_MAX } from '../src/lib/applicants';
+import { cleanReason, downloadApplicationFile, openApplication, refOf, ADMIN_REASON_MAX } from '../src/lib/applicants';
+import { putResumeFile } from '../src/lib/resume-files';
 import { b64url, importEncKey } from '../src/lib/crypto';
 import { sealResume, type ResumeBody } from '../src/lib/resume';
 import { countApplicationsByJob, getApplicationWithJob, listAccessLog, listJobApplications, listViewsOfApplication } from '../src/db/applicants';
@@ -110,6 +111,32 @@ describe.skipIf(!hasSqlite)('지원서 열기', () => {
     expect(refOf(await load())).toEqual({ seeker_id: 's1', job: { company_id: 'c1', agency_id: null, created_by: 'm1' }, cross_border_consent_at: null, status: 'submitted' });
   });
 
+  it('첨부파일 내려받기: 권한·사유·기록은 열람과 같고, 상태는 바꾸지 않는다', async () => {
+    const { env, load, count, raw } = await setup();
+    const store = new Map<string, Uint8Array>();
+    const fenv = { ...env, FILES: {
+      put: async (k: string, v: Uint8Array) => { store.set(k, v); },
+      get: async (k: string) => { const v = store.get(k); return v ? { arrayBuffer: async () => v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength) } : null; },
+      delete: async (k: string) => { store.delete(k); },
+    } } as unknown as Env;
+    const pdf = new TextEncoder().encode('%PDF-1.4 fake');
+    const key = await putResumeFile(fenv, pdf);
+    const withFile = await sealResume(await importEncKey(KEY), { ...body, file: { name: '이력서.pdf', ext: 'pdf', mime: 'application/pdf', size: pdf.length } });
+    raw.prepare('UPDATE applications SET resume_snapshot = ?, file_r2_key = ? WHERE id = ?').run(withFile, key, 'a1');
+    const res = await downloadApplicationFile(fenv, local, await load(), null);
+    expect(new Uint8Array(await res!.arrayBuffer())).toEqual(pdf);
+    expect([count('access_log'), count('application_events'), (await load()).status]).toEqual([1, 0, 'submitted']);
+    expect(await downloadApplicationFile(fenv, mk({ id: 'x1', companyIds: ['c2'] }), await load(), null)).toBeNull();
+    expect(await downloadApplicationFile(fenv, hq, await load(), null)).toBeNull();
+    expect(await downloadApplicationFile(fenv, mk({ id: 's1', role: 'seeker' }), await load(), null)).toBeNull();
+    expect(await downloadApplicationFile(fenv, mk({ id: 'adm', role: 'admin' }), await load(), ' ')).toBeNull();
+    expect(count('access_log')).toBe(1);
+    expect(await downloadApplicationFile(fenv, mk({ id: 'adm', role: 'admin' }), await load(), '확인')).not.toBeNull();
+    expect(raw.prepare("SELECT reason FROM access_log WHERE actor_role = 'admin'").get()!.reason).toBe('확인');
+    // 첨부가 없는 지원서
+    raw.exec("UPDATE applications SET file_r2_key = NULL WHERE id = 'a1'");
+    expect(await downloadApplicationFile(fenv, local, await load(), null)).toBeNull();
+  });
   it('지원자 목록에는 지원서 내용이 없다 (암호문도 돌려주지 않는다)', async () => {
     const { d1, ins, sealed } = await setup();
     ins.run('a2', 'j1', 's2', sealed, null, 7, 'withdrawn', 30, 20);

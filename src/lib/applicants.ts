@@ -10,6 +10,7 @@
 import { now, type Env } from '../env';
 import { canViewApplication, type Actor, type ApplicationRef } from './authz';
 import { importEncKey } from './crypto';
+import { serveApplicationFile } from './application-files';
 import { logAccess } from './files';
 import { openResume, type ResumeBody } from './resume';
 import { nextStatus, type AppStatus } from './rules';
@@ -60,4 +61,25 @@ export async function openApplication(env: Env, actor: Actor, app: ApplicationWi
     if (to !== app.status && await markViewed(env.DB, { id: app.id, actorId: actor.id, from: app.status, to, ts: now() })) status = to;
   }
   return { ok: true, body, status, needsReason: d.needsReason };
+}
+
+/**
+ * 본인 아닌 사람이 지원서의 첨부파일을 내려받는다. 파일명·종류는 암호화된 지원서 안에 있으므로 여기서 풀어서 넘긴다.
+ * 권한·사유 확인과 열람 기록은 serveApplicationFile 이 한다 (내려받기 한 번 = 기록 한 줄).
+ * 볼 수 없거나, 첨부가 없거나, 열 수 없으면 null (호출부는 404). 상태('viewed')는 바꾸지 않는다 — 지원서 화면을 열 때 바뀐다.
+ */
+export async function downloadApplicationFile(env: Env, actor: Actor, app: ApplicationWithJob, reason: string | null): Promise<Response | null> {
+  if (actor.role === 'seeker') return null;
+  const ref = refOf(app);
+  const d = canViewApplication(actor, ref);
+  if (!d.allow || !app.file_r2_key || !app.resume_snapshot) return null;
+  const why = d.needsReason ? cleanReason(reason) : null;
+  if (d.needsReason && !why) return null;
+  let body: ResumeBody;
+  try {
+    body = await openResume(await importEncKey(env.ENC_KEY), app.resume_snapshot);
+  } catch {
+    return null;
+  }
+  return serveApplicationFile(env, actor, { ...ref, id: app.id, file_r2_key: app.file_r2_key }, body.file, why);
 }
