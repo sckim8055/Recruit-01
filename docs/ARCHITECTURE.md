@@ -40,7 +40,7 @@ src/
     page-cache.ts    공개 화면 캐시 (비로그인만, 60초) (9절)
     localize/        현지화 엔진 층 (7절)
   db/                SQL 과 D1 호출은 여기에만 (T-05d). users · sessions(인증코드·세션·TOTP 대기) · companies(기업·담당자·초대·서류 행)
-                     · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수) · settings(site_settings) · options(job_options). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
+                     · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수) · settings(site_settings) · options(job_options) · resumes(이력서). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
                      PostgreSQL 로 옮길 때 고칠 곳과 SQLite 전용 문법 목록은 docs/DB-PORTING.md
   locales/ko.ts zh.ts  화면 문구
   routes/            화면·API 라우트 (기능별 파일)
@@ -75,10 +75,17 @@ docs/                이 문서, API.md, TASKS.md
 - **이력서는 간단하게 받는다.** 한국식 상세 이력서 양식을 강요하지 않는다. 필수는 아래 5개뿐이고, 나머지는 첨부파일로 대신한다.
   ```
   필수: name(이름) · chinese_level(중국어 수준) · years(총 경력 연차) · headline(한 줄 소개, 100자) · 연락 이메일(계정 이메일 기본값)
-  선택: phone · desired_role(희망 직무) · experience_text(경력 요약, 자유 서술 1칸) · 첨부파일 1개(PDF·DOCX, 10MB, R2 비공개)
+  선택: phone · desired_role(희망 직무) · experience_text(경력 요약, 자유 서술 1칸) · 첨부파일 1개(PDF·DOCX, 5MB, Worker 에서 암호화해 R2 비공개 저장)
   ```
-  `resumes.body` 에는 위 항목을 JSON 으로 묶어 암호화해 저장하고, 첨부파일은 `file_r2_key` 로 가리킨다.
+  `resumes.body` 에는 위 항목을 JSON 으로 묶어 암호화해 저장하고(`lib/resume.sealResume`), 첨부파일은 `file_r2_key` 로 가리킨다.
+  - **첨부파일 정보(원래 파일명·종류·크기)는 암호화된 `body` 안의 `file` 에 있다.** 파일명에 이름이 들어 있는 경우가 많기 때문이다.
+    R2 키는 `rfiles/<무작위 UUID>` 이고 R2 객체에는 파일명·종류를 남기지 않는다. 평문으로 남는 것은 `title`(구직자가 붙인 이름표, 화면에서 개인정보를 쓰지 말라고 안내)과 `file_r2_key` 뿐이다.
+  - **첨부파일 바이트도 Worker 에서 `ENC_KEY` 로 AES-GCM 암호화한 뒤 R2 에 넣는다** (`lib/resume-files.ts`, R2 키를 추가 인증 데이터로 써서 다른 위치로 옮긴 객체는 풀리지 않는다).
+    R2 버킷을 직접 열어도 내용이 보이지 않는다. 크기 한도는 기술설계서의 10MB 대신 **5MB**(무료 플랜 CPU 한도 안에서 암호화·복호화하기 위해), 종류는 내용으로 판별한 **PDF·DOCX 만**(HWP·DOC·이미지는 PDF 로 저장해 올리도록 안내).
+  - 이력서마다 자기 R2 객체를 가진다(복사하면 새 키로 다시 암호화). 새 파일은 R2 에 먼저 올리고 DB 를 쓰며, DB 쓰기가 실패하면 방금 올린 파일을 지운다.
+    교체·삭제된 예전 객체는 DB 가 더 이상 가리키지 않게 된 **뒤에** 지운다. R2 삭제가 실패하면 어느 행도 가리키지 않는 객체가 남을 수 있다 → T-12 정리 작업.
   첨부파일 또는 experience_text 중 하나는 있어야 지원할 수 있다.
+- 이력서 원본은 본인만 보고 고친다(`authz.canViewResume`·`canEditResume`). 기업·헤드헌터는 원본을 볼 수 없고 지원서(복사본)만 본다. 관리자 열람(사유 필요)은 함수만 있고 화면은 아직 없다.
 - **번역 API 로 보내는 것은 headline·experience_text·desired_role·chinese_level·years 뿐이다.** 이름·연락처와 **첨부파일은 보내지 않는다**
   (파일 안에는 주민번호·주소·사진 같은 정보가 들어 있을 수 있다). 그래서 중국어 요약(`FLAG_RESUME_ZH_SUMMARY`)은 입력 항목만으로 만든다.
 - **지원서(`applications.resume_snapshot`)** 는 지원 시점의 이력서 복사본이다. 지원 화면에서 이번 지원에만 쓸 내용으로 고쳐서 낼 수 있고, 이후 이력서를 고치거나 지워도 지원서는 바뀌지 않는다.

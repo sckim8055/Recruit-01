@@ -1,7 +1,7 @@
 # 경로 목록
 
 화면은 서버 렌더링 + HTML 폼이다. `✅` 는 구현됨, 나머지는 docs/TASKS.md 의 해당 작업에서 만든다.
-모든 POST 는 같은 출처에서 온 요청만 받는다(`sameOrigin`). "권한" 칸의 판단은 `authz.ts`·`requireRole` 을 쓴다.
+모든 POST 는 같은 출처에서 온 요청만 받는다(`sameOrigin`). `/my/resumes*` 는 구직자만(기업·헤드헌터·관리자 403, 남의 이력서 id 는 404), 모든 응답이 `Cache-Control: private, no-store`. "권한" 칸의 판단은 `authz.ts`·`requireRole` 을 쓴다.
 
 ## 공통
 | 경로 | 설명 | 권한 | 상태 |
@@ -11,7 +11,7 @@
 | POST /logout | 로그아웃 | 로그인 | ✅ |
 | GET·POST /login/totp | 관리자 2단계 인증 (최초에는 인증 앱 등록) | 인증코드를 통과한 관리자 | ✅ |
 | GET /lang/:l | 언어 전환 (ko/zh) | 누구나 | ✅ |
-| GET /my | 역할별 첫 화면 (구직자: 지원 현황 자리, 기업·헤드헌터 → /biz, 관리자 → /admin) | 로그인 | ✅ |
+| GET /my | 역할별 첫 화면 (구직자: 이력서 링크 + 지원 현황 자리, 기업·헤드헌터 → /biz, 관리자 → /admin) | 로그인 | ✅ |
 | GET /biz | 기업 첫 화면 (소속 없음: 받은 초대 + 기업 등록 폼 / 소속 있음: 검증 상태·남은 할 일). 헤드헌터는 임시 화면 | company, headhunter | ✅ |
 | GET /api/health | 상태 확인 | 누구나 | ✅ |
 | (없는 경로) · 권한 없음 | 404 · 403 화면 (공통 레이아웃, 한국어·중국어) | 누구나 | ✅ |
@@ -23,8 +23,13 @@
 | GET /jobs | 공고 목록 (공개 조건: ARCHITECTURE 9장). 필터 `chinese_level` `role_category` `industry` `entry_stage` `salary_basis` `report_line` `location` 중 관리자가 보이게 한 것만(기본: `chinese_level` `report_line` `location`, `/admin/settings`), `page`(20건씩, 최대 100). 직무·업계·근무지 값은 사용 중인 항목(`job_options`, `/admin/options`)만 받는다. 빈 칸·모르는 조건·숨긴 조건·사용 종료된 항목 값이 붙은 주소는 정규화 주소로 302. 비로그인은 60초 캐시 | 누구나 | ✅ |
 | GET /jobs/:id | 공고 상세 (구조 항목·기업·기업 연락처. 지원 버튼은 T-08). 보이지 않는 공고는 404. 비로그인은 60초 캐시 | 누구나 | ✅ |
 | GET /companies · /companies/:id | 기업 목록·기업 페이지 (검증된 기업만, "기업 제공 정보" 표시. 사업자번호·담당자·서류는 공개하지 않음) | 누구나 | ✅ |
-| GET /my/resumes · GET·POST /my/resumes/new · /my/resumes/:id | 이력서 목록·작성·수정 (여러 개) | seeker 본인 | T-07 |
-| POST /my/resumes/:id/default · /copy · /delete | 대표 지정·복사·삭제 | seeker 본인 | T-07 |
+| GET /my/resumes | 내 이력서 목록 (대표 먼저, 최대 5개). 줄마다 제목·한 줄 소개·수정일·첨부파일 이름·지원 가능 여부, 수정·복사·대표로 지정·삭제. 열 수 없는 이력서(복호화 실패)는 "열 수 없는 이력서" + 삭제만. 결과 표시는 `?ok=created\|saved\|copied\|copied_nofile\|default\|deleted`, `?err=limit` 뿐 | seeker 본인 | ✅ |
+| GET·POST /my/resumes/new | 새 이력서 (multipart: 항목 + 첨부파일 `attachment` 1개, PDF·DOCX 5MB). 연락 이메일 기본값 = 계정 이메일. 첫 이력서는 대표. 5개면 `?err=limit` 로 302. 본문이 6MB 를 넘으면(`content-length`) 읽지 않고 413. 항목·파일 오류는 400 + 입력값 유지(파일은 다시 골라야 함) | seeker 본인 | ✅ |
+| GET·POST /my/resumes/:id/edit | 수정 (`updated_at` 숨은 칸 = 화면을 연 때의 버전. 다르면 400 + 안내 + 입력값 유지). 첨부파일: 새 파일이면 교체, `remove_file=1` 이면 삭제, 아니면 유지. 예전 R2 객체는 DB 갱신이 성공한 뒤에 지운다 | seeker 본인 (`canEditResume`) | ✅ |
+| GET /my/resumes/:id/file | 첨부파일 내려받기 (항상 attachment, 미리보기 없음, access_log). `serveResumeFile` 만 쓴다 | seeker 본인 (`canViewResume`) | ✅ |
+| POST /my/resumes/:id/copy | 복사 ("제목 (복사)", 중국어 화면은 "(副本)"). 첨부파일은 새 R2 객체로 다시 암호화해 복사. 원본 파일이 없으면 첨부 없이 복사(`ok=copied_nofile`). 5개면 `?err=limit` | seeker 본인 | ✅ |
+| POST /my/resumes/:id/default | 대표 이력서 지정 | seeker 본인 | ✅ |
+| GET·POST /my/resumes/:id/delete | 삭제 확인 화면(제목, 낸 지원서는 영향 없음 안내) → 삭제. 대표를 지우면 가장 최근에 고친 것이 대표. 행을 지운 뒤 R2 객체를 지운다 | seeker 본인 | ✅ |
 | GET·POST /jobs/:id/apply | 지원 (국외 이전 동의 포함) | seeker | T-08 |
 | GET /my/applications | 지원 현황 (자동 상태) | seeker | T-08 |
 | POST /my/applications/:id/withdraw | 지원 취소 | seeker 본인 | T-08 |

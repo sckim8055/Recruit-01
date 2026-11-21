@@ -61,6 +61,8 @@ export const LoginCode = ({ locale, email, role, error }: { locale: Locale; emai
 export const MySeeker = ({ locale, email }: { locale: Locale; email: string }) => (
   <section class="card">
     <h1>{t(locale, 'nav.my')}</h1>
+    <p><a href="/my/resumes">{t(locale, 'my.seeker.resumes')}</a></p>
+    <p class="muted">{t(locale, 'my.seeker.resumes_note')}</p>
     <p>{t(locale, 'my.seeker.applications_soon')}</p>
     <p class="muted">{email}</p>
   </section>

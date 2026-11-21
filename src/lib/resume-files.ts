@@ -91,6 +91,9 @@ export async function decryptFile(key: CryptoKey, stored: Uint8Array, r2Key: str
   return new Uint8Array(pt);
 }
 
+/** RFC 5987 값 인코딩: encodeURIComponent 가 남겨 두는 ' ( ) * 도 바꾼다. */
+export const rfc5987 = (s: string): string => encodeURIComponent(s).replace(/['()*]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+
 // ── R2
 
 /** 새 R2 키. 사용자 id·파일명을 넣지 않는다 (키만 보고는 누구 것인지 알 수 없게). */
@@ -144,7 +147,7 @@ export async function serveResumeFile(
   await logAccess(env, actor, 'resume', resume.id, d.needsReason ? why : null);
   const headers = privateFileHeaders(meta.mime, `resume.${meta.ext}`);
   // 원래 파일명은 RFC 5987 형식으로 붙인다 (한글 파일명). 따옴표 안의 이름은 ASCII 고정값이다.
-  headers.set('content-disposition', `attachment; filename="resume.${meta.ext}"; filename*=UTF-8''${encodeURIComponent(meta.name)}`);
+  headers.set('content-disposition', `attachment; filename="resume.${meta.ext}"; filename*=UTF-8''${rfc5987(meta.name)}`);
   headers.set('content-length', String(plain.length));
   return new Response(plain, { headers });
 }

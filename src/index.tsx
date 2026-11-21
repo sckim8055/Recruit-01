@@ -10,6 +10,7 @@ import { auth } from './routes/auth';
 import { biz } from './routes/biz';
 import { companies } from './routes/companies';
 import { homePage, jobs } from './routes/jobs';
+import { resumes } from './routes/resumes';
 import { pageCache } from './lib/page-cache';
 
 const app = new Hono<AppEnv>();
@@ -27,6 +28,7 @@ app.use('*', async (c, next) => {
 // 홈·공고 화면은 로그인하지 않은 요청을 60초 캐시한다 (lib/page-cache.ts).
 app.get('/', pageCache, homePage);
 app.get('/api/health', (c) => c.json({ ok: true, env: c.env.APP_ENV }));
+app.route('/my/resumes', resumes);
 app.route('/', auth);
 app.route('/biz', biz);
 app.route('/admin', admin);

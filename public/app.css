@@ -101,3 +101,4 @@ main:has(.cols3){max-width:1120px}
 .opt-add{margin-top:16px;padding-top:12px;border-top:1px solid #e3e6ea}
 .opt-add h3{font-size:14px;margin:0 0 4px}
 ul.hint{padding-left:20px;margin:8px 0}
+a.danger{color:#b42318}

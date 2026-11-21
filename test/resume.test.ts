@@ -7,7 +7,7 @@ import {
   EMPTY_RESUME_INPUT, RESUME_LIMITS, RESUME_MAX_PER_USER, type ResumeBody, type ResumeInput,
 } from '../src/lib/resume';
 import {
-  checkResumeUpload, decryptFile, encryptFile, newResumeFileKey, safeFileName, serveResumeFile, sniffResumeFile, RESUME_FILE_MAX_BYTES,
+  checkResumeUpload, decryptFile, encryptFile, newResumeFileKey, rfc5987, safeFileName, serveResumeFile, sniffResumeFile, RESUME_FILE_MAX_BYTES,
 } from '../src/lib/resume-files';
 import { deleteResume, getResume, insertResume, listResumes, setDefaultResume, updateResume } from '../src/db/resumes';
 import type { Env } from '../src/env';
@@ -227,7 +227,8 @@ describe('첨부파일 내려받기', () => {
     const res = await serveResumeFile(env, mk({}), { id: 'r1', user_id: 'u1', file_r2_key: r2 }, meta, null);
     expect(res).not.toBeNull();
     expect(new Uint8Array(await res!.arrayBuffer())).toEqual(pdf());
-    expect(res!.headers.get('content-disposition')).toBe(`attachment; filename="resume.pdf"; filename*=UTF-8''${encodeURIComponent(meta.name)}`);
+    expect(res!.headers.get('content-disposition')).toBe(`attachment; filename="resume.pdf"; filename*=UTF-8''${rfc5987(meta.name)}`);
+    expect(rfc5987("이력서 (최종)'s*.pdf")).toBe('%EC%9D%B4%EB%A0%A5%EC%84%9C%20%28%EC%B5%9C%EC%A2%85%29%27s%2A.pdf');
     expect(res!.headers.get('cache-control')).toBe('private, no-store');
     expect(res!.headers.get('x-content-type-options')).toBe('nosniff');
     expect(logs).toHaveLength(1);

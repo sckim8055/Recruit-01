@@ -18,6 +18,7 @@
 | `src/db/logs.ts` | access_log, email_log |
 | `src/db/admin.ts` | 관리자 첫 화면 개수 (companies·agencies·jobs·reports) |
 | `src/db/settings.ts` | site_settings (사이트 설정 이름 → 값, upsert) |
+| `src/db/resumes.ts` | resumes (내 이력서 목록·한 개·개수, 5개 한도 안에서 추가, 버전 비교 수정, 대표 지정, 삭제 + 대표 승계, 파일 키 목록). 모든 문장에 `user_id` 조건 |
 | `src/db/options.ts` | job_options (직무·업계·근무지 선택 항목: 전체 읽기·추가·이름/순서 수정·사용 종료/다시 사용) + 항목별 공고 수 |
 
 - 스키마는 `migrations/` (SQLite 문법). 판단 규칙(`rules.ts`·`authz.ts`)·TTL·횟수 제한은 DB 와 무관하므로 옮길 때 고치지 않는다.
@@ -61,6 +62,10 @@
 | `options.ts` (파일 머리말) | `meta.changes`, `active` INTEGER 0/1 (`active = 1`) | `rowCount`. boolean 으로 바꾸면 SQL 과 `lib/options.buildOptionSet` 수정 |
 | `options.countOptionUsage` | `COUNT(*)` 가 숫자로 옴 | `COUNT(*)::int` 또는 변환 (확인 필요) |
 | `options.setOptionActive` | 사용 종료 가드 `… AND (SELECT COUNT(*) FROM job_options WHERE kind = ? AND active = 1) > 1` — D1 은 쓰기가 순서대로라 안전 | 문법은 된다. 동시성은 4장 |
+| `resumes.ts` (파일 머리말) | `is_default` INTEGER 0/1 (`= 1`/`= 0`), 회원당 대표 하나는 부분 유일 인덱스 `idx_resumes_default … WHERE is_default = 1` 이 지킨다, `meta.changes` | integer 로 두면 그대로. boolean 이면 `WHERE is_default` 와 비교 수정 |
+| `resumes.insertResume` | `INSERT … SELECT ?,…, CASE WHEN EXISTS … THEN 0 ELSE 1 END … WHERE (SELECT COUNT(*) …) < ?` — 한도·첫 이력서 대표를 한 문장으로 | 문법은 된다. FROM 없는 SELECT 의 매개변수 형 지정이 필요할 수 있다(확인 필요). 동시에 두 번 추가하면 둘 다 통과해 6개가 될 수 있다(4장) |
+| `resumes.setDefaultResume` · `deleteResume` | `batch` = 트랜잭션. 대표 지정은 "기존 대표 내리기 → 대상 올리기" 순서(바꾸면 유일 인덱스 위반), 삭제는 "지우기 → 대표가 없으면 가장 최근 것을 대표로" | `BEGIN … COMMIT`, 순서 그대로 |
+| `resumes.countResumes` | `COUNT(*)` 가 숫자로 옴 | `COUNT(*)::int` 또는 변환 (확인 필요) |
 | `migrations/0007_job_options.sql` | 기본 행의 시각 `strftime('%s','now')` | `extract(epoch from now())::bigint` |
 | `companies.listPublicCompanies` | `ORDER BY name_ko` = 바이트 순서 | DB 콜레이션에 따라 한글 정렬이 달라질 수 있음 (`COLLATE "C"` 로 맞춤) |
 
