@@ -83,6 +83,7 @@ const ConsentStatus = ({ locale, rows, required }: { locale: Locale; rows: Conse
 
 const BlockText = ({ locale, block }: { locale: Locale; block: DeletionBlock }) => (
   block === 'admin' ? <p class="warn">{t(locale, 'acct.block.admin')}</p>
+    : block === 'demo' ? <p class="warn">{t(locale, 'acct.block.demo')}</p>
     : <p class="warn">{t(locale, 'acct.block.owner_with_members')} <a href="/biz/members">{t(locale, 'mem.title')}</a></p>
 );
 

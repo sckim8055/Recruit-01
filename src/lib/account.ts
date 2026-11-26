@@ -5,15 +5,18 @@
 // - 다른 담당자가 있는 기업의 대표 담당자는 탈퇴할 수 없다 — 먼저 다른 담당자를 내보내거나 운영자에게 대표 변경을 요청해야 한다.
 // - 파일은 DB 가 지워진 뒤에 지운다. 파일 지우기가 실패해도 탈퇴는 끝난 것이다 (남은 파일은 암호문이고, T-12 정리 작업이 치운다).
 import { now, type Env, type SessionUser } from '../env';
+import { isDemoUserId } from './demo';
 import { deleteResumeFile } from './resume-files';
 import { countOwnedCompaniesWithOthers, eraseUser } from '../db/account';
 import { listApplicationFileKeys } from '../db/applications';
 import { listResumeFileKeys } from '../db/resumes';
 
-export type DeletionBlock = 'admin' | 'owner_with_members';
+export type DeletionBlock = 'admin' | 'owner_with_members' | 'demo';
 
-export function deletionBlocks(i: { role: string; ownedCompaniesWithOthers: number }): DeletionBlock[] {
+export function deletionBlocks(i: { role: string; ownedCompaniesWithOthers: number; demo?: boolean }): DeletionBlock[] {
   const out: DeletionBlock[] = [];
+  // 시연 계정은 여러 사람이 함께 쓴다 — 한 사람이 탈퇴시키면 다른 사람이 들어올 수 없다 (lib/demo.ts).
+  if (i.demo) out.push('demo');
   if (i.role === 'admin') out.push('admin');
   if (i.ownedCompaniesWithOthers > 0) out.push('owner_with_members');
   return out;
@@ -29,7 +32,10 @@ export const deletedMarker = (): string => `deleted-${crypto.randomUUID()}@delet
 export type DeleteResult = { ok: true; filesLeft: number } | { ok: false; blocks: DeletionBlock[] } | { ok: false; blocks: []; why: 'already' };
 
 export async function deletionBlocksFor(env: Env, user: SessionUser): Promise<DeletionBlock[]> {
-  return deletionBlocks({ role: user.role, ownedCompaniesWithOthers: user.role === 'company' ? await countOwnedCompaniesWithOthers(env.DB, user.id) : 0 });
+  return deletionBlocks({
+    role: user.role, demo: isDemoUserId(user.id),
+    ownedCompaniesWithOthers: user.role === 'company' ? await countOwnedCompaniesWithOthers(env.DB, user.id) : 0,
+  });
 }
 
 export async function deleteAccount(env: Env, user: SessionUser): Promise<DeleteResult> {

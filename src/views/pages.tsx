@@ -1,4 +1,5 @@
 import type { Locale } from '../env';
+import type { DemoAccount } from '../lib/demo';
 import { t } from '../lib/i18n';
 import { qrSvgPath } from '../lib/qr';
 import type { OptionSet } from '../lib/options';
@@ -74,7 +75,9 @@ export const Home = ({ locale, jobs, options, bye }: { locale: Locale; jobs: Pub
   </>
 );
 
-export const LoginEmail = ({ locale, error }: { locale: Locale; error?: string }) => (
+/** demo: 시연 로그인이 켜져 있을 때만 넘어온다 (테스트 서버·로컬 — lib/demo.ts). 넘어오지 않으면 시연 계정 칸을 그리지 않는다. */
+export const LoginEmail = ({ locale, error, demo }: { locale: Locale; error?: string; demo?: readonly DemoAccount[] }) => (
+  <>
   <section class="card">
     <h1>{t(locale, 'login.title')}</h1>
     {error && <p class="error">{t(locale, `err.${error}`)}</p>}
@@ -92,6 +95,22 @@ export const LoginEmail = ({ locale, error }: { locale: Locale; error?: string }
       <p class="muted">{t(locale, 'login.agree')} <a href="/terms">{t(locale, 'footer.terms')}</a> · <a href="/privacy">{t(locale, 'footer.privacy')}</a></p>
     </form>
   </section>
+  {demo && demo.length > 0 && (
+    <section class="card">
+      <h2>{t(locale, 'demo.title')}</h2>
+      <p>{t(locale, 'demo.lead')}</p>
+      <form method="post" action="/login/demo">
+        {demo.map((a) => (
+          <p>
+            <button type="submit" name="account" value={a.key}>{t(locale, `demo.acct.${a.key}`)}</button>
+            <br /><span class="hint">{t(locale, `demo.acct.${a.key}.d`)}</span>
+          </p>
+        ))}
+      </form>
+      <p class="muted">{t(locale, 'demo.note')}</p>
+    </section>
+  )}
+  </>
 );
 
 /** 고른 유형과 계정의 유형이 다를 때: 로그인은 되었고, 어느 유형으로 들어왔는지 알려 준다. */

@@ -58,6 +58,10 @@
     "FLAG_PAID_LABEL": "off",
     // 점검 모드: "on" 이면 관리자·로그인·/api/health 말고 모든 요청에 503 점검 안내 (docs/DEPLOY.md 6-2).
     "MAINTENANCE": "off",
+    // 시연 계정 로그인 (src/lib/demo.ts): "on" 이면 로그인 화면에서 인증코드 없이 시연 계정(구직자·기업 담당자)으로 들어올 수 있고,
+    // 가짜 기업·공고·지원 데이터가 들어간다. 테스트 서버·로컬 개발에서만 동작한다 — 운영(env.production)은 항상 "off" 로 둔다
+    // ("on" 으로 적어도 코드가 무시하고, 배포 전 점검이 배포를 막는다).
+    "DEMO_LOGIN": "on",
     // 공고 현지화 엔진: claude · gemini · workers_ai 중 먼저 쓸 엔진. 비워 두면 claude → gemini → workers_ai 순서로
     // 키·바인딩이 있는 것을 쓴다. 키는 wrangler secret put ANTHROPIC_API_KEY / GEMINI_API_KEY 로 넣는다 (README).
     "LOCALIZE_ENGINE": "",
@@ -118,6 +122,8 @@
         "FLAG_RESUME_ZH_SUMMARY": "off",
         "FLAG_PAID_LABEL": "off",
         "MAINTENANCE": "off",
+        // 시연 계정 로그인은 운영 서버에서 쓰지 않는다. "off" 말고 다른 값을 적으면 배포 전 점검이 막는다 (src/lib/demo.ts).
+        "DEMO_LOGIN": "off",
         "LOCALIZE_ENGINE": "",
         "LOCALIZE_WORKERS_AI_MODEL": "",
         "LOCALIZE_GEMINI_MODEL": "",

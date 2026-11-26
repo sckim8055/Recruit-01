@@ -281,6 +281,12 @@
       Resend 하루 100통 안에서 `MAIL_SITE_DAY` + `ALERT_MAIL_SITE_DAY` + 인증코드 몫 나누기(DEPLOY.md 1장), 보낸 뒤 기록이 실패하면 같은 메일이 한 번 더 갈 수 있음(Resend `Idempotency-Key` 를 쓰려면 `sendMail` 을 더 고쳐야 함),
       해지 링크는 180일 뒤 만료(로그인해서 끌 수 있음), 사용 종료 항목의 "외 N건" `/jobs` 주소는 정규화 302 로 그 조건이 빠진 목록이 된다, 점검 모드 동안 해지 화면은 503(그동안 알림 메일도 멈춤),
       테스트 서버에 Resend 키가 없으면 모든 알림 발송이 실패해 5번 뒤 꺼진다(키를 넣은 뒤 켤 것), 실제 Resend 로 머리글이 Gmail 등에서 "구독 취소" 로 보이는지 확인(O-4 뒤), CPU 10ms 실측(T-12b)
+- [x] T-16 시연 계정 (테스트 서버·로컬 전용, docs/ARCHITECTURE.md 18절). 운영자 요청: 테스트 서버를 여러 사람이 역할별로 둘러볼 수 있게.
+      `lib/demo.ts`(켜는 조건·계정 목록) · `lib/demo-data.ts`(가짜 기업 5·공고 17·이력서 5·지원 9) · `lib/demo-seed.ts`(규칙 함수로 상태를 정해 넣기·되돌리기, 시연 로그인) ·
+      `db/demo.ts` · `POST /login/demo` · 로그인 화면의 시연 계정 칸 · `DEMO_LOGIN` 변수(테스트 "on", 운영 "off") · 배포 전 점검·`/admin/system` 항목 · 시연 주소로는 메일을 보내지 않음 ·
+      시연 계정 탈퇴 막기. 운영(production)에서는 설정과 상관없이 꺼져 있다 — `test/demo-routes.test.ts` 가 확인한다. 테스트: `test/demo.test.ts`, `test/demo-routes.test.ts`.
+      **하지 않은 것(운영자와 정할 것):** 시연 운영자 계정 — 관리자의 쓰기·열람마다 "대상이 시연 데이터인가" 검사를 `authz.ts` 에 넣어야 해서 따로 정한다.
+
 ## 운영자 설정 (사람이 하는 일 — 순서와 방법은 docs/DEPLOY.md)
 - [ ] O-1 GitHub 저장소에 이 폴더 올리기 (`predeploy:prod` 는 main 브랜치·저장하지 않은 변경 없음을 확인한다)
 - [ ] O-2 테스트 서버 준비: `wrangler login`, D1 `recruit-test` 생성 → `database_id` 교체, R2 `recruit-test-files` 생성 — DEPLOY.md 2-2 · 2-3

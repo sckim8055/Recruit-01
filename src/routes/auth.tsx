@@ -1,10 +1,13 @@
 // 로그인·로그아웃 화면과 처리. 자바스크립트 없이 폼 전송만으로 동작한다.
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
+import type { Context } from 'hono';
 import type { AppEnv, Role } from '../env';
 import { completeTotp, PENDING_COOKIE, totpStep } from '../lib/admin2fa';
 import { logout, requestCode, requireRole, setSessionCookie, TOTP_PENDING_TTL, verifyCode } from '../lib/auth';
-import { render } from '../render';
+import { DEMO_ACCOUNTS, demoEnabled } from '../lib/demo';
+import { demoLogin } from '../lib/demo-seed';
+import { render, renderError } from '../render';
 import { LoginCode, LoginRoleNotice, LoginEmail, LoginTotp, MySeeker } from '../views/pages';
 
 export const auth = new Hono<AppEnv>();
@@ -16,14 +19,29 @@ function signupRole(raw: unknown, headhunterOn: boolean): Exclude<Role, 'admin'>
   return 'seeker';
 }
 
-auth.get('/login', (c) => (c.var.user ? c.redirect('/my') : render(c, <LoginEmail locale={c.var.locale} />, 'login.title')));
+/** 로그인 첫 화면. 시연 로그인이 켜져 있을 때만(테스트 서버·로컬) 시연 계정 칸이 함께 나온다. */
+const loginPage = (c: Context<AppEnv>, error?: string, status: 200 | 400 = 200) =>
+  render(c, <LoginEmail locale={c.var.locale} error={error} demo={demoEnabled(c.env) ? DEMO_ACCOUNTS : undefined} />, 'login.title', status);
+
+auth.get('/login', (c) => (c.var.user ? c.redirect('/my') : loginPage(c)));
+
+// 시연 계정 로그인 (lib/demo.ts). 꺼져 있으면(운영 서버는 항상) 이 주소는 없는 주소다.
+// 들어올 계정은 폼의 account 값으로 고르지만, 그 값은 정해 둔 목록의 이름일 뿐이다 — 이메일·회원 id 를 받지 않는다.
+auth.post('/login/demo', async (c) => {
+  if (!demoEnabled(c.env)) return renderError(c, 404);
+  const f = await c.req.parseBody();
+  const r = await demoLogin(c.env, typeof f.account === 'string' ? f.account : '');
+  if (!r.ok) return loginPage(c, 'demo_unavailable', 400);
+  setSessionCookie(c, r.token, r.maxAge);
+  return c.redirect('/my');
+});
 
 auth.post('/login/request', async (c) => {
   const f = await c.req.parseBody();
   const email = String(f.email ?? '');
   const role = signupRole(f.role, c.env.FLAG_HEADHUNTER_POSTING === 'on');
   const r = await requestCode(c.env, email, c.var.locale);
-  if (r === 'invalid_email' || r === 'mail_failed') return render(c, <LoginEmail locale={c.var.locale} error={r} />, 'login.title');
+  if (r === 'invalid_email' || r === 'mail_failed') return loginPage(c, r);
   // too_soon 이어도 코드 입력 화면으로 보낸다 (직전에 보낸 코드를 쓸 수 있다).
   return render(c, <LoginCode locale={c.var.locale} email={email} role={role} error={r === 'too_soon' ? r : undefined} />, 'login.title');
 });

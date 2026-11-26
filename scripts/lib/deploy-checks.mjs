@@ -110,6 +110,7 @@ export function configIssues(config, env) {
     if (sec.workers_dev !== false) errors.push('운영 구역의 workers_dev 가 false 가 아닙니다 (workers.dev 주소가 열립니다).');
     const on = FLAG_KEYS.filter((k) => vars[k] === 'on');
     if (on.length) warnings.push(`기능 플래그가 켜져 있습니다: ${on.join(', ')} — 켜기 전 조건(docs/ARCHITECTURE.md 5장)을 확인했는지 보세요.`);
+    if (vars.DEMO_LOGIN !== undefined && vars.DEMO_LOGIN !== 'off') errors.push('운영 구역의 vars.DEMO_LOGIN(시연 계정 로그인)이 "off" 가 아닙니다. 운영 서버에는 시연 계정을 두지 않습니다 — "off" 로 바꾸세요.');
     if (vars.MAINTENANCE === 'on') warnings.push('MAINTENANCE 가 "on" 입니다 — 배포하면 관리자 말고는 점검 안내를 봅니다.');
   }
   return { errors, warnings };

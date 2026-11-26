@@ -23,7 +23,7 @@ export interface CheckItem {
 
 export const CHECK_IDS = [
   'app_env', 'enc_key', 'session_pepper', 'app_origin', 'mail_from', 'resend', 'registration_no', 'legal_markers',
-  'operator_domains', 'flags', 'bindings', 'maintenance', 'localize',
+  'operator_domains', 'flags', 'bindings', 'maintenance', 'localize', 'demo',
 ] as const;
 export type CheckId = (typeof CHECK_IDS)[number];
 
@@ -153,6 +153,10 @@ export function configChecks(env: CheckEnv, legal: { ko: number; zh: number } = 
   const engines = (str(env.ANTHROPIC_API_KEY) ? 1 : 0) + (str(env.GEMINI_API_KEY) ? 1 : 0) + (ai && typeof ai.run === 'function' ? 1 : 0);
   if (engines) add('localize', 'ok', 'ok', engines);
   else add('localize', 'warning', 'none');
+
+  // 시연 계정 로그인 (lib/demo.ts): 운영에서 켜져 있으면 문제 (동작은 코드가 막는다), 테스트·로컬에서 켜져 있으면 알림
+  if (str(env.DEMO_LOGIN) !== 'on') add('demo', 'ok', 'ok');
+  else add('demo', prod ? 'problem' : 'warning', prod ? 'on_production' : 'on');
 
   return out;
 }
