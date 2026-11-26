@@ -319,6 +319,7 @@ export interface DropOldRowsInput {
 export interface DropOldRowsResult {
   application_events: number; applications: number; consents: number; access_log: number; email_log: number;
   sessions: number; auth_codes: number; admin_totp_pending: number; usage_counters: number;
+  totp_enrolments: number; totp_recovery_codes: number; admin_actions: number;
 }
 
 /**
@@ -348,22 +349,32 @@ export async function dropOldRows(db: D1Database, x: DropOldRowsInput): Promise<
     db.prepare('DELETE FROM access_log WHERE id IN (SELECT id FROM access_log WHERE at < ? LIMIT ?)').bind(x.accessBefore, x.limit),
     // 지우는 것: 1년이 지난 메일 발송 기록(email_log: 주소 해시·템플릿·결과).
     db.prepare('DELETE FROM email_log WHERE id IN (SELECT id FROM email_log WHERE sent_at < ? LIMIT ?)').bind(x.emailBefore, x.limit),
+    // 지우는 것: 만료된 2단계 인증 등록 대기(totp_enrolments, 🔒 새 비밀키 암호문, T-16). 세션보다 먼저 (세션이 지워질 때도 CASCADE 로 지워진다).
+    db.prepare('DELETE FROM totp_enrolments WHERE id IN (SELECT id FROM totp_enrolments WHERE expires_at < ? LIMIT ?)').bind(x.now, x.limit),
     // 지우는 것: 만료된 로그인 세션(sessions).
     db.prepare('DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE expires_at < ? LIMIT ?)').bind(x.now, x.limit),
     // 지우는 것: 만료된 로그인 인증코드(auth_codes, 코드 해시).
     db.prepare('DELETE FROM auth_codes WHERE email IN (SELECT email FROM auth_codes WHERE expires_at < ? LIMIT ?)').bind(x.now, x.limit),
-    // 지우는 것: 만료된 관리자 2단계 인증 대기(admin_totp_pending).
+    // 지우는 것: 만료된 로그인 2단계 인증 대기(admin_totp_pending — 관리자·2단계 인증을 켠 회원).
     db.prepare('DELETE FROM admin_totp_pending WHERE id IN (SELECT id FROM admin_totp_pending WHERE expires_at < ? LIMIT ?)').bind(x.now, x.limit),
     // 지우는 것: 35일이 지난 하루 사용량(usage_counters: 범위·id·날짜·횟수, 개인정보 없음). day 는 고정 형식 'YYYY-MM-DD' 라 글자 비교 = 날짜 비교.
     // [sqlite] 기본 키가 세 컬럼이라 행 값 `(a, b, c) IN (SELECT …)` 로 한도를 건다 (SQLite 3.15+, PostgreSQL 도 된다).
     db.prepare(
       'DELETE FROM usage_counters WHERE (scope, subject, day) IN (SELECT scope, subject, day FROM usage_counters WHERE day < ? LIMIT ?)',
     ).bind(x.usageBefore, x.limit),
+    // 지우는 것: 쓴 복구 코드(해시 — 다시 받지 않으므로 남길 이유가 없다)와, 2단계 인증이 꺼진 계정에 남은 복구 코드(T-16, totp_recovery_codes).
+    db.prepare(
+      `DELETE FROM totp_recovery_codes WHERE id IN (SELECT r.id FROM totp_recovery_codes r WHERE r.used_at IS NOT NULL
+         OR NOT EXISTS (SELECT 1 FROM users u WHERE u.id = r.user_id AND u.totp_secret IS NOT NULL) LIMIT ?)`,
+    ).bind(x.limit),
+    // 지우는 것: 열람 기록과 같은 보관 기간(설정 access_log_keep_days)이 지난 관리자 작업 기록(admin_actions: 2단계 인증 초기화 — 관리자·대상 id·사유·시각, T-16).
+    db.prepare('DELETE FROM admin_actions WHERE id IN (SELECT id FROM admin_actions WHERE at < ? LIMIT ?)').bind(x.accessBefore, x.limit),
   ]);
   const n = (i: number) => res[i]?.meta.changes ?? 0;
   return {
     application_events: n(0), applications: n(1), consents: n(2), access_log: n(3), email_log: n(4),
-    sessions: n(5), auth_codes: n(6), admin_totp_pending: n(7), usage_counters: n(8),
+    totp_enrolments: n(5), sessions: n(6), auth_codes: n(7), admin_totp_pending: n(8), usage_counters: n(9),
+    totp_recovery_codes: n(10), admin_actions: n(11),
   };
 }
 

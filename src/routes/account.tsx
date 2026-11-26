@@ -1,11 +1,18 @@
 // 동의 화면(/consent)과 계정·회원 탈퇴(/my/account*) (T-11).
 // - 동의 판단은 lib/consent, 기록은 db/consents.insertConsents 뿐이다. 동의는 이 파일의 POST /consent 에서만 남긴다.
 // - 탈퇴 판단·삭제는 lib/account (deletionBlocksFor · deleteAccount · confirmMatches) 만 쓴다.
+// - 2단계 인증 설정(/my/account/2fa*, T-16): 판단·저장은 lib/twofa 만 쓴다. 등록 중인 새 키는 서버의 대기(회원 + 지금 세션)에만 있다.
 // - 모든 응답(로그인 리다이렉트 포함)은 private, no-store.
 import { Hono } from 'hono';
 import { now, type AppEnv } from '../env';
 import { confirmMatches, deleteAccount, deletionBlocksFor, type DeletionBlock } from '../lib/account';
-import { logout, requireRole } from '../lib/auth';
+import { isDemoUserId } from '../lib/demo';
+import { currentSessionId, logout, requireRole } from '../lib/auth';
+import {
+  cancelEnrolment, confirmEnrolment, disable2fa, regenerateCodes, startEnrolment, startReenrol, twofaOverview, twofaStatus,
+} from '../lib/twofa';
+import { renderError } from '../render';
+import { DemoTwofaBlocked, RecoveryCodesShown, TwofaOffPage, TwofaPage } from '../views/twofa';
 import { missingConsents, readConsentForm, REQUIRED_CONSENT_TYPES, requiredConsents, safeNext, type RequiredConsent } from '../lib/consent';
 import { loadRetention } from '../lib/retention-setting';
 import { insertConsents, listRequiredConsents } from '../db/consents';
@@ -68,10 +75,20 @@ account.post('/consent', async (c) => {
 account.use('/my/account', requireRole('seeker', 'company', 'headhunter', 'admin'));
 account.use('/my/account/*', requireRole('seeker', 'company', 'headhunter', 'admin'));
 
+// 시연 계정(T-18)은 여러 사람이 함께 쓰므로 2단계 인증을 켜거나 바꿀 수 없다. 누군가 켜면 다른 사람의 세션이 지워지고,
+// 시연 로그인 세션(mfa = 0)은 로그인으로 인정되지 않아 다음 되돌리기까지 그 계정을 아무도 쓸 수 없게 된다.
+const noDemo2fa = async (c: Context<AppEnv>, next: () => Promise<void>) => {
+  const u = c.var.user;
+  if (u && isDemoUserId(u.id)) return render(c, <DemoTwofaBlocked locale={c.var.locale} />, 'tfa.title', 403);
+  await next();
+};
+account.use('/my/account/2fa', noDemo2fa);
+account.use('/my/account/2fa/*', noDemo2fa);
+
 async function accountPage(c: Context<AppEnv>, blocks?: DeletionBlock[], status: 200 | 400 = 200) {
   const u = c.var.user!;
-  const [st, b] = await Promise.all([consentState(c, u.id), blocks ? Promise.resolve(blocks) : deletionBlocksFor(c.env, u)]);
-  return render(c, <AccountPage locale={c.var.locale} email={u.email} role={u.role} consents={st.rows} required={st.required} blocks={b} />, 'acct.title', status);
+  const [st, b, tfa] = await Promise.all([consentState(c, u.id), blocks ? Promise.resolve(blocks) : deletionBlocksFor(c.env, u), twofaStatus(c.env, u.id)]);
+  return render(c, <AccountPage locale={c.var.locale} email={u.email} role={u.role} consents={st.rows} required={st.required} blocks={b} twofa={tfa} />, 'acct.title', status);
 }
 
 account.get('/my/account', (c) => accountPage(c));
@@ -92,4 +109,69 @@ account.post('/my/account/delete', async (c) => {
   // 탈퇴 완료(또는 이미 탈퇴한 계정): 로그아웃과 같은 방법으로 세션 쿠키를 지운다 (세션 행은 탈퇴 트랜잭션에서 이미 지워졌다).
   await logout(c);
   return c.redirect('/?bye=1', 303);
+});
+
+// ── 2단계 인증 (T-16). 회원은 켜기·재등록·복구 코드·끄기, 관리자는 재등록·복구 코드만 (끄기 403).
+// 로그인한 요청이므로 세션 쿠키가 있다 (requireRole). 등록 대기는 그 세션에 묶인다.
+
+async function twofaPage(c: Context<AppEnv>, msg: { ok?: string; error?: string } = {}, status: 200 | 400 = 200) {
+  const u = c.var.user!;
+  const o = await twofaOverview(c.env, u, (await currentSessionId(c))!);
+  return render(c, <TwofaPage locale={c.var.locale} role={u.role} o={o} ok={msg.ok} error={msg.error} />, 'tfa.title', status);
+}
+
+/** 복구 코드를 이 응답에서 한 번만 보인다. */
+const codesPage = (c: Context<AppEnv>, codes: string[], lead: string) =>
+  render(c, <RecoveryCodesShown locale={c.var.locale} codes={codes} next="/my/account/2fa" lead={lead} />, 'rc.title');
+
+account.get('/my/account/2fa', (c) => twofaPage(c, { ok: c.req.query('ok') === 'off' ? 'off' : undefined }));
+
+account.post('/my/account/2fa/start', async (c) => {
+  await startEnrolment(c.env, c.var.user!, (await currentSessionId(c))!);
+  return c.redirect('/my/account/2fa', 303);
+});
+
+account.post('/my/account/2fa/reenrol', async (c) => {
+  const f = await c.req.parseBody();
+  const r = await startReenrol(c.env, c.var.user!, (await currentSessionId(c))!, f.code);
+  if (r === 'ok') return c.redirect('/my/account/2fa', 303);
+  return twofaPage(c, { error: r }, 400);
+});
+
+account.post('/my/account/2fa/confirm', async (c) => {
+  const f = await c.req.parseBody();
+  const r = await confirmEnrolment(c.env, c.var.user!, (await currentSessionId(c))!, f.code);
+  if (r.ok) return codesPage(c, r.codes, r.first ? 'tfa.ok.enabled' : 'tfa.ok.reenrolled');
+  return twofaPage(c, { error: r.why === 'invalid' ? 'invalid' : 'expired' }, 400);
+});
+
+account.post('/my/account/2fa/cancel', async (c) => {
+  await cancelEnrolment(c.env, c.var.user!, (await currentSessionId(c))!);
+  return c.redirect('/my/account/2fa', 303);
+});
+
+account.post('/my/account/2fa/codes', async (c) => {
+  const f = await c.req.parseBody();
+  const r = await regenerateCodes(c.env, c.var.user!, f.code);
+  if (r.ok) return codesPage(c, r.codes, 'tfa.ok.codes');
+  return twofaPage(c, { error: r.why }, 400);
+});
+
+// 끄기: 회원만. 관리자는 2단계 인증이 필수라 이 화면이 없다 (403).
+account.get('/my/account/2fa/off', async (c) => {
+  const u = c.var.user!;
+  if (u.role === 'admin') return renderError(c, 403);
+  if (!(await twofaStatus(c.env, u.id)).enabled) return c.redirect('/my/account/2fa');
+  return render(c, <TwofaOffPage locale={c.var.locale} />, 'tfa.off.title');
+});
+
+account.post('/my/account/2fa/off', async (c) => {
+  const u = c.var.user!;
+  if (u.role === 'admin') return renderError(c, 403);
+  const f = await c.req.parseBody();
+  const r = await disable2fa(c.env, u, f.code);
+  if (r === 'forbidden') return renderError(c, 403);
+  if (r === 'ok') return c.redirect('/my/account/2fa?ok=off', 303);
+  if (r === 'off') return c.redirect('/my/account/2fa', 303);
+  return render(c, <TwofaOffPage locale={c.var.locale} error={r} />, 'tfa.off.title', 400);
 });

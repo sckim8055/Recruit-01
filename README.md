@@ -64,7 +64,7 @@ GEMINI_API_KEY=AIza...
 자동 번역(API 요금)과 메일 발송은 운영자가 비용을 낸다. 누구나 기업으로 가입할 수 있으므로 하루 한도를 둔다.
 하루는 **한국 시간 0시**에 바뀐다. 한도에 걸린 기업에게는 그 화면에서만 안내 문구가 보인다(평소에는 아무것도 보이지 않는다).
 
-| 변수 | 기본값 | 무엇을 세나 | 걸리면 |
+| 이름 (관리자 화면 칸 = 변수) | 기본값 | 무엇을 세나 | 걸리면 |
 |---|---|---|---|
 | `LOCALIZE_PER_COMPANY_DAY` | 30 | 기업당 하루 자동 번역: 공고 한국어 초안 만들기·다시 만들기·면접 요청 번역 미리 보기 (합계) | 공고: 안내 + 한국어 직접 입력 칸은 그대로. 면접 요청: 번역 없이 원문만, 보내기는 됨 |
 | `LOCALIZE_SITE_DAY` | 500 | 사이트 전체 하루 자동 번역 (모든 기업 + 관리자 엔진 비교) | 위와 같음 (모든 기업) |
@@ -75,8 +75,10 @@ GEMINI_API_KEY=AIza...
 
 - 로그인 인증코드 메일, 새 지원자 알림 메일, 자동 정리 작업의 메일은 세지 않는다.
 - 번역 엔진이 없거나(키 없음) 메일을 보내지 않는 경우(검증 전 기업의 초대)는 한도를 쓰지 않는다. 엔진·메일이 **실패해도 한 번 쓴 것으로 센다**(되돌리지 않는다).
-- **한도 바꾸기:** `wrangler.jsonc` 의 `"vars"`(테스트는 맨 위, 운영은 `env.production` 안 — 따로 적혀 있다)에서 해당 줄의 `""` 안에 숫자를 적고 다시 배포한다 (예: `"MAIL_PER_COMPANY_DAY": "200"`, 배포는 docs/DEPLOY.md 4장).
-  Resend 무료 플랜은 하루 100통이므로 무료 플랜 동안은 `MAIL_SITE_DAY` 를 60 정도로 낮추기를 권한다 (docs/DEPLOY.md 1장).
+- **한도 바꾸기 (T-17):** 관리자 화면 → 사이트 설정 → "사용량 한도" 에서 바꾸고 확인 화면에서 저장한다. 바로 적용되고 다시 배포할 필요가 없다 (docs/DEPLOY.md 1장).
+  칸마다 범위가 있다(예: 조건 알림 메일 0~100, 한 번에 처리하는 알림 0~10, 초안 1~100). "기본값으로 되돌리기" 로 관리자 값을 지울 수 있다.
+  Resend 무료 플랜은 하루 100통이므로 무료 플랜 동안은 기업 메일 + 조건 알림 메일 한도의 합을 70 정도로 두기를 권한다 (화면에 경고가 보인다).
+- **변수(예전 방법, 관리자 설정이 없는 칸에만 쓰임):** `wrangler.jsonc` 의 `"vars"`(테스트는 맨 위, 운영은 `env.production` 안)에서 해당 줄의 `""` 안에 숫자를 적고 다시 배포한다.
   비워 두거나 숫자가 아니면 기본값을 쓴다. `0` 을 적으면 그 기능을 쓰지 않는다(예: 자동 번역 끄기).
   로컬에서 시험할 때는 `npx wrangler dev --var MAIL_PER_COMPANY_DAY:2` 처럼 붙인다.
 - **오늘 사용량 보기:** 관리자 첫 화면(`/admin`)의 "오늘 사용량" 상자에 사이트 전체 자동 번역 호출 수와 기업 메일 수가 `쓴 수 / 한도` 로 나온다.
@@ -139,14 +141,25 @@ npx wrangler d1 execute DB --local --command "UPDATE users SET role='admin' WHER
 ```
 
 (테스트 서버는 `--local` 대신 `--remote`, 운영 서버는 `--remote --env production`.) 로그아웃한 뒤 다시 로그인하면 2단계 인증 등록 화면이 나온다.
-휴대폰의 인증 앱(Google Authenticator, Microsoft Authenticator 등)에서 "설정 키 입력"을 골라 화면의 키를 입력하고,
-앱에 나오는 6자리 번호를 입력하면 `/admin` 으로 들어간다. 다음 로그인부터는 이메일 인증코드 + 앱의 6자리 번호가 필요하다.
+휴대폰의 TOTP 인증 앱(Microsoft Authenticator, Google Authenticator, 1Password, 腾讯身份验证器 등 아무 앱)에서 QR 코드를 찍거나 "설정 키 입력"을 골라 화면의 키를 입력하고,
+앱에 나오는 6자리 번호를 입력하면 **복구 코드 8개**가 한 번 표시된다. 종이에 적거나 비밀번호 관리 프로그램에 저장한 뒤 "저장했습니다 → 계속" 을 누르면 `/admin` 으로 들어간다.
+다음 로그인부터는 이메일 인증코드 + 앱의 6자리 번호(또는 복구 코드 하나)가 필요하다.
 
-인증 앱을 잃어버렸을 때 초기화:
+휴대폰을 바꿀 때: **계정 → 2단계 인증 관리 → 인증 앱 다시 등록**(지금 앱의 번호 또는 복구 코드로 확인 → 새 QR → 새 번호). 복구 코드를 다 썼으면 같은 화면에서 "복구 코드 새로 만들기".
+
+인증 앱과 복구 코드를 **모두** 잃어버린 관리자는 화면으로 되돌릴 수 없다. 다른 관리자 또는 운영 담당자가 DB 에서 초기화한다:
 
 ```
-npx wrangler d1 execute DB --local --command "UPDATE users SET totp_secret=NULL, totp_last_step=NULL WHERE email='내이메일@example.com'"
+npx wrangler d1 execute DB --local --command "UPDATE users SET totp_secret=NULL, totp_last_step=NULL, totp_enabled_at=NULL WHERE email='내이메일@example.com'; DELETE FROM totp_recovery_codes WHERE user_id=(SELECT id FROM users WHERE email='내이메일@example.com'); DELETE FROM sessions WHERE user_id=(SELECT id FROM users WHERE email='내이메일@example.com')"
 ```
+
+그다음 로그인하면 처음처럼 등록 화면과 새 복구 코드가 나온다.
+
+## 회원의 2단계 인증 (선택)
+
+구직자·기업 담당자는 **계정 → 2단계 인증**에서 스스로 켜고 끌 수 있다(끄려면 앱의 번호나 복구 코드가 필요하다). 인증 앱과 복구 코드를 모두 잃어버린 회원이 연락하면,
+본인임을 확인한 뒤 관리자 화면 **회원 2단계 인증 초기화**(`/admin/users/2fa-reset`)에서 이메일과 사유(10자 이상)를 입력해 초기화한다.
+그 회원은 모든 기기에서 로그아웃되고 알림 메일을 받으며, 누가·언제·왜 했는지 기록이 남는다. 관리자 계정은 이 화면으로 초기화할 수 없다(위 DB 명령).
 
 ## 이용약관·개인정보처리방침 (운영 전에 반드시 채울 것)
 
@@ -170,7 +183,7 @@ npx wrangler d1 execute DB --local --command "UPDATE users SET totp_secret=NULL,
 - 관리자 계정은 화면에서 탈퇴할 수 없다. 꼭 지워야 하면 먼저 역할을 구직자로 바꾼 뒤(아래 명령), 그 계정으로 로그인해 계정 화면에서 탈퇴한다.
 
 ```
-npx wrangler d1 execute DB --remote --command "UPDATE users SET role='seeker', totp_secret=NULL WHERE email='지울관리자@example.com'"
+npx wrangler d1 execute DB --remote --command "UPDATE users SET role='seeker', totp_secret=NULL, totp_last_step=NULL, totp_enabled_at=NULL WHERE email='지울관리자@example.com'; DELETE FROM totp_recovery_codes WHERE user_id=(SELECT id FROM users WHERE email='지울관리자@example.com')"
 ```
 
 ## 자동 정리 작업 (매시 정각)

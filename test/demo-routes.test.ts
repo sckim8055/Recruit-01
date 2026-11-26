@@ -189,6 +189,29 @@ describe.skipIf(!hasSqlite)('시연 로그인 (테스트 서버)', () => {
     expect(w.one('SELECT status, email FROM users WHERE id = ?', U(1))).toEqual({ status: 'active', email: 'seeker.kim@demo.example' });
     expect(w.n('SELECT COUNT(*) AS n FROM resumes WHERE user_id = ?', U(1))).toBe(2);
   });
+
+  it('시연 계정은 2단계 인증을 켤 수 없다 (켜면 다른 사람이 쫓겨나고 시연 로그인이 막힌다)', async () => {
+    const w = world();
+    for (const key of ['seeker', 'company']) {
+      const cookie = await w.login(key);
+      const acct = await (await w.req('/my/account', { cookie })).text();
+      expect(acct).toContain('2단계 인증을 켜거나 바꿀 수 없습니다');
+      expect(acct).not.toContain('href="/my/account/2fa"');
+      const page = await w.req('/my/account/2fa', { cookie });
+      expect(page.status).toBe(403);
+      expect(page.headers.get('cache-control') ?? '').toContain('no-store');
+      for (const path of ['/my/account/2fa/start', '/my/account/2fa/confirm', '/my/account/2fa/reenrol', '/my/account/2fa/codes', '/my/account/2fa/off']) {
+        expect((await w.post(path, { code: '123456' }, { cookie })).status, path).toBe(403);
+      }
+    }
+    expect(w.n('SELECT COUNT(*) AS n FROM totp_enrolments')).toBe(0);
+    expect(w.n('SELECT COUNT(*) AS n FROM users WHERE totp_secret IS NOT NULL')).toBe(0);
+    // 다른 사람이 쓰던 시연 세션은 그대로 살아 있다
+    const a = await w.login('seeker');
+    const b = await w.login('seeker');
+    expect((await w.req('/my', { cookie: a })).status).toBe(200);
+    expect((await w.req('/my', { cookie: b })).status).toBe(200);
+  });
 });
 
 describe.skipIf(!hasSqlite)('되돌리기', () => {
@@ -279,6 +302,22 @@ describe.skipIf(!hasSqlite)('되돌리기', () => {
     expect(w.one('SELECT role FROM users WHERE id = ?', U(1))).toEqual({ role: 'seeker' });
     expect((await w.req('/admin', { cookie })).status).toBe(403);
     expect(w.n('SELECT COUNT(*) AS n FROM sessions WHERE mfa != 0')).toBe(0);
+  });
+
+  it('되돌리기는 시연 회원의 2단계 인증 흔적을 모두 지운다 (화면이 막기 전에 남은 것이 있어도 시연 로그인이 다시 된다)', async () => {
+    const w = world();
+    await w.login('seeker');
+    const now = 2_000_000_000;
+    w.raw.prepare('UPDATE users SET totp_secret = ?, totp_last_step = 5, totp_enabled_at = ? WHERE id = ?').run('v1.fake', now, U(1));
+    w.raw.prepare('INSERT INTO totp_recovery_codes (id, user_id, code_hash, used_at, created_at) VALUES (?,?,?,NULL,?)').run('rc-demo-1', U(1), 'h', now);
+    // 2단계 인증이 켜져 있으면 시연 로그인 세션(mfa = 0)은 로그인으로 인정되지 않는다 → 되돌리기 전에는 쓸 수 없음
+    const stuck = await w.login('seeker');
+    expect((await w.req('/my', { cookie: stuck })).status).not.toBe(200);
+    w.ageStamp();
+    const cookie = await w.login('seeker');
+    expect(w.one('SELECT totp_secret, totp_last_step, totp_enabled_at FROM users WHERE id = ?', U(1))).toEqual({ totp_secret: null, totp_last_step: null, totp_enabled_at: null });
+    expect(w.n('SELECT COUNT(*) AS n FROM totp_recovery_codes WHERE user_id = ?', U(1))).toBe(0);
+    expect((await w.req('/my', { cookie })).status).toBe(200);
   });
 
   it('여러 번 실행해도 결과가 같다', async () => {

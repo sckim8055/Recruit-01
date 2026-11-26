@@ -4,6 +4,7 @@
 //   GET 은 아무것도 바꾸지 않는다 (메일 검사기가 링크를 미리 연다) → 확인 화면의 POST 버튼, 또는 메일 프로그램의 RFC 8058 한 번 클릭 POST.
 //   그 한 번 클릭 POST 만 출처 검사에서 빠진다 (src/index.tsx, lib/alerts.isOneClickUnsubscribe). "모든 알림 끄기" 는 출처 검사를 받는다.
 // 관리자가 남의 알림을 보거나 만들거나 보내는 경로는 없다 (관리자 화면에는 개수만).
+// T-17: 관리자가 발송을 멈추면(lib/limits.alertsPaused) 새 알림 만들기만 거절하고, 목록·빈도·끄기·다시 켜기·삭제·해지 링크는 그대로 된다.
 import { Hono, type Context } from 'hono';
 import { now, type AppEnv } from '../env';
 import { requireRole } from '../lib/auth';
@@ -22,6 +23,8 @@ import {
 } from '../db/alerts';
 import { listOptions } from '../db/options';
 import { getSetting } from '../db/settings';
+import { loadLimits } from '../lib/quota';
+import { alertsPaused } from '../lib/limits';
 
 /** 보일 필터 설정 + 항목 목록 (동시에 두 번 읽기 — /jobs 와 같다). */
 async function filterContext(c: Context<AppEnv>): Promise<{ enabled: FilterKey[]; set: OptionSet }> {
@@ -41,7 +44,8 @@ alerts.use('*', requireRole('seeker'));
 
 async function listPage(c: Context<AppEnv>, o: { error?: string; status?: 200 | 400 } = {}) {
   const user = c.var.user!;
-  const [ctx, rows] = await Promise.all([filterContext(c), listMyAlerts(c.env.DB, user.id)]);
+  // 발송 멈춤 안내(T-17)를 위해 한도 설정 한 행도 같이 읽는다 (읽기 3 → 4, 동시에).
+  const [ctx, rows, limits] = await Promise.all([filterContext(c), listMyAlerts(c.env.DB, user.id), loadLimits(c.env)]);
   const items: AlertListItem[] = rows.map((row) => {
     const stored = parseStoredFilter(row.filter_json, ctx.set);
     const eff = effectiveFilter(stored, ctx.enabled).filter;
@@ -50,7 +54,9 @@ async function listPage(c: Context<AppEnv>, o: { error?: string; status?: 200 | 
   const ok = c.req.query('ok');
   const qErr = c.req.query('err');
   const error = o.error ?? (qErr && ERR_KEYS.has(qErr) ? `alert.err.${qErr}` : undefined);
-  return render(c, <AlertList locale={c.var.locale} alerts={items} ok={ok && OK_KEYS.has(ok) ? `alert.ok.${ok}` : undefined} error={error} />, 'alert.title', o.status ?? 200);
+  return render(c, (
+    <AlertList locale={c.var.locale} alerts={items} ok={ok && OK_KEYS.has(ok) ? `alert.ok.${ok}` : undefined} error={error} paused={alertsPaused(limits)} />
+  ), 'alert.title', o.status ?? 200);
 }
 
 alerts.get('/', (c) => listPage(c));
@@ -59,11 +65,13 @@ alerts.get('/', (c) => listPage(c));
 alerts.post('/', async (c) => {
   const user = c.var.user!;
   const form = formStrings(await c.req.parseBody());
-  const ctx = await filterContext(c);
+  const [ctx, limits] = await Promise.all([filterContext(c), loadLimits(c.env)]);
   const choices = filterChoices(ctx.set);
   const back = jobsHref(parseJobFilter(form, ctx.enabled, choices));
   const problem = (error: string, vars?: Record<string, string | number>) =>
     render(c, <AlertCreateProblem locale={c.var.locale} error={error} vars={vars} back={back} />, 'alert.create.title', 400);
+  // 발송이 멈춘 동안(T-17: 관리자가 끔 · 알림 메일 한도 0 · 처리 수 0)에는 새 알림을 만들지 않는다. 있는 알림의 관리·해지는 그대로 된다.
+  if (alertsPaused(limits)) return problem('alert.err.paused');
   const filter = normalizeAlertFilter(form, ctx.enabled, choices);
   if (!filter) return problem('alert.err.empty');
   const frequency = readFrequency(form.frequency);

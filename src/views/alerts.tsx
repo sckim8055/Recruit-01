@@ -51,7 +51,11 @@ export interface AlertListItem {
   effectiveEmpty: boolean;
 }
 
-export const AlertList = (p: { locale: Locale; alerts: AlertListItem[]; ok?: string; error?: string; errorVars?: Record<string, string | number> }) => {
+export const AlertList = (p: {
+  locale: Locale; alerts: AlertListItem[]; ok?: string; error?: string; errorVars?: Record<string, string | number>;
+  /** 사이트 전체 알림 메일 발송이 멈춘 상태 (T-17). 목록·관리는 그대로 된다. */
+  paused?: boolean;
+}) => {
   const l = p.locale;
   return (
     <section class="wide">
@@ -59,6 +63,7 @@ export const AlertList = (p: { locale: Locale; alerts: AlertListItem[]; ok?: str
       <h1>{t(l, 'alert.title')}</h1>
       <p class="sub muted">{t(l, 'alert.lead')}</p>
       <Flash locale={l} ok={p.ok} />
+      {p.paused && <p class="warn">{t(l, 'alert.paused_site')} {t(l, 'alert.paused_site_more')}</p>}
       {p.error && <p class="error">{fill(t(l, p.error), p.errorVars ?? {})}</p>}
       {p.alerts.length === 0 ? (
         <div class="box">

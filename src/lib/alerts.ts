@@ -15,7 +15,7 @@ import {
   FILTER_KEYS, FILTER_LABEL_KEYS, FIXED_FILTER_CHOICES, filterValueLabel, isOptionFilter, jobsHref, parseJobFilter,
   type FilterChoices, type FilterKey, type JobFilter,
 } from './public-jobs';
-import { parseLimit } from './quota';
+import { ALERT_RUN_DEFAULT, ALERT_RUN_MAX, alertRunCap } from './limits';
 
 export const DAY = 86_400;
 const KST = 9 * 3600;
@@ -41,10 +41,8 @@ export const ALERT_TOKEN_KEEP = 180 * DAY;
 /** 알림 메일 수신 동의 문구의 판. 문구(locales 'alert.optin*')를 바꾸면 올린다. 알림 행(optin_version)에 남는다. */
 export const ALERT_OPTIN_VERSION = 'alert-optin-2026-11-1';
 
-/** 예약 작업 한 번에 처리하는 알림 수: 기본 8, 변수 ALERT_SEND_PER_RUN (0 = 끔), 최대 10. 이유는 docs/ARCHITECTURE.md 17절(하위 요청 50개). */
-export const ALERT_RUN_DEFAULT = 8;
-export const ALERT_RUN_MAX = 10;
-export const alertRunCap = (raw: string | undefined): number => Math.min(parseLimit(raw, ALERT_RUN_DEFAULT), ALERT_RUN_MAX);
+/** 예약 작업 한 번에 처리하는 알림 수: 기본 8, 최대 10 (0 = 끔). 이유는 docs/ARCHITECTURE.md 17절(하위 요청 50개). 값은 lib/limits (관리자 설정 → 변수 → 기본값). */
+export { ALERT_RUN_DEFAULT, ALERT_RUN_MAX, alertRunCap };
 
 export type AlertFrequency = 'daily' | 'weekly';
 export const ALERT_FREQUENCIES: readonly AlertFrequency[] = ['daily', 'weekly'];

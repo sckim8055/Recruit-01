@@ -185,7 +185,7 @@ export const MaintenancePage = ({ locale }: { locale: Locale }) => (
 );
 
 /** 인증 앱으로 스캔하는 QR 코드. 서버에서 SVG 로 그린다 (외부 서비스·스크립트 없음, lib/qr.ts). 주소가 너무 길면 그리지 않는다. */
-const TotpQr = ({ uri, label }: { uri: string; label: string }) => {
+export const TotpQr = ({ uri, label }: { uri: string; label: string }) => {
   const qr = qrSvgPath(uri);
   if (!qr) return null;
   return (
@@ -198,27 +198,45 @@ const TotpQr = ({ uri, label }: { uri: string; label: string }) => {
   );
 };
 
-/** 관리자 2단계 인증. setup 이 있으면 최초 등록 화면(비밀키 표시)이다. */
-export const LoginTotp = ({ locale, setup, error }: { locale: Locale; setup?: { secret: string; uri: string }; error?: string }) => (
+/** 인증 앱 등록 안내: QR + 직접 입력 키 + 휴대폰용 링크. 로그인(관리자 최초 등록)과 계정 화면(켜기·재등록)이 같이 쓴다. */
+export const TotpSetup = ({ locale, secret, uri }: { locale: Locale; secret: string; uri: string }) => (
+  <>
+    <TotpQr uri={uri} label={t(locale, 'totp.setup.qr_alt')} />
+    <p class="muted">{t(locale, 'totp.setup.manual')}</p>
+    <p class="secret">{secret.replace(/(.{4})/g, '$1 ').trim()}</p>
+    <p class="muted"><a href={uri}>{t(locale, 'totp.setup.link')}</a></p>
+  </>
+);
+
+/**
+ * 로그인 2단계. setup 이 있으면 관리자 최초 등록 화면(비밀키 표시, 인증 앱 번호만)이다.
+ * 등록된 계정은 인증 앱 번호 또는 복구 코드를 한 칸에 받는다. admin = 관리자 계정인가 (잃어버렸을 때 안내가 다르다).
+ */
+export const LoginTotp = ({ locale, setup, admin, error }: { locale: Locale; setup?: { secret: string; uri: string }; admin: boolean; error?: string }) => (
   <section class="card">
-    <h1>{t(locale, 'totp.title')}</h1>
+    <h1>{t(locale, admin ? 'totp.title' : 'totp.title.member')}</h1>
     {setup && (
       <>
         <p>{t(locale, 'totp.setup.lead')}</p>
-        <TotpQr uri={setup.uri} label={t(locale, 'totp.setup.qr_alt')} />
-        <p class="muted">{t(locale, 'totp.setup.manual')}</p>
-        <p class="secret">{setup.secret.replace(/(.{4})/g, '$1 ').trim()}</p>
-        <p class="muted"><a href={setup.uri}>{t(locale, 'totp.setup.link')}</a></p>
+        <TotpSetup locale={locale} secret={setup.secret} uri={setup.uri} />
         <p class="muted">{t(locale, 'totp.setup.keep')}</p>
       </>
     )}
     {error && <p class="error">{t(locale, `err.${error}`)}</p>}
     <form method="post" action="/login/totp">
-      <label>{t(locale, 'totp.code')}
-        <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength={6} required autocomplete="one-time-code" autofocus />
-      </label>
+      {setup ? (
+        <label>{t(locale, 'totp.code')}
+          <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength={6} required autocomplete="one-time-code" autofocus />
+        </label>
+      ) : (
+        <label>{t(locale, 'totp.code_or_recovery')}
+          <input name="code" maxlength={20} required autocomplete="one-time-code" autocapitalize="characters" autofocus />
+          <span class="hint">{t(locale, 'totp.code_or_recovery.hint')}</span>
+        </label>
+      )}
       <button type="submit">{t(locale, 'login.verify')}</button>
     </form>
+    {!setup && <p class="muted">{t(locale, admin ? 'totp.lost.admin' : 'totp.lost.member')}</p>}
   </section>
 );
 
@@ -251,6 +269,7 @@ export const AdminHome = ({ locale, counts, usage }: {
       <li><a href="/admin/options">{t(locale, 'adm.opt.title')}</a></li>
       <li><a href="/admin/access-log">{t(locale, 'adm.log.title')}</a></li>
       <li><a href="/admin/system">{t(locale, 'sys.title')}</a></li>
+      <li><a href="/admin/users/2fa-reset">{t(locale, 'tfr.title')}</a></li>
     </ul>
     <p class="muted">{t(locale, 'admin.note')}</p>
   </section>

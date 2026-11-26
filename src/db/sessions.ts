@@ -1,5 +1,5 @@
-// 로그인 인증코드(auth_codes), 세션(sessions), 관리자 TOTP 대기(admin_totp_pending).
-// TTL·횟수·판단은 lib/auth.ts, lib/admin2fa.ts 에 있다. 여기는 받은 값으로 SQL 만 실행한다.
+// 로그인 인증코드(auth_codes), 세션(sessions), 로그인 2단계 대기(admin_totp_pending — T-16 부터 2단계 인증을 켠 회원도 쓴다, 이름은 그대로).
+// TTL·횟수·판단은 lib/auth.ts, lib/twofa.ts 에 있다. 여기는 받은 값으로 SQL 만 실행한다.
 import type { SessionUser } from '../env';
 
 // ── auth_codes
@@ -46,36 +46,41 @@ export async function deleteSession(db: D1Database, id: string): Promise<void> {
   await db.prepare('DELETE FROM sessions WHERE id = ?').bind(id).run();
 }
 
-export type SessionUserRow = SessionUser & { mfa: number };
+export type SessionUserRow = SessionUser & { mfa: number; totp_on: number };
 
-/** 요청마다 세션을 읽는다 (lib/auth.ts loadUser). [sqlite] mfa INTEGER 0/1 — insertSession 주석 참고. */
+/**
+ * 요청마다 세션을 읽는다 (lib/auth.ts loadUser). [sqlite] mfa INTEGER 0/1 — insertSession 주석 참고.
+ * totp_on = 그 계정이 2단계 인증을 켰는가 (0/1, 비밀키 자체는 읽지 않는다).
+ */
 export async function findSessionUser(db: D1Database, sessionId: string, ts: number): Promise<SessionUserRow | null> {
   return db.prepare(
-    `SELECT u.id, u.email, u.role, u.locale, s.mfa FROM sessions s JOIN users u ON u.id = s.user_id
+    `SELECT u.id, u.email, u.role, u.locale, s.mfa, CASE WHEN u.totp_secret IS NULL THEN 0 ELSE 1 END AS totp_on
+       FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.id = ? AND s.expires_at > ? AND u.status = 'active'`,
   ).bind(sessionId, ts).first<SessionUserRow>();
 }
 
-// ── admin_totp_pending
+// ── admin_totp_pending (로그인 2단계 대기: 관리자 + 2단계 인증을 켠 회원)
 
-/** 이 관리자의 이전 대기 상태와 만료된 대기 상태를 지운다. */
+/** 이 회원의 이전 대기 상태와 만료된 대기 상태를 지운다. */
 export async function deleteTotpPendingForUser(db: D1Database, userId: string, ts: number): Promise<void> {
   await db.prepare('DELETE FROM admin_totp_pending WHERE user_id = ? OR expires_at < ?').bind(userId, ts).run();
 }
 
-export async function insertTotpPending(db: D1Database, id: string, userId: string, expiresAt: number): Promise<void> {
-  await db.prepare('INSERT INTO admin_totp_pending (id, user_id, attempts, expires_at) VALUES (?,?,0,?)')
-    .bind(id, userId, expiresAt).run();
+/** chosenRole: 로그인 화면에서 고른 유형 (2단계 뒤 유형 안내에만 쓴다). */
+export async function insertTotpPending(db: D1Database, id: string, userId: string, expiresAt: number, chosenRole: string | null): Promise<void> {
+  await db.prepare('INSERT INTO admin_totp_pending (id, user_id, attempts, expires_at, chosen_role) VALUES (?,?,0,?,?)')
+    .bind(id, userId, expiresAt, chosenRole).run();
 }
 
 export interface TotpPendingRow {
-  id: string; user_id: string; secret_new: string | null; attempts: number; expires_at: number;
+  id: string; user_id: string; secret_new: string | null; attempts: number; expires_at: number; chosen_role: string | null;
   email: string; locale: 'ko' | 'zh'; role: string; status: string; totp_secret: string | null; totp_last_step: number | null;
 }
 
 export async function findTotpPending(db: D1Database, id: string): Promise<TotpPendingRow | null> {
   return db.prepare(
-    `SELECT p.id, p.user_id, p.secret_new, p.attempts, p.expires_at,
+    `SELECT p.id, p.user_id, p.secret_new, p.attempts, p.expires_at, p.chosen_role,
             u.email, u.locale, u.role, u.status, u.totp_secret, u.totp_last_step
      FROM admin_totp_pending p JOIN users u ON u.id = p.user_id WHERE p.id = ?`,
   ).bind(id).first<TotpPendingRow>();
@@ -83,6 +88,12 @@ export async function findTotpPending(db: D1Database, id: string): Promise<TotpP
 
 export async function deleteTotpPending(db: D1Database, id: string): Promise<void> {
   await db.prepare('DELETE FROM admin_totp_pending WHERE id = ?').bind(id).run();
+}
+
+/** 2단계를 통과한 대기를 지운다. 이 요청이 지웠으면 true — 같은 대기로 세션이 두 번 만들어지지 않게 (한 문장 가드). */
+export async function consumeTotpPending(db: D1Database, id: string): Promise<boolean> {
+  const r = await db.prepare('DELETE FROM admin_totp_pending WHERE id = ?').bind(id).run();
+  return r.meta.changes === 1;
 }
 
 export async function setTotpPendingSecret(db: D1Database, secretNew: string, id: string): Promise<void> {

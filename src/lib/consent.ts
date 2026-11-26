@@ -8,7 +8,7 @@
 
 /** 문서의 판. consents.version 에 남는다. 본문(src/legal/terms.ts · privacy.ts)을 고치면 올린다. 개인정보처리방침의 실제 판은 privacyVersion(). */
 export const TERMS_VERSION = '2026-11-1';
-export const PRIVACY_VERSION = '2026-11-2';
+export const PRIVACY_VERSION = '2026-11-3';
 
 export type RequiredConsent = 'terms' | 'privacy';
 export type RequiredConsentItem = { type: RequiredConsent; version: string };

@@ -1,4 +1,4 @@
-// 관리자 시스템 점검 화면 (T-13, GET /admin/system). 설정 점검 결과·비밀값 유무·예약 작업 시간표·오늘 사용량·보관 기간(읽기만).
+// 관리자 시스템 점검 화면 (T-13, GET /admin/system). 설정 점검 결과·비밀값 유무·예약 작업 시간표·오늘 사용량·한도와 출처·알림 발송 상태(T-17)·보관 기간(읽기만).
 // 비밀값의 값은 이 화면 어디에도 나오지 않는다 (lib/config-check 가 "설정됨/없음" 과 길이 구간만 돌려준다).
 import type { Locale } from '../env';
 import { t } from '../lib/i18n';
@@ -7,6 +7,8 @@ import type { StepName } from '../lib/maintenance';
 import type { TodayUsage, UsageLine } from '../lib/quota';
 import { RETENTION_SPEC, type RetentionSettings } from '../lib/retention';
 import { retentionValueText } from './admin-settings';
+import { LimitsSystemBox } from './admin-limits';
+import type { EffectiveLimits } from '../lib/limits';
 
 const fill = (s: string, v: Record<string, string | number>) => Object.entries(v).reduce((a, [k, x]) => a.replaceAll(`{${k}}`, String(x)), s);
 
@@ -19,6 +21,8 @@ export const SystemPage = (p: {
   shared?: Readonly<Record<number, StepName>>;
   /** 조건 알림 개수와 오늘 알림 메일 (개수만, T-10). */
   alerts?: { active: number; paused: number; mail: UsageLine };
+  /** 지금 쓰는 한도·출처·알림 켜기/끄기 (T-17). */
+  limits?: EffectiveLimits;
 }) => {
   const l = p.locale;
   return (
@@ -71,6 +75,8 @@ export const SystemPage = (p: {
           </tbody>
         </table></div>
       </div>
+
+      {p.limits && <LimitsSystemBox locale={l} limits={p.limits} />}
 
       {p.alerts && (
         <div class="box">

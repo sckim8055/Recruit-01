@@ -668,7 +668,10 @@ describe.skipIf(!hasSqlite)('dropOldRows', () => {
     for (const d of ['2026-12-10', cutDay, '2027-01-15']) raw.prepare("INSERT INTO usage_counters (scope, subject, day, n, updated_at) VALUES ('mail_company', ?, ?, 3, 0)").run(co, d);
 
     const r = await STEPS.dropOldRows(env, NOW);
-    expect(r.done).toEqual({ application_events: 1, applications: 1, consents: 1, access_log: 1, email_log: 1, sessions: 1, auth_codes: 1, admin_totp_pending: 1, usage_counters: 1 });
+    expect(r.done).toEqual({
+      application_events: 1, applications: 1, consents: 1, access_log: 1, email_log: 1, sessions: 1, auth_codes: 1, admin_totp_pending: 1, usage_counters: 1,
+      totp_enrolments: 0, totp_recovery_codes: 0, admin_actions: 0,
+    });
     expect(q(raw, 'SELECT day FROM usage_counters ORDER BY day').map((x) => x.day)).toEqual([cutDay, '2027-01-15']);
     const has = (tbl: string, col: string, v: string) => num(raw, `SELECT COUNT(*) FROM ${tbl} WHERE ${col} = ?`, v) === 1;
     expect(has('applications', 'id', old)).toBe(false);

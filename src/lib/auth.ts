@@ -48,7 +48,8 @@ export async function requestCode(env: Env, rawEmail: string, locale: Locale): P
 
 export type VerifyResult =
   | { ok: true; kind: 'session'; user: SessionUser; token: string; maxAge: number }
-  // 관리자는 여기서 세션을 받지 못한다. TOTP 를 통과해야 한다 (src/lib/admin2fa.ts).
+  // 관리자와 2단계 인증을 켠 회원은 여기서 세션을 받지 못한다. TOTP(또는 복구 코드)를 통과해야 한다 (src/lib/twofa.ts).
+  // 이 결과는 인증코드를 맞힌 뒤에만 나온다 — 이메일 단계(requestCode)는 2단계 인증 여부와 관계없이 같다.
   | { ok: true; kind: 'totp'; pendingToken: string }
   | { ok: false; why: 'invalid' | 'expired' | 'locked' | 'suspended' };
 
@@ -75,24 +76,25 @@ export async function verifyCode(
   if (!user) {
     const id = crypto.randomUUID();
     await insertUser(env.DB, id, email, signupRole, locale, 'active', ts, ts);
-    user = { id, email, role: signupRole, locale, status: 'active' };
+    user = { id, email, role: signupRole, locale, status: 'active', totp_on: 0 };
   } else {
     if (user.status !== 'active') return { ok: false, why: 'suspended' };
     await touchUserLogin(env.DB, ts, user.id);
   }
   const su: SessionUser = { id: user.id, email: user.email, role: user.role, locale: user.locale };
-  if (su.role === 'admin') {
-    // 관리자는 이메일 인증코드만으로 로그인할 수 없다. 2단계(TOTP) 대기 상태만 만든다.
+  if (su.role === 'admin' || user.totp_on === 1) {
+    // 관리자·2단계 인증을 켠 회원은 이메일 인증코드만으로 로그인할 수 없다. 2단계(TOTP) 대기 상태만 만든다.
+    // 고른 유형(signupRole)은 2단계를 통과한 뒤 유형 안내를 지금처럼 보이기 위해 대기에 남긴다.
     const pendingToken = randomToken();
     await deleteTotpPendingForUser(env.DB, su.id, ts);
-    await insertTotpPending(env.DB, await tokenHash(env, pendingToken), su.id, ts + TOTP_PENDING_TTL);
+    await insertTotpPending(env.DB, await tokenHash(env, pendingToken), su.id, ts + TOTP_PENDING_TTL, signupRole);
     return { ok: true, kind: 'totp', pendingToken };
   }
   const { token, maxAge } = await createSession(env, su, false);
   return { ok: true, kind: 'session', user: su, token, maxAge };
 }
 
-/** 세션을 만든다. mfa = true 는 TOTP 를 통과했다는 뜻이며 admin2fa.ts 만 true 로 부른다. */
+/** 세션을 만든다. mfa = true 는 TOTP(또는 복구 코드)를 통과했다는 뜻이며 twofa.ts 만 true 로 부른다. */
 export async function createSession(env: Env, user: SessionUser, mfa: boolean): Promise<{ token: string; maxAge: number }> {
   const ts = now();
   const maxAge = user.role === 'admin' ? ADMIN_SESSION_TTL : SESSION_TTL;
@@ -113,9 +115,19 @@ export async function logout(c: Context<AppEnv>): Promise<void> {
   deleteCookie(c, COOKIE, { path: '/' });
 }
 
-/** 이 세션으로 해당 역할을 쓸 수 있는가. 순수 함수 (test/auth.test.ts). */
-export function sessionUsable(role: Role, mfa: number): boolean {
-  return role !== 'admin' || mfa === 1;
+/**
+ * 이 세션으로 로그인한 것으로 볼 수 있는가. 순수 함수 (test/auth.test.ts).
+ * 관리자, 그리고 2단계 인증을 켠 계정(totpOn = 1)은 TOTP 를 통과한 세션(mfa = 1)만 인정한다.
+ */
+export function sessionUsable(role: Role, mfa: number, totpOn: number): boolean {
+  if (mfa === 1) return true;
+  return role !== 'admin' && totpOn !== 1;
+}
+
+/** 지금 요청의 세션 id (= 쿠키 토큰의 해시, sessions.id). 쿠키가 없으면 null. 2단계 등록 대기를 세션에 묶을 때 쓴다. */
+export async function currentSessionId(c: Context<AppEnv>): Promise<string | null> {
+  const token = getCookie(c, COOKIE);
+  return token ? tokenHash(c.env, token) : null;
 }
 
 /** 모든 요청에서 세션을 읽어 c.var.user 에 넣는다 (없으면 null). */
@@ -124,8 +136,8 @@ export const loadUser: MiddlewareHandler<AppEnv> = async (c, next) => {
   const token = getCookie(c, COOKIE);
   if (token) {
     const row = await findSessionUser(c.env.DB, await tokenHash(c.env, token), now());
-    // 관리자는 TOTP 를 통과한 세션만 인정한다. 그렇지 않은 세션은 로그인하지 않은 것으로 본다.
-    if (row && sessionUsable(row.role, row.mfa)) c.set('user', { id: row.id, email: row.email, role: row.role, locale: row.locale });
+    // 관리자와 2단계 인증을 켠 회원은 TOTP 를 통과한 세션만 인정한다. 그렇지 않은 세션은 로그인하지 않은 것으로 본다 (판단은 이곳 한 곳).
+    if (row && sessionUsable(row.role, row.mfa, row.totp_on)) c.set('user', { id: row.id, email: row.email, role: row.role, locale: row.locale });
   }
   await next();
 };

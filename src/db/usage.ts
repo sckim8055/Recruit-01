@@ -34,3 +34,13 @@ export async function readUsage(db: D1Database, x: QuotaKey): Promise<number> {
     .bind(x.scope, x.subject, x.day).first<{ n: number }>();
   return Number(r?.n ?? 0);
 }
+
+/**
+ * 관리자 한도 확인 화면 (T-17): 그날 범위(scope)마다 가장 많이 쓴 대상의 수와 대상 수. 사이트 몫(subject 'site' 하나)이면 max = 사이트 합계.
+ * 읽기 한 번 (그날 행만, idx_usage_counters_day).
+ */
+export async function usageMaxByScope(db: D1Database, day: string): Promise<Record<string, { max: number; subjects: number }>> {
+  const rows = (await db.prepare('SELECT scope, MAX(n) AS max_n, COUNT(*) AS subjects FROM usage_counters WHERE day = ? GROUP BY scope')
+    .bind(day).all<{ scope: string; max_n: number; subjects: number }>()).results;
+  return Object.fromEntries(rows.map((r) => [r.scope, { max: Number(r.max_n), subjects: Number(r.subjects) }]));
+}

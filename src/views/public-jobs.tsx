@@ -109,6 +109,8 @@ export interface PublicJobListProps {
   rows: PublicJobListRow[];
   /** 조건 알림 만들기 칸을 그릴까 (로그인한 구직자 + 조건 있음 — routes/jobs). 비로그인 화면에서는 항상 없다. */
   alertForm?: boolean;
+  /** 조건 알림 발송이 멈춘 상태라 칸 대신 한 줄 안내 (로그인한 구직자 + 조건 있음일 때만, T-17). 비로그인 화면에서는 항상 없다. */
+  alertPaused?: boolean;
   page: number;
   hasPrev: boolean;
   hasNext: boolean;
@@ -135,6 +137,7 @@ export const PublicJobList = (p: PublicJobListProps) => (
       </nav>
     )}
     {p.alertForm && <JobsAlertForm locale={p.locale} filter={p.filter} />}
+    {p.alertPaused && <p class="info">{t(p.locale, 'alert.paused_site')} {t(p.locale, 'alert.paused_jobs')} <a href="/my/alerts">{t(p.locale, 'alert.create.manage')}</a></p>}
   </section>
 );
 

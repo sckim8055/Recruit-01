@@ -92,7 +92,7 @@ export async function applyDemoSeed(db: D1Database, s: DemoSeedRows): Promise<vo
     // role 은 seeker·company 만 넘어온다 (호출부의 타입). 관리자를 만들거나 관리자로 바꾸는 문장은 이 파일에 없다.
     ...s.users.map((u) => db.prepare(
       `INSERT INTO users (id, email, role, locale, status, created_at) VALUES (?,?,?,?,'active',?)
-       ON CONFLICT (id) DO UPDATE SET email = excluded.email, role = excluded.role, locale = excluded.locale, status = 'active', totp_secret = NULL`,
+       ON CONFLICT (id) DO UPDATE SET email = excluded.email, role = excluded.role, locale = excluded.locale, status = 'active', totp_secret = NULL, totp_last_step = NULL, totp_enabled_at = NULL`,
     ).bind(u.id, u.email, u.role, u.locale, s.now)),
     ...s.companies.map((c) => db.prepare(
       `INSERT INTO companies (id, name_ko, name_zh, biz_no, entity_type, hq_name, entry_stage, industry, website, profile_ko, verify_status, verified_at, reject_reason, created_at)
@@ -101,6 +101,10 @@ export async function applyDemoSeed(db: D1Database, s: DemoSeedRows): Promise<vo
          hq_name = excluded.hq_name, entry_stage = excluded.entry_stage, industry = excluded.industry, website = NULL, profile_ko = excluded.profile_ko,
          verify_status = excluded.verify_status, verified_at = excluded.verified_at, reject_reason = NULL`,
     ).bind(c.id, c.name_ko, c.name_zh, c.biz_no, c.entity_type, c.hq_name, c.entry_stage, c.industry, c.profile_ko, c.verify_status, c.verified_at, s.now)),
+    // 2단계 인증의 남은 흔적 (T-18 — 시연 계정은 2단계 인증을 켤 수 없지만, 그 전에 남은 것이 있으면 지운다)
+    db.prepare(`DELETE FROM totp_recovery_codes WHERE user_id IN (${uq})`).bind(...userIds),
+    db.prepare(`DELETE FROM totp_enrolments WHERE user_id IN (${uq})`).bind(...userIds),
+    db.prepare(`DELETE FROM admin_totp_pending WHERE user_id IN (${uq})`).bind(...userIds),
     db.prepare(`DELETE FROM company_invites WHERE company_id IN (${cq})`).bind(...companyIds),
     db.prepare(`DELETE FROM company_members WHERE company_id IN (${cq}) OR user_id IN (${uq})`).bind(...companyIds, ...userIds),
     ...s.members.map((m) => db.prepare(
