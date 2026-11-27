@@ -9,7 +9,7 @@ import { EngineError, type LocalizeEngine } from '../src/lib/localize/types';
 import { sealResume, type ResumeBody } from '../src/lib/resume';
 import { getApplicationWithJob } from '../src/db/applicants';
 import type { Env } from '../src/env';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
 
 const KEY = b64url(new Uint8Array(32).fill(7)).replace(/-/g, '+').replace(/_/g, '/');
 const mk = (p: Partial<Actor>): Actor => ({ id: 'm1', role: 'company', companyIds: [], hqCompanyIds: [], agencyIds: [], ...p });
@@ -58,7 +58,7 @@ describe('메일 글', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('메일 보내기', () => {
+describe.skipIf(!hasDb)('메일 보내기', () => {
   const setup = async () => {
     const { raw, d1 } = migratedDb();
     const sealed = await sealResume(await importEncKey(KEY), body);

@@ -3,26 +3,32 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "db:local": "wrangler d1 migrations apply DB --local",
+    "build": "node scripts/build.mjs",
+    "start": "node --env-file=.env dist/server.mjs",
+    "db:migrate": "node --env-file=.env scripts/db-migrate.mjs",
+    "maint": "node scripts/build.mjs && node --env-file=.env dist/maint.mjs",
+    "backup": "node --env-file=.env scripts/backup.mjs",
+    "restore": "node scripts/restore.mjs",
+    "import:cloudflare": "node --env-file=.env scripts/import-from-cloudflare.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "predeploy:test": "node scripts/predeploy.mjs test",
-    "predeploy:prod": "node scripts/predeploy.mjs production",
-    "deploy:test": "node scripts/deploy.mjs test",
-    "deploy:prod": "node scripts/deploy.mjs production",
-    "db:test:migrate": "node scripts/db-migrate.mjs test",
-    "db:prod:migrate": "node scripts/db-migrate.mjs production",
-    "backup:test": "node scripts/backup.mjs test",
-    "backup:prod": "node scripts/backup.mjs production"
+    "predeploy:prod": "node scripts/predeploy.mjs production"
   },
   "dependencies": {
-    "hono": "^4.13.19"
+    "@hono/node-server": "^2.1.11",
+    "hono": "^4.13.19",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261121.1",
+    "@electric-sql/pglite": "^0.6.1",
+    "@types/node": "^26.6.11",
+    "@types/pg": "^8.23.1",
+    "esbuild": "^0.28.2",
     "typescript": "^7.0.2",
     "vitest": "^5.1.1",
     "wrangler": "^4.166.0"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

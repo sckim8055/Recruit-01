@@ -1,136 +1,108 @@
-# DB 이전 안내 (SQLite/D1 → PostgreSQL)
+# DB 이전 기록 (SQLite/D1 → PostgreSQL 16, T-19 완료)
 
-지금은 Cloudflare D1(SQLite)을 쓴다. 나중에 PostgreSQL 로 옮길 때 무엇을 고쳐야 하는지 적은 문서다.
-"확인 필요" 표시는 이 문서를 쓸 때 직접 시험해 보지 않은 내용이다. 옮기기 전에 반드시 시험한다.
+T-19 에서 Cloudflare D1(SQLite)을 운영자 PC 의 **PostgreSQL 16** 으로 옮겼다. 이 문서는 (1) 지금 DB 코드가 어떻게 되어 있는지, (2) 옮기기 전에 이 문서가 예상한 것과
+**실제로 해 보니 달랐던 것**, (3) 동시성 판단과 실제 PostgreSQL 에서의 병렬 시험 결과를 적는다. 예전 판의 "확인 필요" 는 모두 아래에서 결과로 바꿨다.
 
 ## 1. DB 코드가 있는 곳
 
-- **모든 SQL 과 D1 호출은 `src/db/` 에만 있다** (T-05d). 라우트(`src/routes/`)와 lib 는 `env.DB` 를 이 폴더의 함수에 넘기기만 한다.
-  `test/db-layer.test.ts` 가 이 경계를 검사한다 (밖에서 `.prepare(`·`.batch(`·`meta.changes`·SQL 문자열을 쓰면 테스트 실패).
+- **모든 SQL 과 DB 호출은 `src/db/` 에만 있다** (T-05d). 라우트·lib 는 `env.DB` 를 이 폴더의 함수에 넘기기만 한다. `test/db-layer.test.ts` 가 검사한다.
+- 호출 모양은 D1 그대로다: `db.prepare(sql).bind(...).first() / all() / run()`, `db.batch([...])`. 함수 이름·인자·돌려주는 값을 바꾸지 않았다 → 라우트는 고치지 않았다.
 
-| 파일 | 다루는 표 |
+| 파일 | 하는 일 (T-19 에서 새로 생김) |
 |---|---|
-| `src/db/users.ts` | users (로그인 시 조회·생성, 관리자 최초 TOTP 확정 + 복구 코드, 쓴 TOTP 단계 올리기) |
-| `src/db/sessions.ts` | auth_codes, sessions, admin_totp_pending (관리자 + 2단계 인증을 켠 회원의 로그인 대기) |
-| `src/db/twofa.ts` | 2단계 인증(T-16): users(totp_* · 시도 수), totp_enrolments(등록 대기), totp_recovery_codes, admin_actions(관리자 초기화 기록), sessions(mfa·다른 세션 삭제) |
-| `src/db/companies.ts` | companies, company_members, company_invites, verification_docs(행), agency_members |
-| `src/db/jobs.ts` | jobs (+ 초안 삭제 전 지원 여부 읽기, T-12c) |
-| `src/db/public-jobs.ts` | jobs + companies (공개 공고 목록·상세, 읽기만) |
-| `src/db/logs.ts` | access_log, email_log |
-| `src/db/admin.ts` | 관리자 첫 화면 개수 (companies·agencies·jobs·reports) |
-| `src/db/settings.ts` | site_settings (사이트 설정 이름 → 값, upsert, 여러 키를 한 트랜잭션으로 저장, 바꾼 관리자 이메일과 함께 읽기 — 보관 기간 설정 T-12c) |
-| `src/db/resumes.ts` | resumes (내 이력서 목록·한 개·개수, 5개 한도 안에서 추가, 버전 비교 수정, 대표 지정, 삭제 + 대표 승계, 파일 키 목록). 모든 문장에 `user_id` 조건 |
-| `src/db/options.ts` | job_options (직무·업계·근무지 선택 항목: 전체 읽기·추가·이름/순서 수정·사용 종료/다시 사용) + 항목별 공고 수 |
-| `src/db/applications.ts` | applications · application_events · consents(cross_border): 지원 여부, 기업 담당자 수(본사/그 밖)·알림 주소(활성 계정), 공개 조건·중복을 다시 확인하는 조건부 추가(+ 동의), 내 지원 한 건·목록, 취소(이벤트 + 상태 + 내용 삭제 + 동의 철회), 파일 키 목록. 구직자 쪽 문장은 모두 `seeker_id` 조건 |
-| `src/db/application-views.ts` | applications + jobs + companies (지원 현황 화면: 내가 지원한 공고 중 지금 공개 중인 공고 id, `publicJobWhere` 재사용, 읽기만) |
-| `src/db/applicants.ts` | applications + jobs + access_log + users (기업·관리자 쪽, T-09): 공고의 지원 목록(내용 없음), 기업의 공고별 지원 수, 지원 한 건 + 공고 소속(권한 판단용, 암호문 포함 — `lib/applicants.openApplication` 만 쓴다), `viewed` 이벤트 + 상태, 열람 기록 목록(관리자)·지원서별 열람 기록(구직자, 역할·시각만) |
-| `src/db/consents.ts` | consents (type `terms`·`privacy`): 그 회원의 필수 동의 읽기(요청마다 한 번, `idx_consents_user`), 같은 판의 유효한 동의가 없을 때만 추가. 국외 이전(`cross_border`)은 `applications.ts` |
-| `src/db/account.ts` | 회원 탈퇴(T-11): 다른 담당자가 있는 기업의 대표인지 세기, 한 트랜잭션으로 지우기 — applications·application_events·consents·resumes·seeker_profiles·alerts·jobs(혼자 맡던 기업의 게재 중 공고 마감)·company_members·agency_members·company_invites·sessions·admin_totp_pending·auth_codes·users(이메일 익명화, `status = 'deleted'`) |
-| `src/db/maintenance.ts` | 예약 작업(T-12, 데이터를 지운다): jobs(자동 마감·안내 표시), company_members+users(활성 담당자 주소), applications·application_events·consents(보관 기한 붙이기/떼기·자동 종료·내용 삭제·동의 철회·오래된 행 삭제), access_log·email_log·sessions·auth_codes·admin_totp_pending(기간 지난 행 삭제), verification_docs(1년 지난 서류 행 삭제), resumes+applications(R2 키 참조 확인), site_settings(`maint.*` 키: 고아 정리 커서·일별 집계), 개수(users·jobs·applications). 모든 UPDATE·DELETE 에 바인딩한 시각 조건 + 행 수 한도 |
-| `src/db/usage.ts` | usage_counters (T-05c 남용 방지 한도): 한도 안에서만 하루 횟수 더하기(한 문장), 하루 횟수 읽기. subject 는 id 또는 `'site'` — 개인정보 없음 |
-| `src/db/alerts.ts` | alerts · alert_unsub_tokens (T-10 조건 알림, 0012): 내 알림 목록·5개 한도와 같은 조건을 한 문장으로 확인하는 추가·빈도·끄기/켜기·삭제(모두 `seeker_id` 조건), 해지 토큰 해시로 찾기·끄기, 예약 작업의 차례 읽기(users·consents 조건)·새 공고 읽기(`publicJobWhere`·`filterWhere` 재사용, 읽기 batch)·보낸 뒤 기록·실패 수·정리, 관리자 개수 |
-| `src/db/applicant-views.ts` | application_events + applications (기업 지원자 목록 화면, T-09b): 공고 하나의 지원별 면접 요청 메일 수 — `GROUP BY` 한 번, 읽기만. `COUNT(*)` 는 `Number()` 로 바꿔 쓴다 (PostgreSQL bigint 대비) |
+| `src/db/types.ts` | `Db` · `DbStatement` · `DbResult` — D1 과 같은 모양 (예전 `D1Database` 등 Cloudflare 타입 대신) |
+| `src/db/pg.ts` | D1 모양 어댑터: `?` → `$n`(+ 숫자 형 표시), `run().meta.changes` = rowCount(SELECT 는 0), `first(col)`, `batch` = `BEGIN ISOLATION LEVEL SERIALIZABLE … COMMIT`, 직렬화 실패 다시 실행, node-postgres Pool(`createPool`) |
+| `src/db/locks.ts` | PostgreSQL 권고 잠금 (예약 작업·자동 백업이 두 프로세스에서 동시에 돌지 않게) |
+| `src/db/system.ts` | `/admin/system` 의 DB 연결·적용된 마이그레이션 읽기, `PG_MIGRATIONS` 목록 |
 
-- 스키마는 `migrations/` (SQLite 문법). 판단 규칙(`rules.ts`·`authz.ts`)·TTL·횟수 제한은 DB 와 무관하므로 옮길 때 고치지 않는다.
+각 파일 안의 `[sqlite]` 주석은 옮기기 전에 쓴 메모다 — 결과는 이 문서 2·4장이 기준이다. 예전 표(파일 → 다루는 표)는 바뀌지 않았다: users · sessions · twofa · companies · jobs · public-jobs · logs · admin · settings · resumes · options · applications · application-views ·
+applicants · consents · account · maintenance · usage · alerts · applicant-views · demo (각 파일 머리말 참고).
 
-## 2. PostgreSQL 로 옮길 때 하는 일
+- 스키마: **`migrations/pg/0001_init.sql`** (SQLite 0001~0013 을 적용한 결과와 같은 최종 모양 한 파일). 적용은 `npm run db:migrate`(scripts/db-migrate.mjs, `schema_migrations` 표).
+  예전 `migrations/0001~0013.sql` 은 기록으로만 남는다 (migrations/README.md). 새 변경은 `migrations/pg/0002_….sql` 처럼 더한다.
+- 테스트: `test/pg-test-db.ts` — PGlite(WASM PostgreSQL)에 `migrations/pg/*` 를 적용하고 **서버와 같은 `createDb`** 로 감싼다 (예전 `test/sqlite-d1.ts` 대신).
+  동시성은 PGlite 로 시험할 수 없어(연결 하나) `test/pg-concurrency.test.ts` 가 실제 PostgreSQL(`PG_TEST_URL`)로 한다.
 
-1. **`src/db/*` 를 PostgreSQL 드라이버로 다시 쓴다.** 함수 이름·인자·돌려주는 값은 그대로 두면 라우트는 고치지 않아도 된다.
-   - 자리표시자 `?` → `$1, $2, …` (문장마다 순서 그대로). 한곳에서 바꿔 주는 작은 도우미를 두는 방법도 있다.
-   - `db.batch([...])` → `BEGIN … COMMIT` 트랜잭션. **문장 순서를 바꾸지 않는다** (가드가 앞 문장의 결과에 기대는 곳이 있다).
-   - `meta.changes` → 드라이버의 `rowCount`. "N 번째 문장의 영향 행 수가 1 인가" 판단은 그대로 둔다.
-   - `.first()` → 첫 행 또는 `null`, `.all().results` → 행 배열.
-2. **스키마를 PostgreSQL 문법으로 새로 쓴다** (마이그레이션 파일을 하나씩 옮기기보다 최종 모양으로 한 번에).
-   - id: `TEXT` UUID 그대로 둘 수 있다 (`uuid` 형으로 바꿔도 되지만 필수는 아니다).
-   - 시각: INTEGER 에포크 초. **PostgreSQL `integer` 는 32비트라 2038년에 넘친다 → `bigint` 로.**
-     단 `bigint` 는 node-postgres 등에서 문자열로 올 수 있어 숫자로 바꾸는 설정이 필요하다 (확인 필요).
-   - 0/1 값(`is_hq`, `sessions.mfa`, `resumes.is_default`, `jobs.company_name_public`): `integer` 로 두면 코드 변경이 없다.
-     `boolean` 으로 바꾸면 아래 `[sqlite]` 목록의 해당 함수와 이 값을 읽는 코드(lib/actor.ts, lib/auth.ts sessionUsable, lib/company.ts)를 같이 고친다.
-   - `CHECK (... IN (...))` 제약은 PostgreSQL 에서도 그대로 쓸 수 있다.
-   - 부분 유일 인덱스 `idx_resumes_default ... WHERE is_default = 1` 도 PostgreSQL 이 지원한다 (boolean 으로 바꾸면 `WHERE is_default`).
-   - 유일 인덱스 `idx_company_invites_email (company_id, email)` 은 초대 중복을 막는 데 쓰인다. 반드시 옮긴다.
-3. **데이터 복사:** 서비스를 잠시 멈추고 D1 에서 내보내기(`wrangler d1 export`) → 표마다 PostgreSQL 로 넣기 → 행 수 비교.
-   이력서 등 🔒 컬럼은 암호문 그대로 옮긴다 (`ENC_KEY` 는 바꾸지 않는다). 순서는 users → companies → … 처럼 참조되는 표부터.
-4. **Worker 에서 PostgreSQL 에 붙는 방법:** Cloudflare **Hyperdrive** (연결 풀·지역 캐시를 제공하는 Cloudflare 서비스)를 만들고
-   `wrangler.jsonc` 에 바인딩을 추가한 뒤, Worker 에서 PostgreSQL 드라이버(`pg` 또는 `postgres`)로 연결한다. `nodejs_compat` 설정이 필요할 수 있다.
-   요금·무료 플랜 포함 여부·지원 드라이버 버전은 **확인 필요**. 중국에서의 접속 속도도 시험해 봐야 한다.
-5. 테스트: `npm test` 는 DB 없이 돈다. 옮긴 뒤에는 `wrangler dev` 로 로그인·기업 등록·검증·공고 게재 흐름을 다시 확인한다 (T-05d 때 한 목록과 같게).
+## 2. 예상과 실제 (예전 판 2·3장의 항목별)
 
-## 3. SQLite 전용 부분 목록 (`src/db/` 안 `// [sqlite]` 주석)
+| 예전 판의 예상 | 실제 (T-19) |
+|---|---|
+| `src/db/*` 를 PostgreSQL 드라이버로 다시 쓴다 | **다시 쓰지 않았다.** D1 모양 어댑터(`src/db/pg.ts`)를 만들고 SQL 문법만 고쳤다. 고친 문장은 아래 "고친 SQL" 표의 6곳뿐 |
+| `?` → `$1…` | 어댑터가 바꾼다. 작은따옴표 문자열(`''` 포함)·큰따옴표 이름·`--`·`/* */` 주석 안의 `?` 는 그대로 (test/pg-adapter.test.ts) |
+| FROM 없는 SELECT 목록의 매개변수에 `$n::integer` 가 필요할 수 있다 (확인 필요) | **필요했다 — 더 넓게.** 형이 없는 매개변수는 문맥이 없으면 text 가 된다: `INSERT … SELECT ?, …` 의 숫자 컬럼은 오류, `WHERE ? <= ?`(takeQuota)는 **글자 비교**('4' <= '10' 이 거짓)가 된다. → 어댑터가 정수 값이면 `$n::bigint`, 소수면 `$n::float8` 를 붙인다 (값의 형으로 — D1 과 같은 뜻). 문자열·null 은 붙이지 않는다 |
+| null 매개변수 | `? IS NULL`(listAccessLog)은 "could not determine data type of parameter" → SQL 을 `CAST(? AS BIGINT) IS NULL` · `CAST(? AS TEXT) IS NULL` 로 고쳤다. 그 밖의 null 은 문맥(컬럼·CASE·COALESCE)으로 형이 정해져 고칠 곳이 없었다 |
+| `batch` → BEGIN … COMMIT, 순서 그대로 | 그대로. 다만 격리 수준을 **SERIALIZABLE** 로 했다 (4장) |
+| `meta.changes` → rowCount | 그대로. 단 node-postgres 는 SELECT 의 rowCount 에 읽은 행 수를 준다 → D1 처럼 SELECT 는 0 으로 맞췄다 |
+| bigint 는 문자열로 올 수 있다 (확인 필요) | 맞다 (int8·numeric). Pool 의 형 변환으로 **숫자로 받는다** (`COUNT(*)`·`SUM`·시각 컬럼). `adminCounts` 는 `Number()` 없이 쓰고 있었는데 이 설정 덕분에 고치지 않았다 |
+| 시각 컬럼 `integer` 는 2038년에 넘친다 → `bigint` | 정수 컬럼을 **모두 BIGINT** 로 했다 (0/1 값 포함) |
+| 0/1 값을 boolean 으로 바꿀지 | **INTEGER(BIGINT) 0/1 그대로** — 코드 변경 없음 (is_hq · mfa · is_default · active · company_name_public) |
+| `MIN(a, b)` → `LEAST` | 고쳤다 (`maintenance.ts` effKeep·autoCloseBeforeSql) |
+| `lower(hex(randomblob(16)))` → `gen_random_uuid()` | `replace(gen_random_uuid()::text, '-', '')` 로 — 예전과 같은 **하이픈 없는 32자** 모양 (account.eraseUser · maintenance.autoCloseStmts · demo 동의 행) |
+| `ON CONFLICT … DO UPDATE … excluded` 는 그대로 된다 | 한 곳 달랐다: `demo.ts` 의 `rev = rev + 1` 은 PostgreSQL 에서 "rev 가 모호하다" 오류 → `rev = jobs.rev + 1` |
+| UNIQUE 위반 판별 (SQLSTATE 23505) | `insertApplication` 은 메시지의 "UNIQUE"(대소문자 무시)로 판별하는데 PostgreSQL 메시지 `violates unique constraint` 에도 맞아 그대로 된다. 게다가 동시 두 지원은 어댑터의 다시 실행으로 예외 대신 false 가 된다 (4장) |
+| `ORDER BY name_ko` 콜레이션 | 글자 컬럼을 모두 `COLLATE "C"`(바이트 순서 = SQLite BINARY)로 만들었다 — 정렬·`key < ?`·`day < ?` 비교가 예전과 같다 |
+| `x IN (SELECT … LIMIT ?)`, 행 값 IN, `COUNT(*) OVER ()`, `RETURNING`, `substr` | 그대로 된다 (고치지 않음) |
+| 읽기 batch | 그대로 (한 트랜잭션 안의 SELECT 들) |
+| D1 바인딩 한도 100 → IN 목록 50개씩 | 그대로 둔다 (PostgreSQL 한도는 65535 — 필요하면 나중에 `= ANY($1)`) |
+| Hyperdrive 로 Worker 에서 PostgreSQL | 쓰지 않았다 — Worker 를 버리고 Node 서버로 옮겼다 |
+| 데이터 복사: export → 표마다 넣기 → 행 수 비교 | `scripts/import-from-cloudflare.mjs` (6장). 가짜 내보내기로만 시험했다 |
 
-| 위치 | 내용 | PostgreSQL 에서 |
-|---|---|---|
-| 모든 쓰기 함수 (`companies.ts`, `jobs.ts` 파일 머리말) | `meta.changes` | `rowCount` |
-| `users.confirmTotp`, `companies.registerCompany` · `saveCompanyEdit` · `acceptInvite` · `removeMember` · `rejectCompany` · `approveCompany` · `revokeCompany` | `batch` = 암묵적 트랜잭션 | `BEGIN … COMMIT`, 순서 그대로 |
-| `companies.listMembersAndInvites` · `inviteConflicts` · `loadCompanyDetail`, `admin.adminCounts` | 읽기 전용 batch | 조회 여러 번 또는 한 트랜잭션 |
-| `sessions.insertSession` · `findSessionUser` | `mfa` INTEGER 0/1 | integer 로 두거나, boolean 이면 `sessionUsable` 도 수정 |
-| `companies.listCompanyMembershipsOfUser` · `registerCompany` · `saveCompanyEdit` 등 (`is_hq` 를 읽고 쓰는 곳) | `is_hq` INTEGER 0/1 | 위와 같음 |
-| `companies.registerCompany` · `acceptInvite` · `insertInviteWithinLimit` | `INSERT … SELECT ?,… WHERE …` 조건부 추가 | 문법은 된다. FROM 없는 SELECT 목록의 매개변수는 text 로 정해질 수 있어 숫자 컬럼에 `$n::integer` 가 필요할 수 있다 (확인 필요) |
-| `companies.insertInviteWithinLimit` | 유일 인덱스 위반 시 예외 | PostgreSQL 은 SQLSTATE 23505. 지금 호출부는 예외 종류를 보지 않고 "중복" 으로 안내하므로 그대로 된다 |
-| `companies.listCompaniesForAdmin`, `admin.adminCounts` | `COUNT(*)` 가 숫자로 옴 | bigint → 문자열로 올 수 있음. `COUNT(*)::int` 또는 변환 (확인 필요) |
-| `public-jobs.ts` (`LIST_COLS`) | `CASE WHEN j.company_name_public = 1` — INTEGER 0/1 | integer 로 두면 그대로. boolean 이면 `WHEN j.company_name_public` |
-| `options.ts` (파일 머리말) | `meta.changes`, `active` INTEGER 0/1 (`active = 1`) | `rowCount`. boolean 으로 바꾸면 SQL 과 `lib/options.buildOptionSet` 수정 |
-| `options.countOptionUsage` | `COUNT(*)` 가 숫자로 옴 | `COUNT(*)::int` 또는 변환 (확인 필요) |
-| `options.setOptionActive` | 사용 종료 가드 `… AND (SELECT COUNT(*) FROM job_options WHERE kind = ? AND active = 1) > 1` — D1 은 쓰기가 순서대로라 안전 | 문법은 된다. 동시성은 4장 |
-| `resumes.ts` (파일 머리말) | `is_default` INTEGER 0/1 (`= 1`/`= 0`), 회원당 대표 하나는 부분 유일 인덱스 `idx_resumes_default … WHERE is_default = 1` 이 지킨다, `meta.changes` | integer 로 두면 그대로. boolean 이면 `WHERE is_default` 와 비교 수정 |
-| `resumes.insertResume` | `INSERT … SELECT ?,…, CASE WHEN EXISTS … THEN 0 ELSE 1 END … WHERE (SELECT COUNT(*) …) < ?` — 한도·첫 이력서 대표를 한 문장으로 | 문법은 된다. FROM 없는 SELECT 의 매개변수 형 지정이 필요할 수 있다(확인 필요). 동시에 두 번 추가하면 둘 다 통과해 6개가 될 수 있다(4장) |
-| `resumes.setDefaultResume` · `deleteResume` | `batch` = 트랜잭션. 대표 지정은 "기존 대표 내리기 → 대상 올리기" 순서(바꾸면 유일 인덱스 위반), 삭제는 "지우기 → 대표가 없으면 가장 최근 것을 대표로" | `BEGIN … COMMIT`, 순서 그대로 |
-| `resumes.countResumes` | `COUNT(*)` 가 숫자로 옴 | `COUNT(*)::int` 또는 변환 (확인 필요) |
-| `applications.insertApplication` | `INSERT … SELECT … FROM jobs JOIN companies WHERE 공개 조건 AND NOT EXISTS (…)` + 같은 batch 의 `INSERT INTO consents … SELECT … WHERE EXISTS (방금 넣은 지원)`. `UNIQUE (job_id, seeker_id)` 위반 예외는 false 로 바꾼다 | `BEGIN … COMMIT`, 순서 그대로. 유일 제약 위반은 SQLSTATE 23505 (호출부는 예외 종류를 보지 않는다). 동시 두 INSERT 는 4장 — 이 표는 유일 제약이 막는다 |
-| `applications.withdrawApplication` | batch 세 문장(이벤트 추가 → 상태·내용 지우기 → 동의 철회). 앞 두 문장이 같은 `status IN (…)` 가드를 쓰고, 세 번째는 바뀐 상태를 확인한다. 판단은 두 번째 문장의 영향 행 수 | `BEGIN … COMMIT`, 순서 그대로 (순서를 바꾸면 이벤트 가드가 바뀐 상태를 본다) |
-| `applications.memberCounts` | `SUM(CASE …)` 가 숫자로 옴, `is_hq` INTEGER 0/1 | `SUM` 은 bigint/numeric → 숫자 변환(확인 필요). boolean 이면 `CASE WHEN is_hq` |
-| `applications.listOwnApplications`, `application-views.listVisibleAppliedJobIds` | `CASE WHEN j.company_name_public = 1`, `LIMIT 200` | integer 로 두면 그대로 |
-| `applicants.listJobApplications` | `CASE WHEN file_r2_key IS NOT NULL THEN 1 ELSE 0 END AS has_file` (0/1), `LIMIT 500` | 그대로 되지만 PostgreSQL 에서 `file_r2_key IS NOT NULL` 만 쓰면 boolean 이 오므로 호출부 비교(`has_file === 1`)를 같이 고친다 |
-| `applicants.countApplicationsByJob` | `SUM(CASE …)` 가 숫자로 옴 | bigint/numeric → 숫자 변환(확인 필요). 호출부가 `Number()` 로 감싼다 |
-| `applicants.markViewed` | batch 두 문장(이벤트 `INSERT … SELECT … WHERE status = 이전 상태` → `UPDATE … WHERE status = 이전 상태`). 판단은 두 번째 문장의 영향 행 수 | `BEGIN … COMMIT`, 순서 그대로 (바꾸면 이벤트 가드가 바뀐 상태를 본다). 두 사람이 동시에 처음 열면 PostgreSQL READ COMMITTED 에서 둘 다 INSERT 가 통과할 수 있다(4장) — `viewed` 가 두 줄 남지 않게 잠금 또는 UPDATE 를 먼저 하고 RETURNING 으로 확인 |
-| `applicants.listAccessLog` | `(? IS NULL OR l.at < ?)` — 같은 값을 두 번 바인딩하는 선택 조건 | PostgreSQL 은 `$1 IS NULL` 의 형을 정하지 못할 수 있다 → `$1::bigint IS NULL OR l.at < $1` / `$2::text` (확인 필요) |
-| `consents.insertConsents` | batch(종류마다 `INSERT … SELECT ?,… WHERE NOT EXISTS (같은 판의 유효한 동의)`) | `BEGIN … COMMIT`. FROM 없는 SELECT 의 매개변수 형 지정이 필요할 수 있다(확인 필요). 동시 두 요청은 4장 — 같은 판 동의가 두 줄 생길 수 있지만 판단(`missingConsents`)에는 영향 없음 |
-| `account.eraseUser` | batch 14문장 = 한 트랜잭션. 이벤트 id 를 **`lower(hex(randomblob(16)))`** 로 SQL 안에서 만든다(다른 곳의 UUID 와 모양이 다르다: 하이픈 없는 32자). 세션·2단계 대기 삭제를 뺀 모든 문장이 "아직 탈퇴 전"(`EXISTS … status != 'deleted'`)을 조건으로 하고 `users` 갱신이 맨 마지막 — 순서를 바꾸면 앞 문장들이 실행되지 않는다. 판단은 마지막 문장의 영향 행 수 | `gen_random_uuid()::text`(또는 앱에서 id 를 만들어 바인딩), `BEGIN … COMMIT`, 순서 그대로 |
-| `account.countOwnedCompaniesWithOthers` | `COUNT(*)` 가 숫자로 옴 | `COUNT(*)::int` 또는 변환(호출부가 `Number()` 로 감싼다) |
-| `maintenance.ts` 의 `effKeep`·`purgeAtSql`·`autoCloseBeforeSql` (T-12c) | 지원서 실제 보관 일수 `MIN(COALESCE(keep_days, ?), ?)` — SQLite 의 **여러 인자 MIN 은 스칼라 최솟값**. `markPurgeAfter`·`lowerPurgeAfter` 는 `UPDATE applications SET purge_after = (? + MIN(COALESCE(applications.keep_days, ?), ?) * 86400)` 처럼 갱신하는 표 이름으로 컬럼을 가리킨다 | `LEAST(COALESCE(keep_days, $1), $2)` (PostgreSQL 의 `MIN` 은 집계 함수뿐). SET 식 안의 `applications.keep_days` 는 그대로 되거나 이름 없이 `keep_days` |
-| `jobs.deleteUnusedDraft` (T-12c) | `DELETE FROM jobs WHERE … AND NOT EXISTS (SELECT 1 FROM applications WHERE job_id = jobs.id)` — 한 문장 가드, meta.changes | 그대로 된다. 동시에 지원이 들어오는 경우는 없다(초안은 공개되지 않아 지원할 수 없음) |
-| `settings.setSettings` (T-12c) | batch(키마다 `ON CONFLICT … DO UPDATE`) = 한 트랜잭션 | `BEGIN … COMMIT` |
-| `maintenance.ts` (전체) | 행 수 한도를 `WHERE id IN (SELECT id … LIMIT ?)` 로 건다 — SQLite 는 `DELETE/UPDATE … LIMIT` 을 기본 빌드에서 지원하지 않는다. `auth_codes` 는 기본 키가 email 이라 `email IN (SELECT email … LIMIT ?)` | 문법은 그대로 된다. 잠금 범위는 4장 |
-| `maintenance.autoCloseApplications` · `erasePurgedApplications` | batch: 상태별로 이벤트 `INSERT … SELECT lower(hex(randomblob(16))), …` → `UPDATE … WHERE … AND EXISTS (그 지원의 auto_closed 이벤트, at = 지금, actor NULL)`. 이벤트 id 를 SQL 안에서 만든다(하이픈 없는 32자, `account.eraseUser` 와 같음). 판단은 문장별 영향 행 수의 합 | `gen_random_uuid()::text`, `BEGIN … COMMIT`, 순서 그대로 (상태 문장이 이벤트 문장 뒤여야 한다) |
-| `maintenance.dropOldRows` | batch 12문장, **자식 먼저**(application_events → applications(이벤트가 남지 않은 것만) → consents → access_log → email_log → totp_enrolments → sessions → auth_codes → admin_totp_pending → usage_counters → totp_recovery_codes → admin_actions, 뒤 세 표는 T-16). D1 은 외래키를 검사한다. usage_counters 는 기본 키가 세 컬럼이라 행 값 `(scope, subject, day) IN (SELECT … LIMIT ?)` 로 한도를 건다(SQLite 3.15+), `day < ?` 는 고정 형식 'YYYY-MM-DD' 글자 비교 | `BEGIN … COMMIT`, 순서 그대로. 행 값 IN 은 PostgreSQL 도 된다. day 를 `date` 형으로 바꾸면 바인딩도 date 로 |
-| `usage.takeQuota` | `INSERT … SELECT ?,… WHERE ? <= ? ON CONFLICT (scope, subject, day) DO UPDATE SET n = usage_counters.n + excluded.n … WHERE usage_counters.n + excluded.n <= ?` — 한도 확인과 더하기를 한 문장으로, 판단은 meta.changes = 1. SQLite 는 `INSERT … SELECT` 와 `ON CONFLICT` 를 같이 쓸 때 SELECT 에 WHERE 가 있어야 한다(없으면 ON 을 조인으로 읽음) — 지금은 한도 조건이 그 WHERE 다 | 문법은 된다(DO UPDATE 의 WHERE 가 거짓이면 rowCount 0). FROM 없는 SELECT 의 매개변수 형 지정(`$4::integer`)이 필요할 수 있다(확인 필요). 동시성: 같은 키의 UPSERT 는 행 잠금으로 차례가 되어 한도를 넘지 않는다고 본다(확인 필요). 첫 행을 두 요청이 동시에 넣으면 한쪽이 충돌 → DO UPDATE 경로로 간다 |
-| `jobs.insertJob` | `INSERT … SELECT ?,… WHERE (SELECT COUNT(*) FROM jobs WHERE company_id = ? AND agency_id IS NULL AND status NOT IN ('published','closed')) < ?` — 작성 중인 공고 한도(T-05c)를 한 문장으로 | 문법은 된다. FROM 없는 SELECT 의 매개변수 형 지정이 필요할 수 있다(확인 필요). 동시에 두 번 추가하면 둘 다 통과해 한도 + 1 이 될 수 있다(4장, `resumes.insertResume` 과 같음) |
-| `maintenance.findReferencedFileKeys` · `maintenanceCounts` | 읽기 batch(SELECT 여러 개). 키는 문장당 50개(D1 바인딩 한도 100) | 조회 여러 번. PostgreSQL 은 `= ANY($1::text[])` 로 배열 하나를 넘길 수 있다 |
-| `maintenance.listExpiredVerificationDocs` · `deleteVerificationDocRows` · `deleteMaintSetting` · `deleteOldMaintStats` | 접두어 비교를 `substr(col, 1, n) = '접두어'` 로 한다 (LIKE 는 `_` 가 와일드카드) | `substr` 그대로 되거나 `left(col, n)` / `starts_with` |
-| `maintenance.markCloseNoticeSent` | `WHERE (id = ? AND updated_at = ?) OR (…)` — 공고마다 읽은 updated_at 이 그대로일 때만 (10개 이하) | 그대로 된다 |
-| `maintenance.putMaintSetting` | `ON CONFLICT (key) DO UPDATE … excluded`, `updated_by = NULL` | 그대로 된다 |
-| `maintenance.maintenanceCounts` | `COUNT(*)` 가 숫자로 옴 | `COUNT(*)::int` 또는 변환(호출부가 `Number()` 로 감싼다) |
-| `alerts.alertJobsSql` (T-10) | `COUNT(*) OVER () AS total` (창 함수 — LIMIT 전 전체 수, SQLite 3.25+), `CASE WHEN j.company_name_public = 1` | PostgreSQL 도 같다(`count(*) over ()` 는 bigint → 호출부가 `Number()`) |
-| `alerts.recordAlertFailure` (T-10) | `UPDATE … RETURNING status` (SQLite 3.35+) | PostgreSQL 도 같다 |
-| `alerts.insertAlert` (T-10) | `INSERT … SELECT ?,… WHERE (SELECT COUNT(*) …) < ? AND NOT EXISTS (같은 조건)` — 5개 한도·중복을 한 문장으로, meta.changes | 문법은 된다. 동시 두 요청은 4장(한도 + 1 이 될 수 있음, `resumes.insertResume` 과 같음) |
-| `alerts.recordAlertSent` · `pauseAlertByToken` · `sweepAlerts` · `listNewJobsForAlerts` (T-10) | batch = 트랜잭션(읽기 batch 포함). 토큰 추가는 `INSERT … SELECT … WHERE EXISTS (알림)`, 행 수 한도는 `id IN (SELECT … LIMIT ?)` | `BEGIN … COMMIT`, 순서 그대로 |
-| `migrations/0012_job_alerts.sql` (T-10) | `ALTER TABLE … ADD COLUMN … NOT NULL DEFAULT … CHECK`, `alert_unsub_tokens.alert_id REFERENCES alerts(id) ON DELETE CASCADE` — D1 은 외래키를 검사하므로 CASCADE 가 없으면 `account.eraseUser` 의 `DELETE FROM alerts` 가 막힌다 | 그대로 된다 (스키마를 새로 쓸 때 CASCADE 를 꼭 옮긴다) |
-| `users.confirmTotp`, `twofa.saveEnrolment` · `replaceRecoveryCodes` · `disableTotp` · `resetMemberTotp` (T-16) | batch = 한 트랜잭션. 판단은 첫 문장의 영향 행 수, 뒤 문장은 `EXISTS (SELECT 1 FROM users WHERE id = ? AND totp_secret = ?)`(방금 저장한 암호문 — IV 가 무작위라 유일) 또는 `EXISTS (방금 넣은 admin_actions)` 로 다시 확인. 복구 코드 추가는 `INSERT … SELECT ?,… WHERE EXISTS …` | `BEGIN … COMMIT`, 순서 그대로. FROM 없는 SELECT 의 매개변수 형 지정이 필요할 수 있다(확인 필요) |
-| `users.useTotpStep`, `twofa.useRecoveryCode` · `takeTotpTry`, `sessions.consumeTotpPending` (T-16) | 한 문장 가드(`… AND totp_last_step < ?`, `… used_at IS NULL`(서브쿼리 `LIMIT 1`), 시도 수 `CASE` 로 창 다시 시작, `DELETE … WHERE id = ?`) + meta.changes = 1 | 그대로 된다(rowCount). 같은 행을 바꾸는 동시 UPDATE 는 행 잠금으로 차례가 되어 하나만 1 이라고 본다(확인 필요) |
-| `migrations/0013_user_totp.sql` (T-16) | `totp_enrolments.session_id REFERENCES sessions(id) ON DELETE CASCADE` — 세션 삭제(로그아웃·탈퇴·정리)가 등록 대기를 함께 지운다. D1 은 외래키를 검사하므로 CASCADE 가 없으면 세션 삭제가 막힌다 | 그대로 된다 (CASCADE 를 꼭 옮긴다) |
-| `migrations/0007_job_options.sql` | 기본 행의 시각 `strftime('%s','now')` | `extract(epoch from now())::bigint` |
-| `companies.listPublicCompanies` | `ORDER BY name_ko` = 바이트 순서 | DB 콜레이션에 따라 한글 정렬이 달라질 수 있음 (`COLLATE "C"` 로 맞춤) |
+**고친 SQL (src/db, 6곳):** `maintenance.ts` LEAST 2 · randomblob 1 / `account.ts` randomblob 1 / `demo.ts` randomblob 1 · `jobs.rev` 1 / `applicants.listAccessLog` CAST 2.
+문장 순서·가드·판단은 하나도 바꾸지 않았다.
 
-PostgreSQL 에서도 그대로 되는 것(표시하지 않음): `ON CONFLICT … DO UPDATE … excluded`(`settings.setSetting` 포함), `ON CONFLICT (kind, code) DO NOTHING`(`options.insertOption`),
-`SELECT … UNION ALL SELECT …`(`options.countOptionUsage`), `EXISTS (…)` 가드, `UPDATE … WHERE … AND EXISTS`,
-`ORDER BY 식 = '값' DESC`(참/거짓 정렬), `CASE`, `LIMIT`, `rev = rev + 1`.
-`public-jobs.ts` 의 `LIMIT ? OFFSET ?`, `CASE WHEN … END`(ELSE 없으면 NULL)도 그대로 된다. 목록 정렬 `published_at DESC, id DESC` 의 id 는 TEXT 이므로
-PostgreSQL 콜레이션에 따라 같은 시각 안의 순서만 달라질 수 있다(페이지가 겹치지 않으려면 `COLLATE "C"` 권장, 확인 필요).
-`usage.readUsage` 의 기본 키 한 행 읽기도 그대로 된다. 지금 코드는 `datetime()`·`strftime`·`rowid`·`INSERT OR IGNORE/REPLACE`·`LIKE` 를 쓰지 않는다 (`randomblob` 은 `account.ts`·`maintenance.ts` 두 곳).
+## 3. 스키마 (migrations/pg/0001_init.sql)
 
-## 4. 이 계층으로 쉬워지지 않는 것
+- 표·컬럼(순서 포함)·NOT NULL·기본값·기본 키·외래키(ON DELETE CASCADE 2곳: alert_unsub_tokens → alerts, totp_enrolments·totp_recovery_codes → users/sessions)·CHECK 개수·이름 붙은 인덱스(부분 유일 `idx_resumes_default`·`idx_company_invites_email` 포함)·
+  job_options 기본 49행이 SQLite 결과와 같은지 **`test/pg-schema.test.ts` 가 표마다 비교한다** (node:sqlite 로 예전 파일을 적용해 읽음).
+- 차이: 정수 → BIGINT, 글자 → TEXT COLLATE "C", SQLite 에서 NULL 이 들어갈 수 있던 `TEXT PRIMARY KEY` 는 PostgreSQL 에서 NOT NULL(기본 키) — 앱은 늘 id 를 넣는다.
+  job_options 기본 행의 시각은 `extract(epoch from now())::bigint`.
+- `schema_migrations(name, checksum, applied_at)`: 실행기가 만든다. 이미 적용한 파일의 내용이 바뀌면(줄 끝 CRLF/LF 차이는 무시) 멈춘다.
 
-- **스키마 재작성과 데이터 복사**는 여전히 손으로 해야 한다.
-- **동시성 차이:** D1 은 한 곳에서 순서대로 쓰기 때문에 지금의 "한 문장 가드" 가 안전하다. PostgreSQL(기본 READ COMMITTED)에서도
-  한 문장 UPDATE/INSERT … WHERE 가드는 대체로 같게 동작하지만, 동시에 들어온 두 INSERT … SELECT … WHERE NOT EXISTS 는 **둘 다 성공할 수 있다**
-  (예: 기업 등록 두 번 누르기, 초대 한도). 유일 인덱스 추가나 `SERIALIZABLE` 이 필요한지 따로 검토한다 (확인 필요).
-  같은 이유로 `options.setOptionActive` 의 "마지막 사용 중 항목은 끄지 않음" 가드도, 서로 다른 두 항목을 동시에 사용 종료하면 둘 다 통과해 그 종류의 사용 중 항목이 0개가 될 수 있다
-  (공고 폼의 세 칸은 선택 사항이라 저장은 되지만 고를 것이 없어진다). 옮길 때 `SELECT … FOR UPDATE` 로 그 종류의 행을 잠그거나 `SERIALIZABLE` 로 한다 (확인 필요).
-- 새로 만드는 기능(T-06 이후)도 `src/db/` 에만 SQL 을 두어야 이 장점이 유지된다 (CLAUDE.md 작업 방식, 테스트가 검사).
-- 백업·복구 절차, 접속 정보(비밀값) 관리, 지역(서울/중국 접속) 선택은 별도로 정해야 한다.
+## 4. 동시성 (READ COMMITTED 로 옮겼다면 → 실제로 한 것)
 
-## 5. Oracle 에 대해
+D1 은 모든 쓰기를 한 줄로 차례로 했다. `src/db` 의 가드는 그 전제로 쓰여 있다. PostgreSQL 의 기본(READ COMMITTED)은 문장마다 스냅샷을 새로 잡고,
+`INSERT … SELECT … WHERE (SELECT COUNT(*) …) < n` 같은 "센 다음 넣기" 를 서로 보지 못한 채 동시에 통과시킨다.
 
-Cloudflare Workers 에서 Oracle DB 에 직접 붙는 현실적인 방법은 없다고 본다. Hyperdrive 는 PostgreSQL(과 MySQL) 용이고,
-Oracle 드라이버는 Workers 실행 환경을 지원하지 않는다 (확인 필요). Oracle 이 꼭 필요하면 중간에 별도 API 서버를 두어야 하며,
-그만큼 구성·비용·지연이 늘어난다. 이 프로젝트의 목표로는 권하지 않는다.
+**결정:** 모든 연결을 **SERIALIZABLE** 로 연다 (`createPool` 의 `default_transaction_isolation=serializable`, batch 는 `BEGIN ISOLATION LEVEL SERIALIZABLE`).
+PostgreSQL 은 동시에 돈 트랜잭션들이 어떤 차례로 하나씩 돈 것과 다른 결과가 되면 한쪽을 `40001` 로 실패시키고, 어댑터가 **그 문장·batch 를 처음부터 다시 실행**한다(최대 8번, `40P01` 교착도).
+`23505`(유일 위반)도 3번까지 다시 한다 — SERIALIZABLE 에서도 "동시에 넣은 같은 키" 는 40001 이 아니라 23505 로 오는 경우가 있었다(아래 acceptInvite). 다시 하면 가드가 커밋된 행을 보고 아무것도 넣지 않는다.
+진짜 중복은 다시 해도 23505 라서 그대로 던진다(호출부 처리 같음). → 결과가 D1 의 "한 번에 하나씩" 과 같다. 비용: 겹칠 때만 다시 실행(이 서비스 규모에서는 드묾).
+
+시험: `test/pg-concurrency.test.ts` — 실제 PostgreSQL 16.15 에 연결 12개로 같은 함수를 동시에 부른다. "RC" 열은 같은 시험을 `PG_TEST_ISOLATION='read committed'` 로 5번 돌린 결과(비교용).
+
+| 가드 (src/db) | 모양 | READ COMMITTED 였다면 (실측 5회) | 지금 (SERIALIZABLE + 다시 실행, 실측 8회) |
+|---|---|---|---|
+| `usage.takeQuota` | `INSERT … SELECT … WHERE cost <= limit ON CONFLICT DO UPDATE … WHERE n + cost <= limit` | 통과 5/5 (ON CONFLICT 가 최신 행을 잠그고 WHERE 를 다시 본다) | 통과 — 한도 5 에 12번 → 정확히 5 |
+| `twofa.useRecoveryCode` | `UPDATE … WHERE id IN (SELECT id … used_at IS NULL LIMIT 1)` | **실패 5/5** — 같은 복구 코드를 여러 요청이 씀 (다시 확인하는 조건이 바깥 WHERE 가 아니라 서브쿼리 안에 있다) | 통과 — 2줄이면 정확히 2번 |
+| `users.useTotpStep` | `UPDATE … WHERE totp_last_step < ?` | 통과 5/5 (바깥 WHERE 를 다시 본다) | 통과 — 1번 |
+| `sessions.consumeTotpPending` | `DELETE WHERE id = ?` | 통과 5/5 | 통과 — 1번 |
+| `twofa.takeTotpTry` | `UPDATE … CASE … WHERE (fresh OR count < max)` | 통과 5/5 | 통과 — 5번 |
+| `applications.insertApplication` | `INSERT … SELECT … WHERE 공개 AND NOT EXISTS` + `UNIQUE(job_id, seeker_id)` + 동의 | 통과 5/5 (유일 제약) | 통과 — 1건·동의 1줄, 예외 대신 false |
+| `applicants.markViewed` · `recordMailEvent` · `applications.withdrawApplication` | 이벤트 `INSERT … SELECT … WHERE status = ?` → 상태 `UPDATE` | 통과 5/5 (이번 실측에서는 겹치지 않음 — 이론상 이벤트가 두 줄 생길 수 있다) | 통과 — 이벤트·상태 한 번씩 |
+| `resumes.insertResume` | `INSERT … SELECT … WHERE (SELECT COUNT(*)) < 5` | **실패 5/5** — 6개 이상 | 통과 — 5개, 대표 1개 |
+| `jobs.insertJob` (초안 한도) | 같은 모양 | **실패 5/5** | 통과 — 3개 |
+| `jobs.claimLocalize` | `UPDATE … WHERE localize_requested_at <= ?` | 통과 5/5 | 통과 — 1번 |
+| `alerts.insertAlert` | `WHERE COUNT < 5 AND NOT EXISTS (같은 조건)` | **실패 5/5** | 통과 — 5개, 같은 조건 1개 |
+| `companies.insertInviteWithinLimit` | `WHERE 담당자 + 초대 < 자리` | **실패 5/5** | 통과 — 2건 |
+| `companies.registerCompany` | 두 문장 `WHERE NOT EXISTS (그 사람의 소속)` | 통과 5/5 (23505 다시 실행 덕분) | 통과 — 기업 1·소속 1 |
+| `companies.acceptInvite` | `INSERT … WHERE NOT EXISTS (소속)` | 통과 5/5 | 통과 — 처음에는 **SERIALIZABLE 에서도 23505 예외**(같은 초대를 동시에 수락) → 23505 다시 실행을 더해 해결 |
+| `options.setOptionActive` | `WHERE (SELECT COUNT(*) … active = 1) > 1` | **실패 5/5** — 마지막 항목까지 꺼짐 (예전 판이 예상한 그대로) | 통과 — 1개 남음 |
+| `consents.insertConsents` | `INSERT … WHERE NOT EXISTS (같은 판)` | 통과 5/5 | 통과 — 2줄 |
+| 예약 작업 (`runMaintenance`) | 프로세스 사이 | — | 권고 잠금(`db/locks`): 동시에 4번 → 1번만, 실행 중 최대 1 |
+
+시험하지 않은 것 (판단만): `account.eraseUser`(마지막 문장의 `status != 'deleted'` + SERIALIZABLE), `twofa.saveEnrolment`·`replaceRecoveryCodes`·`disableTotp`·`resetMemberTotp`·`users.confirmTotp`(첫 문장의 비밀키 가드 + 뒤 문장 EXISTS — SERIALIZABLE 이면 차례대로와 같다),
+`maintenance` 의 batch(예약 작업은 잠금으로 하나만, 사용자 요청과 겹치면 40001 → 다시 실행), `alerts.recordAlertSent`·`recordAlertsSkipped`(보내는 쪽은 예약 작업 하나뿐 — 같은 알림을 두 번 보내는 "발송 잡기" 문장은 따로 없다; 잠금이 막는다).
+
+**T-19 전부터 있던 것 (바꾸지 않음):** 인증코드·로그인 2단계의 시도 수는 "읽고 비교한 뒤 +1" 이 다른 문장이라, 같은 코드로 동시에 많이 보내면 5번보다 조금 더 시도할 수 있다 (D1 도 문장 단위로만 차례였으므로 같다). TASKS T-16 남은 일.
+
+**스크립트:** `scripts/*.mjs`(마이그레이션·가져오기)는 자기 연결(기본 격리 수준)을 쓴다 — 가져오기는 한 트랜잭션·한 번 실행이고 서버를 멈추고 하기를 권한다 (DEPLOY 6장).
+
+## 5. 시험 방법
+
+- `npm test` — PGlite 로 전체 (PG_TEST_URL 이 없으면 동시성·가져오기 명령 시험은 건너뛴다).
+- `PG_TEST_URL=postgres://postgres@127.0.0.1:5433/postgres npm test` — 실제 PostgreSQL 로 동시성(새 스키마를 만들고 지움)·가져오기 명령 전체(새 DB 를 만들고 지움)까지.
+- 비교 실험: `PG_TEST_ISOLATION='read committed'` 를 더하면 4장의 RC 열을 다시 볼 수 있다 (실패가 나는 것이 정상).
+
+## 6. Oracle 에 대해
+
+이 프로젝트의 목표로는 권하지 않는다 (예전 판과 같음). PostgreSQL 로 옮긴 지금은 더 이유가 없다.

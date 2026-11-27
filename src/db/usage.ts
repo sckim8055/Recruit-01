@@ -2,6 +2,7 @@
 // 행에는 id 만 들어간다 (기업 id · 관리자 user id · 'site'). 이메일·IP 는 넣지 않는다.
 //
 // 되돌리기(refund)는 없다: 한도를 잡은 뒤 엔진·메일이 실패해도 그 한 번은 쓴 것으로 센다 (단순하고, 실패를 일부러 일으켜 한도를 우회할 수 없다).
+import type { Db } from './types';
 
 export interface QuotaKey { scope: string; subject: string; day: string }
 
@@ -16,7 +17,7 @@ export interface QuotaKey { scope: string; subject: string; day: string }
  *   `$4::integer` 처럼 형을 적어야 할 수 있다 (확인 필요). 동시성: 같은 키의 UPSERT 는 행 잠금으로 차례가 되어 한도를 넘지 않는다 (확인 필요).
  */
 export async function takeQuota(
-  db: D1Database, x: QuotaKey & { limit: number; ts: number; cost?: number },
+  db: Db, x: QuotaKey & { limit: number; ts: number; cost?: number },
 ): Promise<boolean> {
   const cost = x.cost ?? 1;
   const res = await db.prepare(
@@ -29,7 +30,7 @@ export async function takeQuota(
 }
 
 /** 그날 쓴 횟수 (행이 없으면 0). 기본 키 한 행만 읽는다. */
-export async function readUsage(db: D1Database, x: QuotaKey): Promise<number> {
+export async function readUsage(db: Db, x: QuotaKey): Promise<number> {
   const r = await db.prepare('SELECT n FROM usage_counters WHERE scope = ? AND subject = ? AND day = ?')
     .bind(x.scope, x.subject, x.day).first<{ n: number }>();
   return Number(r?.n ?? 0);
@@ -39,7 +40,7 @@ export async function readUsage(db: D1Database, x: QuotaKey): Promise<number> {
  * 관리자 한도 확인 화면 (T-17): 그날 범위(scope)마다 가장 많이 쓴 대상의 수와 대상 수. 사이트 몫(subject 'site' 하나)이면 max = 사이트 합계.
  * 읽기 한 번 (그날 행만, idx_usage_counters_day).
  */
-export async function usageMaxByScope(db: D1Database, day: string): Promise<Record<string, { max: number; subjects: number }>> {
+export async function usageMaxByScope(db: Db, day: string): Promise<Record<string, { max: number; subjects: number }>> {
   const rows = (await db.prepare('SELECT scope, MAX(n) AS max_n, COUNT(*) AS subjects FROM usage_counters WHERE day = ? GROUP BY scope')
     .bind(day).all<{ scope: string; max_n: number; subjects: number }>()).results;
   return Object.fromEntries(rows.map((r) => [r.scope, { max: Number(r.max_n), subjects: Number(r.subjects) }]));

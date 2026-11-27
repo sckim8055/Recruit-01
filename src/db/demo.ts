@@ -9,7 +9,8 @@
 // 부모 행(users·companies·고정 공고)은 지우지 않는다 — 다른 행이 외래키로 가리키고 있을 수 있다.
 //
 // [sqlite] batch = 한 트랜잭션. ON CONFLICT (id) DO UPDATE … excluded 는 PostgreSQL 에서도 그대로 된다 (docs/DB-PORTING.md 3장).
-// [sqlite] lower(hex(randomblob(16))) 로 동의 행 id 를 만든다 (db/account.eraseUser 와 같다. PostgreSQL: gen_random_uuid()::text).
+// [pg] 동의 행 id 를 SQL 안에서 replace(gen_random_uuid()::text, '-', '') 로 만든다 (하이픈 없는 32자 — 예전 SQLite 의 lower(hex(randomblob(16))) 와 같은 모양, T-19).
+import type { Db } from './types';
 
 export interface DemoUserRow { id: string; email: string; role: 'seeker' | 'company'; locale: string }
 export interface DemoCompanyRow {
@@ -54,13 +55,13 @@ export interface DemoSeedRows {
 const marks = (n: number): string => Array.from({ length: n }, () => '?').join(',');
 
 /** 시연 로그인에 쓰는 회원 한 명 (고정 id 로만 찾는다). */
-export async function findDemoUser(db: D1Database, id: string): Promise<{ id: string; email: string; role: string; locale: string; status: string } | null> {
+export async function findDemoUser(db: Db, id: string): Promise<{ id: string; email: string; role: string; locale: string; status: string } | null> {
   return db.prepare('SELECT id, email, role, locale, status FROM users WHERE id = ?').bind(id)
     .first<{ id: string; email: string; role: string; locale: string; status: string }>();
 }
 
 /** 되돌릴 때 지울 검증 서류 파일: 시연 기업에 올라온 서류 중 고정 목록 밖의 것 (방문자가 시연 계정으로 올린 파일). */
-export async function listExtraDemoDocKeys(db: D1Database, companyIds: string[], keepDocIds: string[]): Promise<string[]> {
+export async function listExtraDemoDocKeys(db: Db, companyIds: string[], keepDocIds: string[]): Promise<string[]> {
   if (!companyIds.length) return [];
   const r = await db.prepare(
     `SELECT r2_key FROM verification_docs WHERE owner_type = 'company' AND owner_id IN (${marks(companyIds.length)})
@@ -73,7 +74,7 @@ export async function listExtraDemoDocKeys(db: D1Database, companyIds: string[],
  * 시연 데이터를 원래 모습으로 만든다. 세 번의 batch(부모 → 지우기·공고 → 자식)로 나눠 보낸다 — 중간에 끊겨도 다시 실행하면 같은 결과가 된다
  * (모든 문장이 덮어쓰기이거나 "지우고 다시 넣기" 다). 마지막 batch 끝에 넣은 시각 표시(site_settings)를 남긴다.
  */
-export async function applyDemoSeed(db: D1Database, s: DemoSeedRows): Promise<void> {
+export async function applyDemoSeed(db: Db, s: DemoSeedRows): Promise<void> {
   const userIds = s.users.map((u) => u.id);
   const seekerIds = s.users.filter((u) => u.role === 'seeker').map((u) => u.id);
   const companyIds = s.companies.map((c) => c.id);
@@ -150,7 +151,7 @@ export async function applyDemoSeed(db: D1Database, s: DemoSeedRows): Promise<vo
          salary_min = excluded.salary_min, salary_max = excluded.salary_max, salary_basis = excluded.salary_basis, work_hours = excluded.work_hours,
          report_line = excluded.report_line, chinese_level = excluded.chinese_level, contact_email = excluded.contact_email, company_name_public = 1,
          review_flag = excluded.review_flag, review_cleared_by = NULL, status = excluded.status, block_reason = NULL,
-         published_at = excluded.published_at, closes_at = excluded.closes_at, updated_at = excluded.updated_at, rev = rev + 1, close_notice_at = NULL`,
+         published_at = excluded.published_at, closes_at = excluded.closes_at, updated_at = excluded.updated_at, rev = jobs.rev + 1, close_notice_at = NULL`,
     ).bind(
       j.id, j.company_id, j.created_by, j.title_zh, j.source_zh, j.title_ko, j.body_ko, j.localize_status,
       j.role_category, j.industry, j.location, j.salary_min, j.salary_max, j.salary_basis, j.work_hours, j.report_line, j.chinese_level, j.contact_email,
@@ -181,7 +182,7 @@ export async function applyDemoSeed(db: D1Database, s: DemoSeedRows): Promise<vo
     ).bind(c.id, c.user_id, c.version, c.ref_id, c.agreed_at)),
     ...s.requiredConsents.map((c) => db.prepare(
       `INSERT INTO consents (id, user_id, type, version, ref_id, agreed_at)
-       SELECT lower(hex(randomblob(16))), id, ?, ?, NULL, ? FROM users WHERE id IN (${uq})`,
+       SELECT replace(gen_random_uuid()::text, '-', ''), id, ?, ?, NULL, ? FROM users WHERE id IN (${uq})`,
     ).bind(c.type, c.version, s.now, ...userIds)),
     db.prepare(
       `INSERT INTO site_settings (key, value, updated_by, updated_at) VALUES (?,?,NULL,?)

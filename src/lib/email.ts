@@ -28,7 +28,7 @@ export async function sendMail(env: Env, mail: Mail): Promise<boolean> {
   }
   if (!env.RESEND_API_KEY) {
     // 키가 없으면 로컬 개발(APP_ENV = 'dev')에서만 콘솔에 출력한다 (가짜 데이터뿐). 테스트·운영 서버에서는 출력하지 않고 실패로 처리한다 —
-    // 배포된 서버의 콘솔은 Workers Logs 에 남으므로 받는 주소·인증코드·본문이 기록에 남지 않게 (T-13).
+    // 서버의 콘솔은 로그(서비스 관리 프로그램, T-19 전에는 Workers Logs)에 남으므로 받는 주소·인증코드·본문이 기록에 남지 않게 (T-13).
     if (env.APP_ENV === 'dev') {
       console.log(`[mail:${mail.template}] to=${mail.to}\n${mail.subject}\n${mail.text}`);
       result = 'console';

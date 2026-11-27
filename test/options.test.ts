@@ -10,6 +10,7 @@ import {
 import { canonicalJobsHref, FILTER_KEYS, filterChoices, parseJobFilter } from '../src/lib/public-jobs';
 import { agreeRequired } from './consent-fixture';
 import { optionRows, SEED_OPTIONS } from './option-seed';
+import { hasDb, migratedDb } from './pg-test-db';
 
 const row = (p: Partial<OptionRow> & Pick<OptionRow, 'kind' | 'code'>): OptionRow =>
   ({ label_ko: `${p.code}-ko`, label_zh: `${p.code}-zh`, sort: 10, active: 1, ...p });
@@ -196,47 +197,17 @@ describe('공개 검색 필터와 사용 종료된 항목', () => {
   });
 });
 
-// ── SQLite 메모리 DB (Node 22 의 node:sqlite): 0007 기본 행, db/options 의 SQL
-
-type Sqlite = {
-  exec(s: string): void;
-  prepare(s: string): { run(...a: unknown[]): { changes: number | bigint }; all(...a: unknown[]): Record<string, unknown>[]; get(...a: unknown[]): Record<string, unknown> | undefined };
-};
-let DatabaseSync: (new (p: string) => Sqlite) | null = null;
-let fs: { readdirSync(p: string): string[]; readFileSync(p: string, e: 'utf8'): string } | null = null;
-try {
-  const sqliteMod = 'node:sqlite', fsMod = 'node:fs';
-  DatabaseSync = ((await import(sqliteMod)) as { DatabaseSync: new (p: string) => Sqlite }).DatabaseSync;
-  fs = (await import(fsMod)) as typeof fs;
-} catch { /* node:sqlite 가 없는 Node 버전 */ }
-
-const migrationFiles = () => fs!.readdirSync('migrations').filter((x) => x.endsWith('.sql')).sort();
-function migrated(upTo = '9999'): Sqlite {
-  const db = new DatabaseSync!(':memory:');
-  for (const f of migrationFiles().filter((x) => x.slice(0, 4) <= upTo)) db.exec(fs!.readFileSync(`migrations/${f}`, 'utf8'));
-  return db;
+// ── 메모리 PostgreSQL (PGlite, test/pg-test-db.ts): 0007 기본 행(migrations/pg/0001 에 같은 49행), db/options 의 SQL
+// T-19: 예전에는 node:sqlite 에 migrations/*.sql 을 적용했다. 이제는 서버와 같은 어댑터(src/db/pg.ts)와 PostgreSQL 스키마를 쓴다.
+const DatabaseSync = hasDb;
+function migrated() {
+  return migratedDb();
 }
 const plain = (r: Record<string, unknown>) => ({ ...r });
 
-/** node:sqlite 를 D1 처럼 쓰는 작은 어댑터 (prepare·bind·first·all·run 만). */
-function d1(db: Sqlite) {
-  return {
-    prepare(sql: string) {
-      let b: unknown[] = [];
-      const st = {
-        bind: (...x: unknown[]) => { b = x; return st; },
-        first: async () => { const r = db.prepare(sql).get(...b); return r ? plain(r) : null; },
-        all: async () => ({ results: db.prepare(sql).all(...b).map(plain) }),
-        run: async () => ({ meta: { changes: Number(db.prepare(sql).run(...b).changes) } }),
-      };
-      return st;
-    },
-  } as unknown as D1Database;
-}
-
 describe.skipIf(!DatabaseSync)('0007 기본 행', () => {
   it('이 작업 전 locales 의 이름·상수 순서와 같다 (sort 10 간격, 모두 사용 중)', () => {
-    const db = migrated();
+    const db = migrated().raw;
     const got = db.prepare('SELECT kind, code, label_ko, label_zh, sort, active FROM job_options ORDER BY kind, sort').all().map(plain);
     const want = optionRows().sort((a, b) => (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : a.sort - b.sort));
     expect(got).toEqual(want);
@@ -248,28 +219,25 @@ describe.skipIf(!DatabaseSync)('0007 기본 행', () => {
   it('기본 행의 code 는 관리자 화면의 code 규칙을 따른다', () => {
     for (const [, code] of SEED_OPTIONS) expect(code).toMatch(/^[a-z][a-z0-9_]{1,29}$/);
   });
-  it('공고가 이미 있는 DB 에도 적용되고, 공고 값은 바뀌지 않는다', () => {
-    const db = migrated('0006');
-    db.exec("INSERT INTO users (id, email, role, created_at) VALUES ('u1','u1@example.test','company',0)");
-    db.exec("INSERT INTO companies (id, name_ko, entity_type, verify_status, created_at) VALUES ('c1','가짜기업','kr_entity','verified',0)");
-    db.exec(`INSERT INTO jobs (id, company_id, created_by, title_ko, status, role_category, industry, location, created_at, updated_at)
-             VALUES ('j1','c1','u1','t','published','sales','trade','seoul',0,0), ('j2','c1','u1','t','draft',NULL,'old_code',NULL,0,0)`);
-    const before = db.prepare('SELECT * FROM jobs ORDER BY id').all().map(plain);
-    db.exec(fs!.readFileSync('migrations/0007_job_options.sql', 'utf8'));
-    expect(db.prepare('SELECT * FROM jobs ORDER BY id').all().map(plain)).toEqual(before);
-    expect(db.prepare('SELECT COUNT(*) AS n FROM job_options').get()!.n).toBe(49);
+  // T-19: "0007 을 공고가 이미 있는 SQLite DB 에 적용" 시험은 뺐다 — PostgreSQL 은 최종 스키마 한 파일(migrations/pg/0001)로 시작하고
+  // 예전 SQLite 파일은 다시 적용하지 않는다. 스키마가 SQLite 0001~0013 과 같은지는 test/pg-schema.test.ts 가 본다.
+  it('기본 행의 시각은 적용한 때(unix 초)', () => {
+    const db = migrated().raw;
+    const r = db.prepare('SELECT MIN(created_at) AS a, MAX(updated_at) AS b FROM job_options').get()!;
+    expect(Number(r.a)).toBeGreaterThan(1_700_000_000);
+    expect(Number(r.b)).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) + 1);
   });
   it('종류 CHECK 제약', () => {
-    const db = migrated();
+    const db = migrated().raw;
     expect(() => db.exec("INSERT INTO job_options (kind, code, label_ko, label_zh, sort, created_at, updated_at) VALUES ('salary','x','x','x',1,0,0)")).toThrow();
   });
 });
 
-describe.skipIf(!DatabaseSync)('db/options (SQLite)', () => {
+describe.skipIf(!DatabaseSync)('db/options (PostgreSQL)', () => {
   const setup = () => {
-    const raw = migrated();
+    const { raw, d1: db } = migrated();
     raw.exec("INSERT INTO users (id, email, role, created_at) VALUES ('adm1','a@example.test','admin',0)");
-    return { raw, db: d1(raw) };
+    return { raw, db };
   };
   it('listOptions: 모든 종류·모든 행 한 번에', async () => {
     const { db } = setup();
@@ -323,13 +291,12 @@ describe.skipIf(!DatabaseSync)('/admin/options 와 공개 화면', () => {
   const NOW = Math.floor(Date.now() / 1000);
   const JOB_ID = '0b7c6a52-4c1e-4d0e-9a51-0e3f1c2d3e4f';
   function world(role: string | null) {
-    const raw = migrated();
+    const { raw, d1: inner } = migrated();
     raw.exec("INSERT INTO users (id, email, role, created_at) VALUES ('adm1','a@example.test','admin',0)");
     raw.exec("INSERT INTO companies (id, name_ko, entity_type, verify_status, created_at) VALUES ('c1','가짜기업','kr_entity','verified',0)");
     raw.exec(`INSERT INTO jobs (id, company_id, created_by, title_ko, status, published_at, industry, location, created_at, updated_at)
               VALUES ('${JOB_ID}','c1','adm1','영업 담당','published',${NOW - 10},'trade','seoul',0,0)`);
     agreeRequired(raw, 'adm1'); // T-11 동의 확인을 통과하게 (구직자·기업 역할로 바꿔 쓰는 세션도 이 id 다)
-    const inner = d1(raw);
     const session = role ? { id: 'adm1', email: 'a@example.test', role, locale: 'ko', mfa: role === 'admin' ? 1 : 0 } : null;
     const db = {
       prepare(sql: string) {

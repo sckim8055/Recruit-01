@@ -7,6 +7,7 @@
 import type { JobFamily, JobStatus, LocalizeStatus } from '../lib/jobs';
 import type { AdminJobListRow } from '../views/admin-jobs';
 import type { JobListRow } from '../views/jobs';
+import type { Db } from './types';
 
 export interface JobRow {
   id: string;
@@ -48,7 +49,7 @@ export const JOB_COLS =
   'localize_requested_at, role_category, industry, location, salary_min, salary_max, salary_basis, work_hours, report_line, chinese_level, ' +
   'contact_email, review_flag, review_cleared_by, status, block_reason, published_at, closes_at, created_at, updated_at, rev';
 
-export const loadJob = (db: D1Database, id: string) => db.prepare(`SELECT ${JOB_COLS} FROM jobs WHERE id = ?`).bind(id).first<JobRow>();
+export const loadJob = (db: Db, id: string) => db.prepare(`SELECT ${JOB_COLS} FROM jobs WHERE id = ?`).bind(id).first<JobRow>();
 
 /** 폼에서 받는 구조 항목 (JobFields) 으로 바꿀 때 쓰는 기본값: DB 의 NULL 원문은 빈 문자열로. */
 export const jobFieldsOf = (j: JobRow) => ({
@@ -69,7 +70,7 @@ export interface JobSavePlan { status: string; localize_status: string; review_f
 
 // ── 기업 화면 (routes/biz-jobs.tsx)
 
-export async function listCompanyJobs(db: D1Database, companyId: string): Promise<JobListRow[]> {
+export async function listCompanyJobs(db: Db, companyId: string): Promise<JobListRow[]> {
   const r = await db.prepare(
     `SELECT id, title_zh, title_ko, status, localize_status, review_flag, review_cleared_by, updated_at, published_at
      FROM jobs WHERE company_id = ? AND agency_id IS NULL ORDER BY updated_at DESC LIMIT 200`,
@@ -84,7 +85,7 @@ export async function listCompanyJobs(db: D1Database, companyId: string): Promis
  *   FROM 없는 SELECT 의 매개변수 형 지정이 필요할 수 있고, 동시에 두 번 추가하면 둘 다 통과할 수 있다 (docs/DB-PORTING.md 4장).
  */
 export async function insertJob(
-  db: D1Database, x: { id: string; companyId: string; createdBy: string; v: JobValues; reviewFlag: string | null; ts: number; maxDrafts: number },
+  db: Db, x: { id: string; companyId: string; createdBy: string; v: JobValues; reviewFlag: string | null; ts: number; maxDrafts: number },
 ): Promise<boolean> {
   const v = x.v;
   const res = await db.prepare(
@@ -104,7 +105,7 @@ export async function insertJob(
 
 /** 원문·조건 저장. 읽은 rev·상태가 그대로이고, 게재 상태로 남기려면 기업이 아직 검증 완료일 때만. */
 export async function updateJobSource(
-  db: D1Database, x: { v: JobValues; plan: JobSavePlan; ts: number; id: string; rev: number; readStatus: string },
+  db: Db, x: { v: JobValues; plan: JobSavePlan; ts: number; id: string; rev: number; readStatus: string },
 ): Promise<boolean> {
   const { v, plan } = x;
   const res = await db.prepare(
@@ -126,7 +127,7 @@ export async function updateJobSource(
  * 현지화 호출 자리 잡기: 짧은 간격으로 반복 호출하지 못하게 먼저 시각을 기록한다 (한 문장으로 확인과 기록을 같이).
  * notAfter = ts - 최소 간격 (호출부가 계산한다).
  */
-export async function claimLocalize(db: D1Database, x: { ts: number; id: string; rev: number; notAfter: number }): Promise<boolean> {
+export async function claimLocalize(db: Db, x: { ts: number; id: string; rev: number; notAfter: number }): Promise<boolean> {
   const claim = await db.prepare(
     `UPDATE jobs SET localize_requested_at = ? WHERE id = ? AND rev = ? AND (localize_requested_at IS NULL OR localize_requested_at <= ?)`,
   ).bind(x.ts, x.id, x.rev, x.notAfter).run();
@@ -135,7 +136,7 @@ export async function claimLocalize(db: D1Database, x: { ts: number; id: string;
 
 /** 엔진 결과 저장. 엔진을 부르는 동안 원문이 바뀌었으면(rev·상태가 다르면) 반영하지 않는다. */
 export async function saveLocalized(
-  db: D1Database,
+  db: Db,
   x: { title_ko: string; body_ko: string; back_zh: string | null; engine: string; plan: JobSavePlan; ts: number; id: string; rev: number; readStatus: string },
 ): Promise<boolean> {
   const plan = x.plan;
@@ -153,7 +154,7 @@ export async function saveLocalized(
 
 /** 한국어 직접 입력 저장. back_zh 는 호출부가 정한다 (한국어가 바뀌면 null). */
 export async function saveKorean(
-  db: D1Database,
+  db: Db,
   x: { title_ko: string; body_ko: string; back_zh: string | null; plan: JobSavePlan; ts: number; id: string; rev: number; readStatus: string },
 ): Promise<boolean> {
   const plan = x.plan;
@@ -169,7 +170,7 @@ export async function saveKorean(
   return res.meta.changes === 1;
 }
 
-export async function approveJob(db: D1Database, x: { id: string; rev: number }): Promise<boolean> {
+export async function approveJob(db: Db, x: { id: string; rev: number }): Promise<boolean> {
   const res = await db.prepare(
     "UPDATE jobs SET localize_status = 'approved' WHERE id = ? AND rev = ? AND localize_status = 'review'",
   ).bind(x.id, x.rev).run();
@@ -181,7 +182,7 @@ export async function approveJob(db: D1Database, x: { id: string; rev: number })
  * WHERE 는 publishBlocks 가 본 사실 중 그사이 바뀔 수 있는 것만 다시 확인한다:
  * 상태·내용 버전(rev: 글·연락처·연봉 등 모든 항목)·승인·관리자 검토·기업 검증.
  */
-export async function publishJob(db: D1Database, x: { ts: number; id: string; rev: number }): Promise<boolean> {
+export async function publishJob(db: Db, x: { ts: number; id: string; rev: number }): Promise<boolean> {
   const res = await db.prepare(
     `UPDATE jobs SET status = 'published', published_at = ?
      WHERE id = ? AND rev = ? AND status = 'draft' AND localize_status = 'approved'
@@ -192,7 +193,7 @@ export async function publishJob(db: D1Database, x: { ts: number; id: string; re
 }
 
 /** 이 공고에 지원(취소된 것 포함)이 하나라도 있는가. 초안 삭제 화면에서만 쓴다. */
-export async function jobHasApplications(db: D1Database, jobId: string): Promise<boolean> {
+export async function jobHasApplications(db: Db, jobId: string): Promise<boolean> {
   return (await db.prepare('SELECT 1 AS x FROM applications WHERE job_id = ? LIMIT 1').bind(jobId).first()) !== null;
 }
 
@@ -201,7 +202,7 @@ export async function jobHasApplications(db: D1Database, jobId: string): Promise
  * (published_at IS NULL), 지원이 하나도 없을 때(취소된 지원 포함). 그 기업의 공고(company_id)이고 헤드헌터 공고가 아닐 때만. 지웠으면 true.
  * jobs 를 가리키는 표는 applications 뿐이다(외래키) — 지원이 없으면 다른 행이 남지 않는다.
  */
-export async function deleteUnusedDraft(db: D1Database, x: { id: string; companyId: string }): Promise<boolean> {
+export async function deleteUnusedDraft(db: Db, x: { id: string; companyId: string }): Promise<boolean> {
   const res = await db.prepare(
     `DELETE FROM jobs
      WHERE id = ? AND company_id = ? AND agency_id IS NULL AND status = 'draft' AND published_at IS NULL
@@ -211,7 +212,7 @@ export async function deleteUnusedDraft(db: D1Database, x: { id: string; company
 }
 
 /** 마감: 게재 중 → 마감. */
-export async function closeJob(db: D1Database, id: string): Promise<boolean> {
+export async function closeJob(db: Db, id: string): Promise<boolean> {
   const res = await db.prepare("UPDATE jobs SET status = 'closed' WHERE id = ? AND status = 'published'").bind(id).run();
   return res.meta.changes === 1;
 }
@@ -222,7 +223,7 @@ export async function closeJob(db: D1Database, id: string): Promise<boolean> {
  * 검토 대기·차단 공고.
  * ORDER BY j.status = 'blocked' 는 참/거짓 정렬이다. SQLite 는 0/1, PostgreSQL 은 false/true 로 정렬 순서가 같다.
  */
-export async function listJobsForAdmin(db: D1Database): Promise<AdminJobListRow[]> {
+export async function listJobsForAdmin(db: Db): Promise<AdminJobListRow[]> {
   const r = await db.prepare(
     `SELECT j.id, j.title_ko, j.title_zh, j.status, j.review_flag, j.review_cleared_by, j.updated_at, c.name_ko AS company_name
      FROM jobs j JOIN companies c ON c.id = j.company_id
@@ -233,21 +234,21 @@ export async function listJobsForAdmin(db: D1Database): Promise<AdminJobListRow[
 }
 
 /** 검토 통과: 화면에서 본 rev 가 그대로이고 아직 통과 전일 때만. */
-export async function clearJobReview(db: D1Database, x: { adminId: string; id: string; rev: number }): Promise<boolean> {
+export async function clearJobReview(db: Db, x: { adminId: string; id: string; rev: number }): Promise<boolean> {
   const res = await db.prepare(
     'UPDATE jobs SET review_cleared_by = ? WHERE id = ? AND rev = ? AND review_flag IS NOT NULL AND review_cleared_by IS NULL',
   ).bind(x.adminId, x.id, x.rev).run();
   return res.meta.changes === 1;
 }
 
-export async function blockJob(db: D1Database, x: { reason: string; id: string }): Promise<boolean> {
+export async function blockJob(db: Db, x: { reason: string; id: string }): Promise<boolean> {
   const res = await db.prepare("UPDATE jobs SET status = 'blocked', block_reason = ? WHERE id = ? AND status != 'blocked'")
     .bind(x.reason, x.id).run();
   return res.meta.changes === 1;
 }
 
 /** 차단 해제: 초안으로 되돌린다 (게재는 기업이 다시 publishBlocks 를 거쳐야 한다). */
-export async function unblockJob(db: D1Database, id: string): Promise<boolean> {
+export async function unblockJob(db: Db, id: string): Promise<boolean> {
   const res = await db.prepare("UPDATE jobs SET status = 'draft', block_reason = NULL WHERE id = ? AND status = 'blocked'")
     .bind(id).run();
   return res.meta.changes === 1;

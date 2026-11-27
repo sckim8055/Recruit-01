@@ -11,7 +11,8 @@ import { alertJobsSql, insertAlert } from '../src/db/alerts';
 import { eraseUser } from '../src/db/account';
 import { flagsOf } from '../src/env';
 import { agreeRequired } from './consent-fixture';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
+import type { Db, DbStatement } from '../src/db/types';
 
 const KST = 9 * 3600;
 const DAY = 86_400;
@@ -26,7 +27,7 @@ const uid = () => `00000000-0000-4000-8000-${String(++seq).padStart(12, '0')}`;
 type Raw = ReturnType<typeof migratedDb>['raw'];
 
 // D1 호출 수 (prepare 의 first/all/run 한 번 = 1, batch 한 번 = 1 — 하위 요청 기준)
-function counted(d1: D1Database) {
+function counted(d1: Db) {
   const c = { calls: 0, statements: 0 };
   const db = {
     prepare(sql: string) {
@@ -37,8 +38,8 @@ function counted(d1: D1Database) {
       }
       return s;
     },
-    batch(stmts: unknown[]) { c.calls++; c.statements += stmts.length; return d1.batch(stmts as D1PreparedStatement[]); },
-  } as unknown as D1Database;
+    batch(stmts: unknown[]) { c.calls++; c.statements += stmts.length; return d1.batch(stmts as DbStatement[]); },
+  } as unknown as Db;
   return { db, c };
 }
 
@@ -46,7 +47,7 @@ interface Sent { to: string; subject: string; text: string; headers?: Record<str
 
 function setup(vars: Record<string, string> = {}) {
   const { raw, d1 } = migratedDb();
-  raw.exec('PRAGMA foreign_keys = ON');
+  // (T-19) 외래키는 PostgreSQL 에서 항상 검사된다 — 예전의 PRAGMA foreign_keys = ON 은 필요 없다.
   const cnt = counted(d1);
   const r2 = { ops: 0 };
   const FILES = {
@@ -91,7 +92,7 @@ function job(raw: Raw, o: {
   agency?: boolean; family?: string; namePublic?: number; title?: string;
 } = {}): string {
   const id = uid();
-  if (o.agency) raw.exec("INSERT OR IGNORE INTO agencies (id, name, verify_status, created_at) VALUES ('ag1','가짜헤드','verified',0)");
+  if (o.agency) raw.exec("INSERT INTO agencies (id, name, verify_status, created_at) VALUES ('ag1','가짜헤드','verified',0) ON CONFLICT DO NOTHING");
   raw.prepare(
     `INSERT INTO jobs (id, company_id, agency_id, created_by, job_family, title_ko, body_ko, localize_status, status, published_at, closes_at, location, chinese_level,
                        company_name_public, created_at, updated_at)
@@ -126,7 +127,7 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-describe.skipIf(!hasSqlite)('보낼 공고: 공개 조건 + 새 공고 + 같은 조건, 최신 순만', () => {
+describe.skipIf(!hasDb)('보낼 공고: 공개 조건 + 새 공고 + 같은 조건, 최신 순만', () => {
   it('/jobs 에 보이는 새 공고만 메일에 나온다 (미검증 기업·마감·차단·초안·지난 마감일·헤드헌터·생산직·다른 조건·예전 공고 제외)', async () => {
     const { raw, env, sent } = setup();
     const s = seeker(raw);
@@ -208,7 +209,7 @@ describe.skipIf(!hasSqlite)('보낼 공고: 공개 조건 + 새 공고 + 같은 
   });
 });
 
-describe.skipIf(!hasSqlite)('받는 사람', () => {
+describe.skipIf(!hasDb)('받는 사람', () => {
   it('탈퇴·정지·동의 전·기업 계정·꺼진 알림·수신 동의 없는 행은 보내지 않고 차례도 그대로 둔다', async () => {
     const { raw, env, sent } = setup();
     job(raw);
@@ -266,7 +267,7 @@ describe.skipIf(!hasSqlite)('받는 사람', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('상한·메일 몫', () => {
+describe.skipIf(!hasDb)('상한·메일 몫', () => {
   it(`한 번에 ${ALERT_RUN_DEFAULT}개까지 (오래된 차례부터), 나머지는 다음 실행에`, async () => {
     const { raw, env, sent } = setup();
     job(raw);
@@ -324,7 +325,7 @@ describe.skipIf(!hasSqlite)('상한·메일 몫', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('보낸 뒤에 기록 · 실패 · 자동 멈춤', () => {
+describe.skipIf(!hasDb)('보낸 뒤에 기록 · 실패 · 자동 멈춤', () => {
   it('못 보내면 차례·확인 기준·토큰을 남기지 않고 실패 수 + 1, 5번 연속이면 멈춤 (failures)', async () => {
     const { raw, env, sent, mail } = setup();
     job(raw);
@@ -373,7 +374,7 @@ describe.skipIf(!hasSqlite)('보낸 뒤에 기록 · 실패 · 자동 멈춤', (
   });
 });
 
-describe.skipIf(!hasSqlite)('보내지 않는 때 · 숨긴 필터', () => {
+describe.skipIf(!hasDb)('보내지 않는 때 · 숨긴 필터', () => {
   it('한국 시간 21:00~08:00 에는 보내지 않는다 (차례 그대로)', async () => {
     const { raw, env, sent } = setup();
     job(raw, { published: NOW - DAY });
@@ -424,7 +425,7 @@ describe.skipIf(!hasSqlite)('보내지 않는 때 · 숨긴 필터', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('정리·탈퇴', () => {
+describe.skipIf(!hasDb)('정리·탈퇴', () => {
   it('탈퇴 계정의 알림, 12개월 안 쓴(멈춘) 알림, 180일 지난 토큰을 지운다 — 토큰은 알림과 함께(CASCADE)', async () => {
     const { raw, env } = setup();
     const del = seeker(raw, { status: 'deleted' });
@@ -459,7 +460,7 @@ describe.skipIf(!hasSqlite)('정리·탈퇴', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('하위 요청 수 (무료 플랜: 실행당 50개)', () => {
+describe.skipIf(!hasDb)('하위 요청 수 (무료 플랜: 실행당 50개)', () => {
   for (const [hour, host] of [[0, 'report'], [4, 'dropOldRows'], [6, 'purgeVerificationDocs'], [10, 'dropOldRows']] as const) {
     it(`${String(hour).padStart(2, '0')} UTC (${host} + sendAlerts): 후보가 상한보다 많아도 D1 호출 + fetch + R2 ≤ 45`, async () => {
       const { raw, env, cnt, mail, r2, sent } = setup({ OPS_EMAIL: 'fake.ops@example.test' });
@@ -498,7 +499,7 @@ const setLimits = (raw: Raw, json: string) =>
     ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(json);
 const alertState = (raw: Raw) => raw.prepare('SELECT id, status, paused_reason, next_due_at, checked_until, fail_count, last_sent_at, updated_at FROM alerts ORDER BY id').all().map((r) => ({ ...r }));
 
-describe.skipIf(!hasSqlite)('T-17 알림 발송 멈춤 (관리자가 끔 · 알림 메일 한도 0 · 처리 수 0)', () => {
+describe.skipIf(!hasDb)('T-17 알림 발송 멈춤 (관리자가 끔 · 알림 메일 한도 0 · 처리 수 0)', () => {
   for (const [name, json, vars] of [
     ['관리자가 끔', '{"values":{},"alerts_enabled":false}', {}],
     ['관리자 설정 ALERT_MAIL_SITE_DAY = 0', '{"values":{"ALERT_MAIL_SITE_DAY":0}}', {}],
@@ -591,7 +592,7 @@ describe.skipIf(!hasSqlite)('T-17 알림 발송 멈춤 (관리자가 끔 · 알�
   });
 });
 
-describe.skipIf(!hasSqlite)('T-17 하위 요청 수: 관리자 설정의 최대 처리 수(10)', () => {
+describe.skipIf(!hasDb)('T-17 하위 요청 수: 관리자 설정의 최대 처리 수(10)', () => {
   const totals: Record<number, number> = {};
   for (const [hour, host] of [[0, 'report'], [4, 'dropOldRows'], [6, 'purgeVerificationDocs'], [10, 'dropOldRows']] as const) {
     it(`${String(hour).padStart(2, '0')} UTC (${host} + sendAlerts, ALERT_SEND_PER_RUN = 10): 무료 플랜 50 이하`, async () => {

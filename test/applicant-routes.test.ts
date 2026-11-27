@@ -5,7 +5,7 @@ import app from '../src/index';
 import { b64url, sha256Hex } from '../src/lib/crypto';
 import { AdminHome } from '../src/views/pages';
 import { agreeRequired } from './consent-fixture';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
 
 const te = new TextEncoder();
 const ENC_KEY = b64url(new Uint8Array(32).fill(7)).replace(/-/g, '+').replace(/_/g, '/');
@@ -61,7 +61,7 @@ function world() {
     if (!who) return { cookie: `lang=${lang}` };
     if (!sessions.has(who)) {
       const token = `tok-${who}`;
-      raw.prepare('INSERT OR IGNORE INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?)')
+      raw.prepare('INSERT INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING')
         .run(await sha256Hex(`${PEPPER}|${token}`), who, 0, 4_000_000_000, who === 'adm' ? 1 : 0);
       agreeRequired(raw, who); // T-11 동의 확인을 통과하게 (test/consent-fixture.ts)
       sessions.set(who, token);
@@ -76,10 +76,10 @@ function world() {
     return app.fetch(new Request(`${ORIGIN}${path}`, { method: 'POST', body, headers: { ...(await cookie(who)), origin: ORIGIN } }) as never, env);
   };
   const rows = (sql: string, ...a: unknown[]) => raw.prepare(sql).all(...(a as never[])).map((r) => ({ ...r }));
-  const logs = () => rows('SELECT actor_id, actor_role, target_type, target_id, reason FROM access_log ORDER BY at, rowid') as {
+  const logs = () => rows('SELECT actor_id, actor_role, target_type, target_id, reason FROM access_log ORDER BY at, ctid') as {
     actor_id: string; actor_role: string; target_type: string; target_id: string; reason: string | null;
   }[];
-  const events = () => rows('SELECT application_id, event, actor_id FROM application_events ORDER BY at, rowid') as { application_id: string; event: string; actor_id: string }[];
+  const events = () => rows('SELECT application_id, event, actor_id FROM application_events ORDER BY at, ctid') as { application_id: string; event: string; actor_id: string }[];
   const statusOf = (id: string) => String(raw.prepare('SELECT status FROM applications WHERE id = ?').get(id)!.status);
   return { raw, env, store, req, get, post, logs, events, statusOf };
 }
@@ -93,7 +93,7 @@ async function applyAs(w: World, who: 's1' | 's2', o: { name: string; email: str
   fd.set('attachment', o.withFile ? new File([pdf], `${o.name}.pdf`, { type: 'application/pdf' }) : new File([], '', { type: 'application/octet-stream' }));
   if (!o.withFile) fd.set('experience_text', '경력 요약 가짜');
   expect((await w.post('/my/resumes/new', fd, who)).status).toBe(302);
-  const resumeId = String(w.raw.prepare('SELECT id FROM resumes WHERE user_id = ? ORDER BY created_at DESC, rowid DESC').get(who)!.id);
+  const resumeId = String(w.raw.prepare('SELECT id FROM resumes WHERE user_id = ? ORDER BY created_at DESC, ctid DESC').get(who)!.id);
   const { title: _t, ...rest } = fields;
   const form: Record<string, string> = { resume_id: resumeId, ...rest, headline: EDITED, experience_text: o.withFile ? '' : '경력 요약 가짜' };
   if (o.withFile) form.include_file = '1';
@@ -105,7 +105,7 @@ async function applyAs(w: World, who: 's1' | 's2', o: { name: string; email: str
 
 const bytes = async (res: Response) => new Uint8Array(await res.arrayBuffer());
 
-describe.skipIf(!hasSqlite)('지원자 관리 (T-09a)', () => {
+describe.skipIf(!hasDb)('지원자 관리 (T-09a)', () => {
   let logSpy: ReturnType<typeof vi.spyOn>, errSpy: ReturnType<typeof vi.spyOn>, warnSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

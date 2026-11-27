@@ -8,6 +8,7 @@
 // [sqlite] jobs.company_name_public 은 INTEGER 0/1 (`= 1` 로 비교). PostgreSQL 에서 boolean 으로 바꾸면 이 비교를 고친다.
 import type { Flags } from '../env';
 import { FILTER_KEYS, type FilterKey, type JobFilter } from '../lib/public-jobs';
+import type { Db } from './types';
 
 export interface PublicJobListRow {
   id: string;
@@ -92,14 +93,14 @@ export function publicJobListSql(flags: Flags, now: number, f: JobFilter, limit:
 }
 
 export async function listPublicJobs(
-  db: D1Database, x: { flags: Flags; now: number; filter: JobFilter; limit: number; offset: number },
+  db: Db, x: { flags: Flags; now: number; filter: JobFilter; limit: number; offset: number },
 ): Promise<PublicJobListRow[]> {
   const q = publicJobListSql(x.flags, x.now, x.filter, x.limit, x.offset);
   return (await db.prepare(q.sql).bind(...q.binds).all<PublicJobListRow>()).results;
 }
 
 /** 상세. 공개 조건을 만족하지 않으면 null (호출부는 보통의 404 를 낸다 — 있는지 없는지 알리지 않는다). */
-export async function findPublicJob(db: D1Database, x: { id: string; flags: Flags; now: number }): Promise<PublicJobDetail | null> {
+export async function findPublicJob(db: Db, x: { id: string; flags: Flags; now: number }): Promise<PublicJobDetail | null> {
   const v = publicJobWhere(x.flags, x.now);
   return db.prepare(
     `SELECT ${LIST_COLS}, j.body_ko, j.work_hours, j.contact_email,

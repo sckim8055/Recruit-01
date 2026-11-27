@@ -198,10 +198,12 @@ describe('메일', () => {
 });
 
 describe('한도', () => {
-  it('한 번 실행의 알림 수: 기본 8, 최대 10, 0 = 끔, 잘못된 값은 기본', () => {
+  it('한 번 실행의 알림 수: 기본 8, 최대 50 (T-19 전 10), 0 = 끔, 잘못된 값은 기본', () => {
     expect(alertRunCap(undefined)).toBe(ALERT_RUN_DEFAULT);
     expect(alertRunCap('3')).toBe(3);
-    expect(alertRunCap('20')).toBe(ALERT_RUN_MAX);
+    expect(ALERT_RUN_MAX).toBe(50);
+    expect(alertRunCap('20')).toBe(20);
+    expect(alertRunCap('80')).toBe(ALERT_RUN_MAX);
     expect(alertRunCap('0')).toBe(0);
     expect(alertRunCap('abc')).toBe(ALERT_RUN_DEFAULT);
   });

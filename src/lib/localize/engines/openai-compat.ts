@@ -7,7 +7,7 @@
 //          defaultModel: '<문서에서 확인한 모델 id>', baseUrl: 'https://<서비스 주소>/v1',
 //        });
 //   2) registry.ts 의 ENGINES 배열에 넣는다 (순서 = 기본 시도 순서).
-//   3) 운영자가 키를 wrangler secret put <keyVar> 로 넣는다. 선택 사항: LOCALIZE_ENGINE=<id>.
+//   3) 운영자가 키를 서버 PC 의 .env 에 <keyVar>=… 로 넣고(src/env.ts·src/server-env.ts 의 이름 목록에도 더한다) 서버를 다시 시작한다. 선택 사항: LOCALIZE_ENGINE=<id>.
 //   서비스마다 요청 모양이 조금씩 다르므로 붙이기 전에 그 서비스의 공식 문서로 주소·모델 id 를 확인한다.
 import { EngineError, type LocalizeEngine, type LocalizeEnv } from '../types';
 import { chatText, postJson } from './http';

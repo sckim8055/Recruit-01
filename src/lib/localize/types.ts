@@ -3,9 +3,7 @@
 
 /** 엔진이 읽는 환경값. Env 의 일부만 쓴다 (테스트에서 가짜 환경을 넘기기 쉽게). */
 export interface LocalizeEnv {
-  AI?: { run(model: string, input: unknown): Promise<unknown> };
   LOCALIZE_ENGINE?: string;
-  LOCALIZE_WORKERS_AI_MODEL?: string;
   LOCALIZE_GEMINI_MODEL?: string;
   LOCALIZE_CLAUDE_MODEL?: string;
   GEMINI_API_KEY?: string;

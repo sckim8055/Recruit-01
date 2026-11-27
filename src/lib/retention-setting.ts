@@ -3,7 +3,8 @@
 // /privacy·/consent·지원 화면(캐시에 없을 때).
 import { getSetting } from '../db/settings';
 import { parseRetention, RETENTION_SETTING, type RetentionSettings } from './retention';
+import type { Db } from '../db/types';
 
-export async function loadRetention(db: D1Database): Promise<RetentionSettings> {
+export async function loadRetention(db: Db): Promise<RetentionSettings> {
   return parseRetention(await getSetting(db, RETENTION_SETTING));
 }

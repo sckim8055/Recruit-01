@@ -1,5 +1,5 @@
 // 점검 모드 (T-13). 변수 MAINTENANCE = "on" 이면 관리자가 아닌 모든 요청에 503 점검 안내를 보인다.
-// 켜고 끄는 법: wrangler.jsonc 의 "MAINTENANCE" 를 "on"/"off" 로 바꿔 다시 배포하거나, 대시보드 → Workers → 설정 → 변수에서 바꾼다 (docs/DEPLOY.md 6-2).
+// 켜고 끄는 법: 서버 PC 의 .env 에서 MAINTENANCE=on / off 로 바꾸고 서버를 다시 시작한다 (docs/DEPLOY.md 9-1, T-19 전에는 wrangler.jsonc).
 //
 // - 통과: 관리자 세션(TOTP 를 통과한 세션만 관리자로 인정된다 — lib/auth.loadUser), /api/health, 관리자가 로그인하는 데 필요한 주소
 //   (/login*, /logout, /lang/*), /admin*(로그인하지 않았으면 원래대로 로그인 화면·403), public/ 의 정적 파일.

@@ -30,7 +30,7 @@ export function newTotpSecret(): string {
 }
 
 async function hotp(secret: Uint8Array, counter: number, digits = 6): Promise<string> {
-  const key = await crypto.subtle.importKey('raw', secret, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+  const key = await crypto.subtle.importKey('raw', secret as Uint8Array<ArrayBuffer>, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
   const msg = new Uint8Array(8);
   new DataView(msg.buffer).setUint32(4, counter >>> 0);
   new DataView(msg.buffer).setUint32(0, Math.floor(counter / 2 ** 32));

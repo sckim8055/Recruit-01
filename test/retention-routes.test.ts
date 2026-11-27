@@ -5,7 +5,8 @@ import app from '../src/index';
 import { sha256Hex } from '../src/lib/crypto';
 import { PRIVACY_VERSION, TERMS_VERSION } from '../src/lib/consent';
 import { DEFAULT_RETENTION, RETENTION_LOG_MAX, parseRetention, parseRetentionLog } from '../src/lib/retention';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
+import type { Db } from '../src/db/types';
 
 const PEPPER = 'test-pepper';
 const ORIGIN = 'http://localhost';
@@ -42,7 +43,7 @@ function world() {
   const db = {
     prepare: (sql: string) => { sqls.push(sql); return d1.prepare(sql); },
     batch: (s: never) => d1.batch(s),
-  } as unknown as D1Database;
+  } as unknown as Db;
   const env = {
     APP_ENV: 'dev', APP_ORIGIN: ORIGIN, DB: db, FILES: {}, ENC_KEY: '', SESSION_PEPPER: PEPPER, REGISTRATION_NO: '', MAIL_FROM: '',
     FLAG_PRODUCTION_JOBS: 'off', FLAG_HEADHUNTER_POSTING: 'off', FLAG_RESUME_ZH_SUMMARY: 'off', FLAG_PAID_LABEL: 'off',
@@ -94,7 +95,7 @@ let spies: ReturnType<typeof vi.spyOn>[] = [];
 beforeEach(() => { spies = (['log', 'error', 'warn'] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {})); });
 afterEach(() => spies.forEach((s) => s.mockRestore()));
 
-describe.skipIf(!hasSqlite)('관리자 보관 기간 설정', () => {
+describe.skipIf(!hasDb)('관리자 보관 기간 설정', () => {
   it('설정 화면: 지금 값·범위·안내, 바꾼 적 없음', async () => {
     const w = world();
     const res = await w.get('/admin/settings', 'adm');
@@ -205,7 +206,7 @@ describe.skipIf(!hasSqlite)('관리자 보관 기간 설정', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('방침·동의 문구의 숫자와 다시 동의', () => {
+describe.skipIf(!hasDb)('방침·동의 문구의 숫자와 다시 동의', () => {
   it('/privacy 와 /consent 는 지금 설정의 숫자를 보인다 (한·중), 자리표시자가 남지 않는다', async () => {
     const w = world();
     expect(await (await w.get('/privacy', null)).text()).toContain('중단된 뒤 180일까지');
@@ -264,7 +265,7 @@ describe.skipIf(!hasSqlite)('방침·동의 문구의 숫자와 다시 동의', 
   });
 });
 
-describe.skipIf(!hasSqlite)('쓰지 않은 초안 삭제', () => {
+describe.skipIf(!hasDb)('쓰지 않은 초안 삭제', () => {
   const exists = (w: World, id: string) => w.one('SELECT 1 AS x FROM jobs WHERE id = ?', id) !== undefined;
 
   it('게재된 적 없고 지원 없는 초안: 확인 화면 → 삭제', async () => {
@@ -311,11 +312,11 @@ describe.skipIf(!hasSqlite)('쓰지 않은 초안 삭제', () => {
     const w = world();
     const { deleteUnusedDraft } = await import('../src/db/jobs');
     w.raw.exec(`UPDATE jobs SET published_at = 9 WHERE id = '${J_DRAFT}'`);
-    expect(await deleteUnusedDraft((w.env as { DB: D1Database }).DB, { id: J_DRAFT, companyId: 'c1' })).toBe(false);
+    expect(await deleteUnusedDraft((w.env as { DB: Db }).DB, { id: J_DRAFT, companyId: 'c1' })).toBe(false);
     w.raw.exec(`UPDATE jobs SET published_at = NULL WHERE id = '${J_DRAFT}'`);
-    expect(await deleteUnusedDraft((w.env as { DB: D1Database }).DB, { id: J_DRAFT, companyId: 'c2' })).toBe(false); // 다른 기업
-    expect(await deleteUnusedDraft((w.env as { DB: D1Database }).DB, { id: J_DRAFT_APPS, companyId: 'c1' })).toBe(false); // 지원 있음
-    expect(await deleteUnusedDraft((w.env as { DB: D1Database }).DB, { id: J_DRAFT, companyId: 'c1' })).toBe(true);
+    expect(await deleteUnusedDraft((w.env as { DB: Db }).DB, { id: J_DRAFT, companyId: 'c2' })).toBe(false); // 다른 기업
+    expect(await deleteUnusedDraft((w.env as { DB: Db }).DB, { id: J_DRAFT_APPS, companyId: 'c1' })).toBe(false); // 지원 있음
+    expect(await deleteUnusedDraft((w.env as { DB: Db }).DB, { id: J_DRAFT, companyId: 'c1' })).toBe(true);
   });
 
   it('초안 한도 안내에 쓰지 않는 초안 삭제를 적는다 (한·중)', async () => {

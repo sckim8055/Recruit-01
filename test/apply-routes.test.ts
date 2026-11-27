@@ -6,7 +6,8 @@ import { CROSS_BORDER_VERSION } from '../src/lib/application';
 import { b64url, importEncKey, sha256Hex } from '../src/lib/crypto';
 import { openResume } from '../src/lib/resume';
 import { agreeRequired } from './consent-fixture';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
+import type { Db } from '../src/db/types';
 
 const te = new TextEncoder();
 const ENC_KEY = b64url(new Uint8Array(32).fill(5)).replace(/-/g, '+').replace(/_/g, '/');
@@ -67,7 +68,7 @@ function world() {
       if (sw.refuseInsert && s[0]?.sql.includes('INSERT INTO applications')) return s.map(() => ({ meta: { changes: 0 } }));
       return d1.batch(s as never);
     },
-  } as unknown as D1Database;
+  } as unknown as Db;
   const env = {
     APP_ENV: 'dev', APP_ORIGIN: ORIGIN, DB: db, FILES, ENC_KEY, SESSION_PEPPER: PEPPER, REGISTRATION_NO: '',
     FLAG_PRODUCTION_JOBS: 'off', FLAG_HEADHUNTER_POSTING: 'off', FLAG_RESUME_ZH_SUMMARY: 'off', FLAG_PAID_LABEL: 'off',
@@ -77,7 +78,7 @@ function world() {
     if (!who) return {};
     if (!sessions.has(who)) {
       const token = `tok-${who}`;
-      raw.prepare('INSERT OR IGNORE INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?)')
+      raw.prepare('INSERT INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING')
         .run(await sha256Hex(`${PEPPER}|${token}`), who, 0, 4_000_000_000, who === 'adm' ? 1 : 0);
       agreeRequired(raw, who); // T-11 동의 확인을 통과하게 (test/consent-fixture.ts)
       sessions.set(who, token);
@@ -90,11 +91,11 @@ function world() {
     const body = form instanceof FormData ? form : new URLSearchParams(form);
     return app.fetch(new Request(`${ORIGIN}${path}`, { method: 'POST', body, headers: { ...(await cookie(who)), origin: ORIGIN } }) as never, env);
   };
-  const apps = () => raw.prepare('SELECT * FROM applications ORDER BY created_at, rowid').all() as {
+  const apps = () => raw.prepare('SELECT * FROM applications ORDER BY created_at, ctid').all() as {
     id: string; job_id: string; seeker_id: string; resume_id: string; resume_snapshot: string; file_r2_key: string | null;
     cross_border_consent_at: number | null; status: string;
   }[];
-  const resumes = (user = 's1') => raw.prepare('SELECT id, title, body, file_r2_key FROM resumes WHERE user_id = ? ORDER BY created_at, rowid').all(user) as {
+  const resumes = (user = 's1') => raw.prepare('SELECT id, title, body, file_r2_key FROM resumes WHERE user_id = ? ORDER BY created_at, ctid').all(user) as {
     id: string; title: string; body: string; file_r2_key: string | null;
   }[];
   // table 에 WHERE 를 붙여 쓸 수 있다 (T-11: 로그인한 테스트 사용자에게는 이용약관·개인정보 동의 행이 있으므로 국외 이전 동의만 센다)
@@ -125,7 +126,7 @@ const applyForm = (resumeId: string, p: Record<string, string> = {}) => {
 
 const appIdFrom = (res: Response) => /\/my\/applications\/([0-9a-f-]{36})\?ok=/.exec(res.headers.get('location') ?? '')?.[1];
 
-describe.skipIf(!hasSqlite)('지원 화면', () => {
+describe.skipIf(!hasDb)('지원 화면', () => {
   let logSpy: ReturnType<typeof vi.spyOn>, errSpy: ReturnType<typeof vi.spyOn>, warnSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

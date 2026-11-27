@@ -6,6 +6,7 @@
 //          (PostgreSQL 은 SQLSTATE 23505 로 판별해야 한다).
 import { publicJobWhere } from './public-jobs';
 import type { Flags } from '../env';
+import type { Db } from './types';
 
 export interface ApplicationRow {
   id: string;
@@ -30,7 +31,7 @@ export interface OwnApplicationListRow {
   company_name: string | null;  // 기업명 비공개 공고면 NULL
 }
 
-export async function hasApplied(db: D1Database, jobId: string, seekerId: string): Promise<boolean> {
+export async function hasApplied(db: Db, jobId: string, seekerId: string): Promise<boolean> {
   return (await db.prepare('SELECT 1 AS x FROM applications WHERE job_id = ? AND seeker_id = ?').bind(jobId, seekerId).first()) !== null;
 }
 
@@ -38,7 +39,7 @@ export async function hasApplied(db: D1Database, jobId: string, seekerId: string
  * 그 기업의 **활동 중인** 담당자 수: 중국 본사 소속 / 그 밖. 국외 이전 동의가 필요한지 정하는 데 쓴다 (lib/application.consentNeed).
  * 정지된 계정은 세지 않는다 — 세면 "한국 담당자가 있다" 고 보고 동의를 선택으로 물었는데 실제로는 볼 수 있는 한국 담당자가 없는 일이 생긴다.
  */
-export async function memberCounts(db: D1Database, companyId: string): Promise<{ hqMembers: number; localMembers: number }> {
+export async function memberCounts(db: Db, companyId: string): Promise<{ hqMembers: number; localMembers: number }> {
   const r = await db.prepare(
     `SELECT COALESCE(SUM(CASE WHEN m.is_hq = 1 THEN 1 ELSE 0 END), 0) AS hq, COALESCE(SUM(CASE WHEN m.is_hq = 1 THEN 0 ELSE 1 END), 0) AS local
      FROM company_members m JOIN users u ON u.id = m.user_id WHERE m.company_id = ? AND u.status = 'active'`,
@@ -47,13 +48,13 @@ export async function memberCounts(db: D1Database, companyId: string): Promise<{
 }
 
 /** 이 공고에 낸 내 지원의 id (없으면 null). 이미 지원한 공고에서 지원 상세로 보낼 때 쓴다. */
-export async function findOwnApplicationId(db: D1Database, jobId: string, seekerId: string): Promise<string | null> {
+export async function findOwnApplicationId(db: Db, jobId: string, seekerId: string): Promise<string | null> {
   const r = await db.prepare('SELECT id FROM applications WHERE job_id = ? AND seeker_id = ?').bind(jobId, seekerId).first<{ id: string }>();
   return r?.id ?? null;
 }
 
 /** 새 지원자 알림을 받을 기업 담당자 주소. 메일에는 개인정보를 넣지 않는다 (lib/application.newApplicantMail). */
-export async function companyMemberEmails(db: D1Database, companyId: string): Promise<string[]> {
+export async function companyMemberEmails(db: Db, companyId: string): Promise<string[]> {
   const r = await db.prepare(
     `SELECT u.email FROM company_members m JOIN users u ON u.id = m.user_id WHERE m.company_id = ? AND u.status = 'active'`,
   ).bind(companyId).all<{ email: string }>();
@@ -66,7 +67,7 @@ export async function companyMemberEmails(db: D1Database, companyId: string): Pr
  * 들어갔으면 true. 공고가 그사이 내려갔거나 이미 지원했으면 false.
  */
 export async function insertApplication(
-  db: D1Database,
+  db: Db,
   a: {
     id: string; jobId: string; seekerId: string; resumeId: string; snapshot: string; fileKey: string | null; consentAt: number | null; consentVersion: string; ts: number;
     /** 지원할 때의 지원서 보관 일수 (보관 기간 설정 application_keep_days, T-12c). 나중에 기간을 늘려도 이 지원에는 소급하지 않는다. */
@@ -104,7 +105,7 @@ export async function insertApplication(
 }
 
 /** 내 지원 한 건 (남의 것·없는 것은 null). */
-export async function getOwnApplication(db: D1Database, id: string, seekerId: string): Promise<ApplicationRow | null> {
+export async function getOwnApplication(db: Db, id: string, seekerId: string): Promise<ApplicationRow | null> {
   return db.prepare(
     `SELECT id, job_id, seeker_id, resume_id, resume_snapshot, file_r2_key, cross_border_consent_at, status, status_changed_at, created_at
      FROM applications WHERE id = ? AND seeker_id = ?`,
@@ -112,7 +113,7 @@ export async function getOwnApplication(db: D1Database, id: string, seekerId: st
 }
 
 /** 내 지원 현황 (최근 순). 공고가 마감·차단되어 공개 목록에서 빠져도 내 지원 기록에는 제목이 남는다. */
-export async function listOwnApplications(db: D1Database, seekerId: string): Promise<OwnApplicationListRow[]> {
+export async function listOwnApplications(db: Db, seekerId: string): Promise<OwnApplicationListRow[]> {
   const r = await db.prepare(
     `SELECT a.id, a.job_id, a.status, a.status_changed_at, a.created_at, j.title_ko,
             CASE WHEN j.company_name_public = 1 THEN c.name_ko END AS company_name
@@ -128,7 +129,7 @@ export async function listOwnApplications(db: D1Database, seekerId: string): Pro
  * fromStatuses(취소할 수 있는 상태) 일 때만 실행된다. 바뀌었으면 true. R2 파일은 호출부가 지운다.
  */
 export async function withdrawApplication(
-  db: D1Database, w: { id: string; seekerId: string; newStatus: string; fromStatuses: string[]; ts: number },
+  db: Db, w: { id: string; seekerId: string; newStatus: string; fromStatuses: string[]; ts: number },
 ): Promise<boolean> {
   const marks = w.fromStatuses.map(() => '?').join(',');
   const res = await db.batch([
@@ -149,7 +150,7 @@ export async function withdrawApplication(
 }
 
 /** 회원 탈퇴(T-11)·정리 작업용: 그 회원의 지원서 파일 키 목록. */
-export async function listApplicationFileKeys(db: D1Database, seekerId: string): Promise<string[]> {
+export async function listApplicationFileKeys(db: Db, seekerId: string): Promise<string[]> {
   const r = await db.prepare('SELECT file_r2_key FROM applications WHERE seeker_id = ? AND file_r2_key IS NOT NULL').bind(seekerId).all<{ file_r2_key: string }>();
   return r.results.map((x) => x.file_r2_key);
 }

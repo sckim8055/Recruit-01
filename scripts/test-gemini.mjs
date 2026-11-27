@@ -1,15 +1,12 @@
 // Gemini 연결 진단 (개발용). 실행: node scripts/test-gemini.mjs
-// .dev.vars 의 GEMINI_API_KEY 로 Google 에 직접 요청해 보고, 걸린 시간과 결과를 보여준다. 키는 출력하지 않는다.
-// 서버(wrangler)를 거치지 않으므로 "네트워크·키·모델 이름" 문제와 "서버 코드" 문제를 가를 수 있다.
+// .env 의 GEMINI_API_KEY 로 Google 에 직접 요청해 보고, 걸린 시간과 결과를 보여준다. 키는 출력하지 않는다 (T-19 전에는 .dev.vars).
+// 서버를 거치지 않으므로 "네트워크·키·모델 이름" 문제와 "서버 코드" 문제를 가를 수 있다.
 import { readFileSync } from 'node:fs';
+import { parseEnv } from 'node:util';
 
-const vars = Object.fromEntries(
-  readFileSync(new URL('../.dev.vars', import.meta.url), 'utf8').split(/\r?\n/)
-    .filter((l) => l && !l.startsWith('#') && l.includes('='))
-    .map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]),
-);
+const vars = parseEnv(readFileSync(new URL('../.env', import.meta.url), 'utf8'));
 const key = vars.GEMINI_API_KEY;
-if (!key) { console.log('[X] .dev.vars 에 GEMINI_API_KEY 가 없습니다.'); process.exit(1); }
+if (!key) { console.log('[X] .env 에 GEMINI_API_KEY 가 없습니다.'); process.exit(1); }
 console.log(`key: 길이 ${key.length}자, 앞 2자 "${key.slice(0, 2)}" (따옴표·공백이 섞여 있으면 안 됩니다: ${/["'\s]/.test(key) ? '섞여 있음 [X]' : '정상'})`);
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta';

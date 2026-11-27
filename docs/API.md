@@ -3,9 +3,11 @@
 화면은 서버 렌더링 + HTML 폼이다. `✅` 는 구현됨, 나머지는 docs/TASKS.md 의 해당 작업에서 만든다.
 모든 POST 는 같은 출처에서 온 요청만 받는다(`sameOrigin`) — **예외는 하나**: 조건 알림 메일의 RFC 8058 한 번 클릭 해지 `POST /alerts/u/<토큰>`(T-10, 아래). `/biz/jobs/:id/applicants*`·`/biz/applications*`·`/admin/applications*`·`/admin/access-log` 는 모든 응답(로그인 리다이렉트·403 포함)이 `private, no-store` 이고 HEAD 는 405 다(T-09a). `/consent`·`/my/account*`(2단계 인증 화면 포함)·`/login/totp`·`/admin/users/*` 의 모든 응답도 `private, no-store` 다(T-11·T-16). `/admin/settings*` 도 모든 응답(로그인 리다이렉트·403 포함)이 `private, no-store` 다(T-17). `/my/resumes*`·`/my/applications*`·`/jobs/:id/apply` 는 구직자만(비로그인 → /login, 기업·헤드헌터·관리자 403, 남의 이력서·지원 id 는 404), 모든 응답이 `Cache-Control: private, no-store`. "권한" 칸의 판단은 `authz.ts`·`requireRole` 을 쓴다.
 
-예약 작업(T-12, 공고 자동 마감·보관 기한 삭제·정리, T-10 조건 알림 메일)은 cron(`scheduled`)으로만 실행되며 HTTP 경로가 없다 (docs/ARCHITECTURE.md 14·17절). 기간은 관리자 보관 기간 설정(`/admin/settings`, T-12c)을 따른다.
+예약 작업(T-12, 공고 자동 마감·보관 기한 삭제·정리, T-10 조건 알림 메일)은 서버 안의 실행기(매시 정각, T-19 — 예전 cron `scheduled`)와 서버 PC 의 `npm run maint -- <단계>` 로만 실행되며 HTTP 경로가 없다 (docs/ARCHITECTURE.md 14·17절). 기간은 관리자 보관 기간 설정(`/admin/settings`, T-12c)을 따른다.
 
 남용 방지 한도(T-05c, docs/ARCHITECTURE.md 15절): 아래 "한도" 라고 적은 경로는 하루 한도(한국 시간)를 먼저 잡는다 — 기업(또는 관리자) 몫 → 사이트 몫. 한도에 걸린 응답에만 안내가 보인다. 한도 숫자는 칸마다 관리자 설정(`/admin/settings` "사용량 한도", T-17) → vars `LOCALIZE_PER_COMPANY_DAY` · `LOCALIZE_SITE_DAY` · `ADMIN_LOCALIZE_TEST_DAY` · `MAIL_PER_COMPANY_DAY` · `MAIL_SITE_DAY` · `DRAFT_JOBS_PER_COMPANY` (+ T-10 예약 작업의 알림 메일 `ALERT_MAIL_SITE_DAY`·`ALERT_SEND_PER_RUN`, ARCHITECTURE 17절) → 기본값 순서로 정한다(ARCHITECTURE 15-1). 한도를 잡는 경로는 그때마다 설정 한 행을 읽는다(캐시 없음, 저장 즉시 적용).
+
+T-19: 서버는 127.0.0.1 에서만 듣고(Cloudflare Tunnel 뒤), 요청 본문은 12MB 까지(넘으면 413), `public/` 의 파일(`/app.css`)은 앱 앞에서 나간다. 아래의 "R2" 는 서버 PC 의 파일 폴더(DATA_DIR\files)를 뜻한다.
 
 ## 공통
 | 경로 | 설명 | 권한 | 상태 |

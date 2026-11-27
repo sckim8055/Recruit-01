@@ -11,7 +11,8 @@ import {
 } from '../src/lib/resume-files';
 import { deleteResume, getResume, insertResume, listResumes, setDefaultResume, updateResume } from '../src/db/resumes';
 import type { Env } from '../src/env';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
+import type { Db } from '../src/db/types';
 
 const mk = (p: Partial<Actor>): Actor => ({ id: 'u1', role: 'seeker', companyIds: [], hqCompanyIds: [], agencyIds: [], ...p });
 const keyB64 = (fill: number) => b64url(new Uint8Array(32).fill(fill)).replace(/-/g, '+').replace(/_/g, '/');
@@ -267,15 +268,15 @@ describe('첨부파일 내려받기', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('이력서 DB 문장', () => {
+describe.skipIf(!hasDb)('이력서 DB 문장', () => {
   const setup = () => {
     const { raw, d1 } = migratedDb();
     raw.exec("INSERT INTO users (id, email, role, created_at) VALUES ('u1','u1@example.test','seeker',0), ('u2','u2@example.test','seeker',0)");
     return { raw, d1 };
   };
-  const add = (d1: D1Database, id: string, userId = 'u1', ts = 100) =>
+  const add = (d1: Db, id: string, userId = 'u1', ts = 100) =>
     insertResume(d1, { id, userId, title: id, body: 'v1.x.y', fileKey: null, ts }, RESUME_MAX_PER_USER);
-  const defaults = async (d1: D1Database, userId = 'u1') => (await listResumes(d1, userId)).filter((r) => r.is_default === 1).map((r) => r.id);
+  const defaults = async (d1: Db, userId = 'u1') => (await listResumes(d1, userId)).filter((r) => r.is_default === 1).map((r) => r.id);
 
   it('첫 이력서가 대표가 되고, 다섯 개까지만 저장된다', async () => {
     const { d1 } = setup();

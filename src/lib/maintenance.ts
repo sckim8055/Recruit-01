@@ -1,10 +1,12 @@
 // 예약 작업 (T-12): 공고 자동 마감, 지원서 보관 기한·자동 종료·내용 삭제, 오래된 행 지우기, 사업자 서류 삭제, R2 고아 객체 정리, 하루 보고.
 //
-// 무료 플랜 한도 안에서 돌기 위해 cron 은 매시 정각에 한 번(wrangler.jsonc "0 * * * *") 실행되고, 한 번에 **한 단계만** 한다
-// (어느 시각에 무엇을 하는지는 SCHEDULE). 단계마다 처리하는 행 수·D1 문장 수·R2 호출 수에 상한(CAPS)이 있고, 남은 것은 다음 차례에 한다.
+// 매시 정각에 한 번 실행되고(T-19: 서버 안의 실행기 lib/scheduler.ts — 예전에는 Cloudflare cron "0 * * * *"), 한 번에 **한 단계만** 한다
+// (어느 시각에 무엇을 하는지는 SCHEDULE). 단계마다 처리하는 행 수·DB 문장 수·파일 호출 수에 상한(CAPS)이 있고, 남은 것은 다음 차례에 한다.
+// T-19: 상한은 원래 Workers 무료 플랜(CPU 10ms·하위 요청 50개) 때문에 정했지만, 지우는 작업 한 번의 크기를 묶어 두는 안전장치로 그대로 둔다
+// (docs/ARCHITECTURE.md 14절 — 이 서비스의 규모에서는 하루 처리량이 충분하다).
 // 어느 지점에서 끊겨도 다시 실행하면 이어서 한다 (모든 문장이 "아직 처리 전" 조건을 가진다 — src/db/maintenance.ts).
 //
-// 지우는 순서: **DB 를 먼저 지우고 그다음 R2 객체를 지운다.** R2 삭제가 실패하면 어느 행도 가리키지 않는 암호문 객체가 남고
+// 지우는 순서: **DB 를 먼저 지우고 그다음 파일(예전 R2 객체, 지금은 DATA_DIR/files)을 지운다.** 파일 삭제가 실패하면 어느 행도 가리키지 않는 암호문 객체가 남고
 // (rfiles/ 는 고아 객체 정리가 치운다), 반대 순서로 하다 끊기면 DB 가 없는 파일을 가리키게 된다.
 //
 // 기록: 실행마다 콘솔에 한 줄 `maint: step=<이름> ok|failed counts=<숫자 JSON>` 만 남긴다. 키·이메일·id·오류 내용은 남기지 않는다.
@@ -94,8 +96,10 @@ export const stepsForTime = (nowSec: number): StepName[] => {
 };
 
 /**
- * 한 번 실행의 상한. D1 문장은 batch 안의 문장도 하나씩 센다 (D1 은 batch 를 한 번으로 세지만 보수적으로) — 실행 1회 25개 이하,
- * R2 호출(list·delete)은 15개 이하. 집계 기록(읽기 1 + 쓰기 1)도 포함한다. 단계별 최대치는 test/maintenance.test.ts 가 센다.
+ * 한 번 실행의 상한. DB 문장은 batch 안의 문장도 하나씩 센다 — 실행 1회 25개 이하, 파일 호출(list·delete)은 15개 이하.
+ * 집계 기록(읽기 1 + 쓰기 1)도 포함한다. 단계별 최대치는 test/maintenance.test.ts 가 센다.
+ * T-19: 이 숫자는 Workers 무료 플랜의 하위 요청 50개에서 나왔다. PC 서버에는 그 한도가 없지만 바꾸지 않았다 — 지우는 작업이 한 번에
+ * 얼마나 하는지를 묶어 두는 안전장치이고, 이 서비스의 규모(지원서 하루 수십 건)에서는 하루 처리량이 남는다. 늘릴 때는 테스트와 함께 바꾼다.
  */
 export const CAPS = {
   closeJobs: 10,            // 마감하는 공고 수 (마감일 지남 + 무수정 합계)
@@ -136,6 +140,8 @@ export function autoCloseGroups(rows: Array<{ id: string; status: string }>): Au
 }
 
 export interface R2ListedObject { key: string; uploaded: Date }
+/** 파일 저장소 목록 한 쪽 (lib/storage.ListResult 와 같은 모양). */
+type ListPage = { objects: R2ListedObject[]; truncated: boolean; cursor?: string };
 
 /** 지워도 되는 고아 객체: rfiles/ 아래, 올라온 지 ORPHAN_MIN_AGE 이상, 어느 행도 가리키지 않음. 앞에서부터 cap 개. */
 export function pickOrphans(objects: R2ListedObject[], referenced: Set<string>, nowSec: number, cap: number): string[] {
@@ -250,12 +256,15 @@ export function reportText(date: string, stats: DayStats, counts: MaintCounts): 
       `  게재 중 공고: ${counts.publishedJobs}`,
       `  지원(상태별): ${line(counts.applicationsByStatus)}`,
       '',
-      '이 메일에는 개수만 들어 있습니다. 실패가 있으면 Cloudflare 대시보드의 Worker 로그에서 "maint:" 줄을 확인하세요.',
+      '이 메일에는 개수만 들어 있습니다. 실패가 있으면 서버 로그(서비스 관리 프로그램의 로그 창)에서 "maint:" 줄을 확인하세요.',
     ].join('\n'),
   };
 }
 
-/** 개발용: `wrangler dev` 에서 cron 문자열 "maint:<단계>" 로 단계를 골라 실행한다. APP_ENV 가 dev 일 때만 호출부가 쓴다. */
+/**
+ * 단계 이름 고르기: "maint:<단계>" → 단계 (모르는 이름은 undefined). T-19: 예전에는 wrangler dev 의 cron 문자열이었고,
+ * 지금은 PC 의 명령 `npm run maint -- <단계>` (scripts/maint.mjs) 가 쓴다 — HTTP 로 단계를 실행하는 길은 없다.
+ */
 export function devForcedStep(cron: string | undefined): StepName | undefined {
   const m = /^maint:([A-Za-z]+)$/.exec((cron ?? '').trim());
   return m && (STEP_NAMES as readonly string[]).includes(m[1]!) ? (m[1] as StepName) : undefined;
@@ -376,7 +385,7 @@ export async function purgeVerificationDocs(env: Env, now: number, r: RetentionV
  */
 export async function sweepOrphans(env: Env, now: number): Promise<StepResult> {
   const cursor = await getSetting(env.DB, ORPHAN_CURSOR_KEY);
-  let page: R2Objects;
+  let page: ListPage;
   try {
     page = await env.FILES.list({ prefix: ORPHAN_PREFIX, limit: CAPS.orphanListPage, ...(cursor ? { cursor } : {}) });
   } catch (e) {
@@ -442,7 +451,7 @@ export const STEPS: Record<StepName, StepFn> = {
 // ───────── 실행
 
 export interface RunOptions {
-  /** 이 단계를 실행한다 (시간표 대신). 테스트와, APP_ENV=dev 일 때의 wrangler 수동 실행(src/index.tsx)만 넘긴다. */
+  /** 이 단계를 실행한다 (시간표 대신). 테스트와 PC 의 수동 실행(npm run maint -- <단계>, scripts/maint.mjs)만 넘긴다. */
   force?: StepName;
   /** 테스트용 단계 구현 바꾸기. */
   impl?: Partial<Record<StepName, StepFn>>;

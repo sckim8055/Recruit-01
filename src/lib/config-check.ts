@@ -27,7 +27,7 @@ export const CHECK_IDS = [
 ] as const;
 export type CheckId = (typeof CHECK_IDS)[number];
 
-/** .dev.vars.example 에 적어 둔 로컬 전용 값. 테스트·운영 서버에서 쓰면 문제로 본다. */
+/** 예전 .dev.vars.example 에 적어 두었던 로컬 전용 값 (T-19 전). 서버(test·production)에서 쓰면 문제로 본다. */
 export const DEV_SESSION_PEPPER = 'dev-pepper-local-only-1234';
 export const PEPPER_MIN = 16;
 export const PLACEHOLDER = 'REPLACE_WITH_';
@@ -52,8 +52,11 @@ export function encKeyBytes(v: unknown): number | null {
   }
 }
 
-export type SecretName = 'ENC_KEY' | 'SESSION_PEPPER' | 'RESEND_API_KEY' | 'ANTHROPIC_API_KEY' | 'GEMINI_API_KEY';
-export const SECRET_NAMES: readonly SecretName[] = ['ENC_KEY', 'SESSION_PEPPER', 'RESEND_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY'];
+export type SecretName = 'ENC_KEY' | 'SESSION_PEPPER' | 'RESEND_API_KEY' | 'ANTHROPIC_API_KEY' | 'GEMINI_API_KEY' | 'DATABASE_URL' | 'BACKUP_PASSPHRASE';
+/** T-19: DB 접속 문자열(비밀번호 포함)과 자동 백업 비밀문구도 비밀값으로 보인다 (설정됨/없음·길이 구간만). */
+export const SECRET_NAMES: readonly SecretName[] = [
+  'ENC_KEY', 'SESSION_PEPPER', 'RESEND_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'DATABASE_URL', 'BACKUP_PASSPHRASE',
+];
 /** 길이 구간: 값의 길이를 그대로 보이지 않는다 (비밀값 추측에 도움이 되지 않게 구간으로만). */
 export type LengthClass = 'none' | 'short' | 'medium' | 'long';
 export interface SecretState { name: SecretName; set: boolean; length: LengthClass }
@@ -139,7 +142,8 @@ export function configChecks(env: CheckEnv, legal: { ko: number; zh: number } = 
   if (on) add('flags', 'warning', 'on', on);
   else add('flags', 'ok', 'ok');
 
-  // 바인딩 (D1·R2). 없으면 사이트가 동작하지 않는다.
+  // DB·파일 저장소 (T-19: PostgreSQL·DATA_DIR/files — 서버가 만들어 넣는다). 없으면 사이트가 동작하지 않는다.
+  // 실제로 붙는지·쓸 수 있는지는 lib/system-check.ts 의 실행 상태 점검이 본다.
   const missing = [env.DB, env.FILES].filter((b) => !b).length;
   if (missing) add('bindings', 'problem', 'missing', missing);
   else add('bindings', 'ok', 'ok');
@@ -148,9 +152,8 @@ export function configChecks(env: CheckEnv, legal: { ko: number; zh: number } = 
   if (str(env.MAINTENANCE) === 'on') add('maintenance', 'warning', 'on');
   else add('maintenance', 'ok', 'ok');
 
-  // 현지화 엔진: 없으면 기업이 한국어를 직접 입력 (동작은 한다)
-  const ai = env.AI as { run?: unknown } | undefined;
-  const engines = (str(env.ANTHROPIC_API_KEY) ? 1 : 0) + (str(env.GEMINI_API_KEY) ? 1 : 0) + (ai && typeof ai.run === 'function' ? 1 : 0);
+  // 현지화 엔진(Claude·Gemini, T-19 에서 Workers AI 를 뺐다): 없으면 기업이 한국어를 직접 입력 (동작은 한다)
+  const engines = (str(env.ANTHROPIC_API_KEY) ? 1 : 0) + (str(env.GEMINI_API_KEY) ? 1 : 0);
   if (engines) add('localize', 'ok', 'ok', engines);
   else add('localize', 'warning', 'none');
 
@@ -166,5 +169,5 @@ export const configProblems = (env: CheckEnv, legal?: { ko: number; zh: number }
   configChecks(env, legal).filter((c) => c.level !== 'ok');
 
 /** 화면 맨 위 요약: 가장 나쁜 수준. */
-export const worstLevel = (items: CheckItem[]): CheckLevel =>
+export const worstLevel = (items: ReadonlyArray<{ level: CheckLevel }>): CheckLevel =>
   items.some((i) => i.level === 'problem') ? 'problem' : items.some((i) => i.level === 'warning') ? 'warning' : 'ok';

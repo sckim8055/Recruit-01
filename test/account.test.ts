@@ -7,6 +7,7 @@ import {
   type ConsentRow,
 } from '../src/lib/consent';
 import { DEFAULT_RETENTION } from '../src/lib/retention';
+import type { Db } from '../src/db/types';
 
 // T-12c: 필수 동의의 판은 보관 기간 설정에 따라 정해진다. 이 파일의 판단 테스트는 설정이 없을 때(기본값)의 판으로 본다.
 const missingConsents = (rows: ConsentRow[]) => missingFor(rows, requiredConsents(DEFAULT_RETENTION));
@@ -18,7 +19,7 @@ import { countOwnedCompaniesWithOthers, eraseUser } from '../src/db/account';
 import { insertConsents, listRequiredConsents } from '../src/db/consents';
 import { findSessionUser } from '../src/db/sessions';
 import type { Env, SessionUser } from '../src/env';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
 
 describe('필수 동의', () => {
   const ok = [{ type: 'terms', version: TERMS_VERSION, withdrawn_at: null }, { type: 'privacy', version: PRIVACY_VERSION, withdrawn_at: null }];
@@ -69,7 +70,7 @@ describe('탈퇴 판단', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('동의 기록', () => {
+describe.skipIf(!hasDb)('동의 기록', () => {
   it('같은 판의 동의는 한 줄만, 판이 바뀌면 새 줄', async () => {
     const { raw, d1 } = migratedDb();
     raw.exec("INSERT INTO users (id, email, role, created_at) VALUES ('s1','s1@example.test','seeker',0)");
@@ -84,7 +85,7 @@ describe.skipIf(!hasSqlite)('동의 기록', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('회원 탈퇴', () => {
+describe.skipIf(!hasDb)('회원 탈퇴', () => {
   const setup = () => {
     const { raw, d1 } = migratedDb();
     raw.exec(`INSERT INTO users (id, email, role, status, created_at) VALUES
@@ -105,7 +106,7 @@ describe.skipIf(!hasSqlite)('회원 탈퇴', () => {
     const n = (sql: string) => Number(raw.prepare(sql).get()!.n);
     return { raw, d1, one, n };
   };
-  const erase = (d1: D1Database, id: string, email: string) => eraseUser(d1, { id, email, marker: `deleted-${id}@deleted.invalid`, ts: 500 });
+  const erase = (d1: Db, id: string, email: string) => eraseUser(d1, { id, email, marker: `deleted-${id}@deleted.invalid`, ts: 500 });
 
   it('탈퇴 문장의 "진행 중" 상태 목록은 취소할 수 있는 상태(WITHDRAWABLE)와 같다', async () => {
     const fsMod = 'node:fs';

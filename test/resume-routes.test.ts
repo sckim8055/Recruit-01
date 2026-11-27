@@ -5,7 +5,8 @@ import app from '../src/index';
 import { b64url, sha256Hex } from '../src/lib/crypto';
 import { RESUME_FILE_MAX_BYTES } from '../src/lib/resume-files';
 import { agreeRequired } from './consent-fixture';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
+import type { Db } from '../src/db/types';
 
 const te = new TextEncoder();
 const latin1 = (b: Uint8Array) => new TextDecoder('latin1').decode(b);
@@ -50,7 +51,7 @@ function world() {
       return d1.prepare(sql);
     },
     batch: (s: never) => d1.batch(s),
-  } as unknown as D1Database;
+  } as unknown as Db;
   const env = {
     APP_ENV: 'dev', APP_ORIGIN: ORIGIN, DB: db, FILES, ENC_KEY, SESSION_PEPPER: PEPPER, REGISTRATION_NO: '',
     FLAG_PRODUCTION_JOBS: 'off', FLAG_HEADHUNTER_POSTING: 'off', FLAG_RESUME_ZH_SUMMARY: 'off', FLAG_PAID_LABEL: 'off',
@@ -59,7 +60,7 @@ function world() {
   const login = async (who: Who) => {
     const token = `tok-${who}`;
     const id = await sha256Hex(`${PEPPER}|${token}`);
-    raw.prepare('INSERT OR IGNORE INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?)')
+    raw.prepare('INSERT INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING')
       .run(id, who, 0, 4_000_000_000, who === 'adm' ? 1 : 0);
     agreeRequired(raw, who); // T-11 동의 확인을 통과하게 (test/consent-fixture.ts)
     sessions.set(who, token);
@@ -76,7 +77,7 @@ function world() {
     return app.fetch(new Request(`${ORIGIN}${path}`, { method: 'POST', body, headers: { ...(await cookie(who)), origin: ORIGIN, ...extra } }) as never, env);
   };
   const rows = (user = 's1') =>
-    raw.prepare('SELECT id, title, is_default, body, file_r2_key, updated_at FROM resumes WHERE user_id = ? ORDER BY created_at, rowid').all(user) as {
+    raw.prepare('SELECT id, title, is_default, body, file_r2_key, updated_at FROM resumes WHERE user_id = ? ORDER BY created_at, ctid').all(user) as {
       id: string; title: string; is_default: number; body: string; file_r2_key: string | null; updated_at: number;
     }[];
   return { raw, env, store, get, post, rows, setFailUpdate: (v: boolean) => { failUpdate = v; } };
@@ -90,7 +91,7 @@ const fields = (p: Record<string, string> = {}) => ({
 function form(p: Record<string, string> = {}, file?: { bytes: Uint8Array; name: string; type?: string }) {
   const fd = new FormData();
   for (const [k, v] of Object.entries(fields(p))) fd.set(k, v);
-  if (file) fd.set('attachment', new File([file.bytes], file.name, { type: file.type ?? 'application/octet-stream' }));
+  if (file) fd.set('attachment', new File([file.bytes as Uint8Array<ArrayBuffer>], file.name, { type: file.type ?? 'application/octet-stream' }));
   else fd.set('attachment', new File([], '', { type: 'application/octet-stream' })); // 브라우저가 빈 파일 칸을 보내는 모양
   return fd;
 }
@@ -109,7 +110,7 @@ const download = async (w: World, id: string, who: Who = 's1') => {
   return { res, bytes: res.status === 200 ? new Uint8Array(await res.arrayBuffer()) : null };
 };
 
-describe.skipIf(!hasSqlite)('이력서 화면', () => {
+describe.skipIf(!hasDb)('이력서 화면', () => {
   let logSpy: ReturnType<typeof vi.spyOn>, errSpy: ReturnType<typeof vi.spyOn>, warnSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

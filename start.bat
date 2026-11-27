@@ -1,20 +1,23 @@
 @echo off
-rem Recruit local test server. Double-click to start, Ctrl+C to stop.
+rem Recruit server (Node + PostgreSQL). Double-click to build and start. Ctrl+C to stop.
+rem Normally the service manager starts the server. Use this file only for a manual start. See docs/DEPLOY.md
 cd /d "%~dp0"
-if not exist node_modules (
-  echo [1/3] Installing packages...
-  call npm install || goto :fail
-)
-if not exist .dev.vars (
-  echo .dev.vars file is missing. Copy .dev.vars.example to .dev.vars and fill ENC_KEY and SESSION_PEPPER first. See README.md
+set "NODE_DIR=F:\works\node-v26.13.1-win-x64"
+set "PATH=%NODE_DIR%;%PATH%"
+if not exist .env (
+  echo .env file is missing. Copy .env.example to .env and fill the values first. See docs\DEPLOY.md section 3.
   goto :fail
 )
-echo [2/3] Updating local database...
-set CI=1
-call npm run db:local || goto :fail
-set CI=
-echo [3/3] Starting server at http://localhost:8787
-call npx wrangler dev --var APP_ENV:dev
+if not exist node_modules (
+  echo [1/4] Installing packages...
+  call npm ci || goto :fail
+)
+echo [2/4] Applying database migrations...
+call npm run db:migrate || goto :fail
+echo [3/4] Building...
+call npm run build || goto :fail
+echo [4/4] Starting server at http://127.0.0.1:8787 (Ctrl+C to stop)
+call npm start
 goto :eof
 :fail
 echo.

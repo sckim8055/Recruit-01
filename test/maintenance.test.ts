@@ -22,7 +22,8 @@ import { identitySnapshot } from '../src/lib/company';
 import { saveKorean } from '../src/db/jobs';
 import { findPublicCompany, loadCompanyDetail } from '../src/db/companies';
 import { AdminCompanyDetail } from '../src/views/admin-company';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
+import type { Db, DbStatement } from '../src/db/types';
 
 // 2027-01-15 08:00:00 UTC (정각)
 const NOW = 1_800_000_000 - (1_800_000_000 % 3600);
@@ -56,7 +57,7 @@ function fakeR2() {
 }
 
 // ── D1 문장 수 세기 (batch 안의 문장도 하나씩 센다)
-function counted(d1: D1Database) {
+function counted(d1: Db) {
   const c = { n: 0, failOn: null as RegExp | null };
   const db = {
     prepare(sql: string) {
@@ -70,15 +71,15 @@ function counted(d1: D1Database) {
     batch(stmts: Array<{ sql: string }>) {
       c.n += stmts.length;
       if (stmts.some((x) => c.failOn?.test(x.sql))) return Promise.reject(new Error('db down'));
-      return d1.batch(stmts as unknown as D1PreparedStatement[]);
+      return d1.batch(stmts as unknown as DbStatement[]);
     },
-  } as unknown as D1Database;
+  } as unknown as Db;
   return { db, c };
 }
 
 function setup(o: { ops?: string } = {}) {
   const { raw, d1 } = migratedDb();
-  raw.exec('PRAGMA foreign_keys = ON');
+  // (T-19) 외래키는 PostgreSQL 에서 항상 검사된다 — 예전의 PRAGMA foreign_keys = ON 은 필요 없다.
   const r2 = fakeR2();
   const cnt = counted(d1);
   const env = {
@@ -279,7 +280,7 @@ describe('시간표', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('실행기', () => {
+describe.skipIf(!hasDb)('실행기', () => {
   it('시각에 맞는 단계를 실행하고 로그 한 줄·집계를 남긴다', async () => {
     const { env, raw } = setup();
     const ran: StepName[] = [];
@@ -335,7 +336,7 @@ describe.skipIf(!hasSqlite)('실행기', () => {
 
 // ───────────────────────── 1. closeJobs
 
-describe.skipIf(!hasSqlite)('closeJobs', () => {
+describe.skipIf(!hasDb)('closeJobs', () => {
   it('마감일: 지금과 같거나 지난 게재 중 공고만 마감, 초안·차단·마감은 그대로, 게재는 하지 않는다', async () => {
     const { raw, env } = setup();
     const { co, members } = company(raw);
@@ -443,7 +444,7 @@ describe.skipIf(!hasSqlite)('closeJobs', () => {
 
 // ───────────────────────── 2. markApplications
 
-describe.skipIf(!hasSqlite)('markApplications', () => {
+describe.skipIf(!hasDb)('markApplications', () => {
   function world(raw: Raw) {
     const { co, members } = company(raw);
     const by = members[0]!;
@@ -542,7 +543,7 @@ describe.skipIf(!hasSqlite)('markApplications', () => {
 
 // ───────────────────────── 3. purgeApplications
 
-describe.skipIf(!hasSqlite)('purgeApplications', () => {
+describe.skipIf(!hasDb)('purgeApplications', () => {
   function world(raw: Raw) {
     const { co, members } = company(raw);
     return job(raw, co, members[0]!, { status: 'closed' });
@@ -638,7 +639,7 @@ describe.skipIf(!hasSqlite)('purgeApplications', () => {
 
 // ───────────────────────── 4. dropOldRows
 
-describe.skipIf(!hasSqlite)('dropOldRows', () => {
+describe.skipIf(!hasDb)('dropOldRows', () => {
   it('보관 기간이 지난 행만 지운다 (자식 먼저, 1초 전후), users·초대는 그대로', async () => {
     const { raw, env } = setup();
     const { co, members } = company(raw);
@@ -721,7 +722,7 @@ describe.skipIf(!hasSqlite)('dropOldRows', () => {
 
 // ───────────────────────── 5. purgeVerificationDocs
 
-describe.skipIf(!hasSqlite)('purgeVerificationDocs', () => {
+describe.skipIf(!hasDb)('purgeVerificationDocs', () => {
   function doc(raw: Raw, owner: string, o: { status: string; reviewed: number | null; key?: string }): string {
     const d = id('doc');
     raw.prepare(
@@ -784,7 +785,7 @@ describe.skipIf(!hasSqlite)('purgeVerificationDocs', () => {
 
 // ───────────────────────── 6. sweepOrphans
 
-describe.skipIf(!hasSqlite)('sweepOrphans', () => {
+describe.skipIf(!hasDb)('sweepOrphans', () => {
   const at = (s: number) => new Date(s * 1000);
 
   it('24시간이 지났고 참조 없는 rfiles/ 객체만 지운다 (젊은 객체·참조된 객체·다른 접두어는 그대로)', async () => {
@@ -860,7 +861,7 @@ describe.skipIf(!hasSqlite)('sweepOrphans', () => {
 
 // ───────────────────────── 7. report
 
-describe.skipIf(!hasSqlite)('report', () => {
+describe.skipIf(!hasDb)('report', () => {
   it('OPS_EMAIL 이 없으면 메일 없이 넘어간다', async () => {
     const { env } = setup();
     expect((await STEPS.report(env, NOW)).done).toMatchObject({ mail_sent: 0, mail_skipped: 1 });
@@ -904,7 +905,7 @@ describe.skipIf(!hasSqlite)('report', () => {
 
 // ───────────────────────── 한 번 실행의 상한 (D1 문장·R2 호출)
 
-describe.skipIf(!hasSqlite)('한 번 실행의 D1·R2 상한', () => {
+describe.skipIf(!hasDb)('한 번 실행의 D1·R2 상한', () => {
   it('후보가 상한보다 많아도 단계마다 D1 문장 25개·R2 호출 15개 이하', async () => {
     const { raw, env, r2, cnt } = setup({ ops: 'ops@example.test' });
     // 공고: 마감일 지남 15, 안내 대상 15 (기업 하나에 담당자 10명)
@@ -941,7 +942,7 @@ describe.skipIf(!hasSqlite)('한 번 실행의 D1·R2 상한', () => {
 
 // ───────────────────────── T-12c 보관 기간 설정
 
-describe.skipIf(!hasSqlite)('보관 기간 설정 (T-12c)', () => {
+describe.skipIf(!hasDb)('보관 기간 설정 (T-12c)', () => {
   const R = (p: Partial<typeof DEFAULT_RETENTION> = {}) => ({ ...DEFAULT_RETENTION, ...p });
   const putRetention = (raw: Raw, v: Record<string, unknown>) =>
     raw.prepare("INSERT INTO site_settings (key, value, updated_at) VALUES ('retention', ?, 0) ON CONFLICT (key) DO UPDATE SET value = excluded.value").run(JSON.stringify(v));

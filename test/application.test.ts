@@ -12,7 +12,8 @@ import {
   companyMemberEmails, getOwnApplication, hasApplied, insertApplication, listOwnApplications, memberCounts, withdrawApplication,
 } from '../src/db/applications';
 import type { Env, Flags } from '../src/env';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
+import type { Db } from '../src/db/types';
 
 const mk = (p: Partial<Actor>): Actor => ({ id: 'x', role: 'company', companyIds: [], hqCompanyIds: [], agencyIds: [], ...p });
 const job = { company_id: 'c1', agency_id: null, created_by: 'u9' };
@@ -108,7 +109,7 @@ describe('기업 알림 메일', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('지원 DB 문장', () => {
+describe.skipIf(!hasDb)('지원 DB 문장', () => {
   const setup = () => {
     const { raw, d1 } = migratedDb();
     raw.exec(`INSERT INTO users (id, email, role, status, created_at) VALUES
@@ -125,7 +126,7 @@ describe.skipIf(!hasSqlite)('지원 DB 문장', () => {
     raw.exec("UPDATE jobs SET closes_at = 50 WHERE id = 'j4'");
     return { raw, d1 };
   };
-  const apply = (d1: D1Database, p: Partial<Parameters<typeof insertApplication>[1]> = {}) =>
+  const apply = (d1: Db, p: Partial<Parameters<typeof insertApplication>[1]> = {}) =>
     insertApplication(d1, { id: 'a1', jobId: 'j1', seekerId: 's1', resumeId: 'r1', snapshot: 'v1.x.y', fileKey: 'rfiles/k1', consentAt: null, consentVersion: CROSS_BORDER_VERSION, ts: 100, keepDays: 180, ...p }, FLAGS);
 
   it('공개 중인 공고에만 지원이 들어간다', async () => {
@@ -192,9 +193,9 @@ describe.skipIf(!hasSqlite)('지원 DB 문장', () => {
     expect((await listOwnApplications(d1, 's1'))[0]!.company_name).toBeNull();
   });
   it('DB 오류는 "지원 안 됨" 으로 감추지 않고 그대로 올린다 (UNIQUE 위반만 false)', async () => {
-    const broken = { prepare: () => ({ bind: () => ({}) }), batch: async () => { throw new Error('D1_ERROR: no such table'); } } as unknown as D1Database;
+    const broken = { prepare: () => ({ bind: () => ({}) }), batch: async () => { throw new Error('D1_ERROR: no such table'); } } as unknown as Db;
     await expect(apply(broken)).rejects.toThrow('D1_ERROR');
-    const dup = { prepare: () => ({ bind: () => ({}) }), batch: async () => { throw new Error('D1_ERROR: UNIQUE constraint failed: applications.job_id, applications.seeker_id'); } } as unknown as D1Database;
+    const dup = { prepare: () => ({ bind: () => ({}) }), batch: async () => { throw new Error('D1_ERROR: UNIQUE constraint failed: applications.job_id, applications.seeker_id'); } } as unknown as Db;
     expect(await apply(dup)).toBe(false);
   });
   it('이 공고에 낸 내 지원 id', async () => {

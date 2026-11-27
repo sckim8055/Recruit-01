@@ -6,7 +6,7 @@ import { INTERVIEW_MAIL_MAX, rejectMail } from '../src/lib/applicant-mail';
 import { b64url, sha256Hex } from '../src/lib/crypto';
 import { t } from '../src/lib/i18n';
 import { agreeRequired } from './consent-fixture';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
 
 const ENC_KEY = b64url(new Uint8Array(32).fill(7)).replace(/-/g, '+').replace(/_/g, '/');
 const PEPPER = 'test-pepper';
@@ -50,21 +50,22 @@ function world(o: { engine?: string } = {}) {
     get: async (k: string) => { const v = store.get(k); return v ? { arrayBuffer: async () => v.buffer.slice(0), body: v } : null; },
     delete: async (k: string) => { store.delete(k); },
   };
-  // 번역 엔진: Workers AI 바인딩 흉내 (o.engine 이 있을 때만). 받은 입력을 모아 둔다.
+  // 번역 엔진: Claude Messages API 흉내 (o.engine 이 있을 때만 키를 넣는다 — T-19 에서 Workers AI 를 뺐다). 받은 입력을 모아 둔다.
   const engineInputs: string[] = [];
-  const AI = o.engine === undefined ? undefined : {
-    run: async (_model: string, input: unknown) => { engineInputs.push(JSON.stringify(input)); return { response: o.engine }; },
-  };
   const env = {
     APP_ENV: 'dev', APP_ORIGIN: ORIGIN, DB: d1, FILES, ENC_KEY, SESSION_PEPPER: PEPPER, REGISTRATION_NO: '',
     RESEND_API_KEY: 'test-key', MAIL_FROM: 'Recruit <no-reply@x.test>',
     FLAG_PRODUCTION_JOBS: 'off', FLAG_HEADHUNTER_POSTING: 'off', FLAG_RESUME_ZH_SUMMARY: 'off', FLAG_PAID_LABEL: 'off',
-    ...(AI ? { AI } : {}),
+    ...(o.engine === undefined ? {} : { ANTHROPIC_API_KEY: 'fake-anthropic-key' }),
   } as never;
   // Resend 호출을 잡는다
   const mails: Array<{ to: string[]; subject: string; text: string; reply_to?: string }> = [];
   let mailMode: 'ok' | 'fail' | 'throw' = 'ok';
   vi.stubGlobal('fetch', vi.fn(async (u: unknown, init?: RequestInit) => {
+    if (String(u) === 'https://api.anthropic.com/v1/messages') {
+      engineInputs.push(String(init!.body));
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: o.engine }] }), { status: 200 });
+    }
     expect(String(u)).toBe('https://api.resend.com/emails');
     if (mailMode === 'throw') throw new TypeError('network');
     mails.push(JSON.parse(String(init!.body)));
@@ -75,7 +76,7 @@ function world(o: { engine?: string } = {}) {
     if (!who) return { cookie: `lang=${lang}` };
     if (!sessions.has(who)) {
       const token = `tok-${who}`;
-      raw.prepare('INSERT OR IGNORE INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?)')
+      raw.prepare('INSERT INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING')
         .run(await sha256Hex(`${PEPPER}|${token}`), who, 0, 4_000_000_000, who === 'adm' ? 1 : 0);
       agreeRequired(raw, who); // T-11 동의 확인을 통과하게 (test/consent-fixture.ts)
       sessions.set(who, token);
@@ -89,7 +90,7 @@ function world(o: { engine?: string } = {}) {
     return app.fetch(new Request(`${ORIGIN}${path}`, { method: 'POST', body, headers: { ...(await cookie(who, lang)), origin: ORIGIN } }) as never, env);
   };
   const rows = (sql: string, ...a: unknown[]) => raw.prepare(sql).all(...(a as never[])).map((r) => ({ ...r }));
-  const events = () => rows('SELECT application_id, event, actor_id FROM application_events WHERE event != ? ORDER BY at, rowid', 'viewed');
+  const events = () => rows('SELECT application_id, event, actor_id FROM application_events WHERE event != ? ORDER BY at, ctid', 'viewed');
   const statusOf = (id: string) => String(raw.prepare('SELECT status FROM applications WHERE id = ?').get(id)!.status);
   return {
     raw, env, get, post, rows, events, statusOf, mails, engineInputs,
@@ -106,7 +107,7 @@ async function applyAs(w: World, who: 's1' | 's2' | 's3', o: { consent?: boolean
   for (const [k, v] of Object.entries(fields)) fd.set(k, v);
   fd.set('attachment', new File([], '', { type: 'application/octet-stream' }));
   expect((await w.post('/my/resumes/new', fd, who)).status).toBe(302);
-  const resumeId = String(w.raw.prepare('SELECT id FROM resumes WHERE user_id = ? ORDER BY created_at DESC, rowid DESC').get(who)!.id);
+  const resumeId = String(w.raw.prepare('SELECT id FROM resumes WHERE user_id = ? ORDER BY created_at DESC, ctid DESC').get(who)!.id);
   const { title: _t, ...rest } = fields;
   const form: Record<string, string> = { resume_id: resumeId, ...rest };
   if (o.consent) form.consent = '1';
@@ -129,7 +130,7 @@ async function three(w: World) {
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const noStore = (r: Response) => expect(r.headers.get('cache-control')).toBe('private, no-store');
 
-describe.skipIf(!hasSqlite)('기업 → 지원자 메일 (T-09b)', () => {
+describe.skipIf(!hasDb)('기업 → 지원자 메일 (T-09b)', () => {
   let logSpy: ReturnType<typeof vi.spyOn>, errSpy: ReturnType<typeof vi.spyOn>, warnSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -254,7 +255,7 @@ describe.skipIf(!hasSqlite)('기업 → 지원자 메일 (T-09b)', () => {
     // 메시지는 D1 어디에도 없다 (email_log 는 템플릿·결과·주소 해시뿐)
     expect(w.rows('SELECT template, result FROM email_log WHERE template = ?', 'interview_request')).toEqual(
       Array(3).fill({ template: 'interview_request', result: 'sent' }));
-    const dump = JSON.stringify(w.rows("SELECT name FROM sqlite_master WHERE type = 'table'").flatMap((r) => w.rows(`SELECT * FROM "${String(r.name)}"`)));
+    const dump = JSON.stringify(w.rows("SELECT table_name AS name FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'").flatMap((r) => w.rows(`SELECT * FROM "${String(r.name)}"`)));
     for (const s of ['请于11月25日', '서울 강남구 사무실', SEEKERS.s1.email]) expect(dump).not.toContain(s);
   });
 

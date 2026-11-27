@@ -7,25 +7,30 @@
 
 - **무엇:** 한국에 진출한 중국기업의 채용 공고와 기업 정보를 보여주는 사이트. 기업은 중국어로 공고를 쓰고, 구직자는 한국어로 본다.
 - **법적 형태:** 직업정보제공사업. 직업소개(알선)는 하지 않는다. 구직자와 기업은 직접 연결된다.
-- **구성:** Cloudflare Worker 하나(Hono). 화면은 서버 렌더링, DB 는 D1, 파일은 R2, 메일은 Resend, 번역은 현지화 엔진 층(Claude · Gemini · Workers AI 중 설정으로 선택, 7절).
-- **환경:** dev(로컬) → test(recruit.kimbbob.xyz, 가짜 데이터) → production(운영 도메인 미정, 신고 후). 6절, 배포는 docs/DEPLOY.md.
+- **구성 (T-19):** 운영자 PC 의 Node.js 26 서버 하나(Hono + @hono/node-server, 127.0.0.1 에서만) — Cloudflare Tunnel 뒤. 화면은 서버 렌더링, DB 는 PostgreSQL 16,
+  파일은 PC 의 폴더(DATA_DIR\files), 메일은 Resend, 번역은 현지화 엔진 층(Claude 기본 · Gemini 선택, 7절). T-18 까지는 Cloudflare Worker + D1 + R2 + cron 이었다 (docs/DB-PORTING.md).
+- **환경:** 서버는 지금 하나 — test(recruit.kimbbob.xyz, 개발·시연·시험을 함께, 가짜 데이터). production(운영 도메인 미정, 신고 후)은 나중에 따로. 6절, 설치·운영은 docs/DEPLOY.md.
 
 ```
-브라우저(한국·중국) ──▶ Cloudflare Worker (src/index.tsx)
-                          ├─ 정적 파일 public/
-                          ├─ D1  (migrations/)
-                          ├─ R2  (이력서 파일·검증 서류, 비공개)
-                          └─ 외부 API: Resend · 현지화 엔진(Claude·Gemini·Workers AI) · 국세청 사업자 상태조회   ← Worker 에서만 호출
+브라우저(한국·중국) ──https──▶ Cloudflare (recruit.kimbbob.xyz) ──Tunnel──▶ 운영자 PC 127.0.0.1:8787 (src/server.ts → src/index.tsx)
+                                                                          ├─ 정적 파일 public/ (앞단)
+                                                                          ├─ PostgreSQL 16 (migrations/pg/, localhost:5433)
+                                                                          ├─ 파일 폴더 DATA_DIR\files (이력서 파일·검증 서류, 비공개)
+                                                                          ├─ 예약 작업: 서버 안의 실행기 (매시 정각, 14절)
+                                                                          └─ 외부 API: Resend · 현지화 엔진(Claude·Gemini) · 국세청 사업자 상태조회   ← 서버에서만 호출
 ```
 
-기술설계서는 Pages + Workers 로 적었지만, 배포 단위를 하나로 줄이기 위해 **정적 파일을 포함한 Worker 하나**로 구현했다. 기능 차이는 없다.
+T-19 전에는 정적 파일을 포함한 Cloudflare Worker 하나였다. 화면·기능은 같고, 바뀐 것은 실행 환경·DB·파일 저장소·예약 작업·공개 화면 캐시다 (아래 각 절의 "T-19").
 
 ## 2. 폴더 구조
 
 ```
 src/
-  index.tsx          진입점. 미들웨어 순서: 보안 헤더 → 출처 검사 → 세션 → 언어
-  env.ts             바인딩·타입·기능 플래그
+  server.ts          Node 진입점 (T-19): .env → 설정, DB 연결·파일 저장소·캐시, 본문 크기 제한 → public/ → 앱, 127.0.0.1 만, 예약 작업 실행기, 정상 종료
+  server-env.ts      .env 읽기(readServerConfig, 순수)·런타임 만들기(createRuntime)
+  maint-cli.ts       npm run maint -- <단계> (예약 작업 단계 하나를 지금, 같은 DB 잠금)
+  index.tsx          앱. 미들웨어 순서: 보안 헤더 → 출처 검사 → 세션 → 언어
+  env.ts             Env(DB·FILES·.env 문자열)·타입·기능 플래그
   render.tsx         공통 레이아웃에 넣어 응답
   lib/
     rules.ts         ★ 법적 규칙 (게재 가능 여부, 금지 표현, 기술유출 필터, 지원 상태 계산) — 순수 함수
@@ -41,7 +46,10 @@ src/
     jobs.ts          공고 폼 검사, 저장 시 상태 계산(planJobSave), 숫자 대조 — 순수 함수
     public-jobs.ts   공개 공고 조건(isPubliclyVisible)·필터·페이지 — 순수 함수 (9절)
     options.ts       직무·업계·근무지 선택 항목(이름 표시·고를 수 있는 값·관리자 입력 검사) — 순수 함수 (10절)
-    page-cache.ts    공개 화면 캐시 (비로그인만, 60초) (9절)
+    page-cache.ts    공개 화면 캐시 (비로그인만, 60초, T-19 부터 서버 메모리) (9절)
+    storage.ts       파일 저장소 FileStore (R2 와 같은 put·get·delete·list, DATA_DIR\files, 키 검사) (T-19)
+    scheduler.ts     예약 작업 실행기 (매시 정각, 겹치면 건너뜀, DB 권고 잠금) (T-19, 14절)
+    system-check.ts  /admin/system 의 실행 상태 점검 (DB·마이그레이션·폴더·디스크·예약 작업) (T-19, 6-1)
     resume.ts · resume-files.ts  이력서 항목 검사·암호화, 첨부파일 검사·암호화·R2 (4절)
     application.ts · application-files.ts  지원 가능 여부·국외 이전 동의·복사본·취소, 지원서 첨부 내려받기 (11절)
     applicants.ts    본인 아닌 사람이 지원서·첨부를 여는 유일한 길 openApplication · downloadApplicationFile (12절)
@@ -55,7 +63,8 @@ src/
     retention.ts     보관 기간: 기본값·범위(RETENTION_SPEC)·설정 해석·관리자 폼 검사·저장 계획(rev)·변경 기록 — 순수 함수 (14절, T-12c)
     retention-setting.ts  보관 기간 설정 한 행 읽기(loadRetention)
     localize/        현지화 엔진 층 (7절)
-  db/                SQL 과 D1 호출은 여기에만 (T-05d). users · sessions(인증코드·세션·TOTP 대기) · twofa(등록 대기·복구 코드·시도 수·끄기·관리자 초기화, T-16) · companies(기업·담당자·초대·서류 행)
+  db/                SQL 과 DB 호출은 여기에만 (T-05d). types.ts(D1 과 같은 Db 모양)·pg.ts(PostgreSQL 어댑터, T-19)·locks.ts(권고 잠금)·system.ts(점검 읽기)
+                     · users · sessions(인증코드·세션·TOTP 대기) · twofa(등록 대기·복구 코드·시도 수·끄기·관리자 초기화, T-16) · companies(기업·담당자·초대·서류 행)
                      · jobs · public-jobs(공개 공고 읽기) · logs(access_log·email_log) · admin(개수) · settings(site_settings) · options(job_options) · resumes(이력서)
                      · applications(지원·동의·취소) · application-views(지원 현황 화면용 읽기) · applicants(기업·관리자 쪽: 내용 없는 지원자 목록·개수·지원 한 건·viewed·열람 기록 읽기)
                      · consents(이용약관·개인정보 동의 읽기·쓰기) · account(탈퇴 트랜잭션) · usage(하루 사용량 한도, 15절) · alerts(조건 알림·해지 토큰, 17절). 판단은 하지 않고 받은 값으로 SQL 만 실행한다.
@@ -65,9 +74,10 @@ src/
   locales/ko.ts zh.ts  화면 문구
   routes/            화면·API 라우트 (기능별 파일)
   views/             JSX 화면 조각
-migrations/          D1 스키마 (번호 순서, 기존 파일 수정 금지)
+migrations/pg/       PostgreSQL 스키마 (번호 순서, 기존 파일 수정 금지, npm run db:migrate) — migrations/*.sql 은 예전 D1 기록 (migrations/README.md)
 public/              정적 파일 (app.css). 외부 폰트·스크립트 없음
-test/                vitest. rules·authz·crypto 는 반드시 테스트한다
+scripts/             운영자 명령: db-migrate · backup · restore · import-from-cloudflare · predeploy · build
+test/                vitest. rules·authz·crypto 는 반드시 테스트한다. DB 는 PGlite(test/pg-test-db.ts), 동시성은 실제 PostgreSQL(PG_TEST_URL)
 docs/                이 문서, API.md, TASKS.md
 ```
 
@@ -118,19 +128,22 @@ docs/                이 문서, API.md, TASKS.md
 
 ## 4. 데이터
 
-스키마는 `migrations/` 의 파일을 번호 순서대로 적용한 결과가 기준이다. 주석에 🔒 가 붙은 컬럼은 암호문만 저장한다.
+스키마는 `migrations/pg/` 의 파일을 번호 순서대로 적용한 결과가 기준이다 (= 예전 `migrations/0001~0013` 의 결과, 컬럼 설명은 그 파일들의 주석). 주석에 🔒 가 붙은 컬럼은 암호문만 저장한다.
+
+> **이름에 대해 (T-19):** 아래와 다른 절의 "R2"·"R2 객체"·"R2 키" 는 지금은 **PC 의 파일 폴더(DATA_DIR\\files, `lib/storage.ts`)의 파일·키**를, "D1" 은 **PostgreSQL** 을, "Worker" 는 **Node 서버**를 뜻한다.
+> 컬럼 이름(`file_r2_key`·`r2_key`), 키 모양(`rfiles/<uuid>`·`vdocs/…`), 암호화(ENC_KEY·AES-GCM·키를 AAD 로)는 바꾸지 않았다.
 
 - **이력서는 회원당 여러 개(최대 5개)** 저장할 수 있고, 하나를 대표 이력서(`is_default`)로 지정한다. 지원할 때 어느 이력서로 낼지 고르며, 기본 선택은 대표 이력서다.
 - **이력서는 간단하게 받는다.** 한국식 상세 이력서 양식을 강요하지 않는다. 필수는 아래 5개뿐이고, 나머지는 첨부파일로 대신한다.
   ```
   필수: name(이름) · chinese_level(중국어 수준) · years(총 경력 연차) · headline(한 줄 소개, 100자) · 연락 이메일(계정 이메일 기본값)
-  선택: phone · desired_role(희망 직무) · experience_text(경력 요약, 자유 서술 1칸) · 첨부파일 1개(PDF·DOCX, 5MB, Worker 에서 암호화해 R2 비공개 저장)
+  선택: phone · desired_role(희망 직무) · experience_text(경력 요약, 자유 서술 1칸) · 첨부파일 1개(PDF·DOCX, 5MB, 서버에서 암호화해 비공개 저장)
   ```
   `resumes.body` 에는 위 항목을 JSON 으로 묶어 암호화해 저장하고(`lib/resume.sealResume`), 첨부파일은 `file_r2_key` 로 가리킨다.
   - **첨부파일 정보(원래 파일명·종류·크기)는 암호화된 `body` 안의 `file` 에 있다.** 파일명에 이름이 들어 있는 경우가 많기 때문이다.
     R2 키는 `rfiles/<무작위 UUID>` 이고 R2 객체에는 파일명·종류를 남기지 않는다. 평문으로 남는 것은 `title`(구직자가 붙인 이름표, 화면에서 개인정보를 쓰지 말라고 안내)과 `file_r2_key` 뿐이다.
-  - **첨부파일 바이트도 Worker 에서 `ENC_KEY` 로 AES-GCM 암호화한 뒤 R2 에 넣는다** (`lib/resume-files.ts`, R2 키를 추가 인증 데이터로 써서 다른 위치로 옮긴 객체는 풀리지 않는다).
-    R2 버킷을 직접 열어도 내용이 보이지 않는다. 크기 한도는 기술설계서의 10MB 대신 **5MB**(무료 플랜 CPU 한도 안에서 암호화·복호화하기 위해), 종류는 내용으로 판별한 **PDF·DOCX 만**(HWP·DOC·이미지는 PDF 로 저장해 올리도록 안내).
+  - **첨부파일 바이트도 서버에서 `ENC_KEY` 로 AES-GCM 암호화한 뒤 저장한다** (`lib/resume-files.ts`, R2 키를 추가 인증 데이터로 써서 다른 위치로 옮긴 객체는 풀리지 않는다).
+    R2 버킷을 직접 열어도 내용이 보이지 않는다. 크기 한도는 기술설계서의 10MB 대신 **5MB**(Workers 무료 플랜 CPU 한도 때문이었다 — T-19 뒤에도 화면·약속을 바꾸지 않으려고 그대로 둔다), 종류는 내용으로 판별한 **PDF·DOCX 만**(HWP·DOC·이미지는 PDF 로 저장해 올리도록 안내).
   - 이력서마다 자기 R2 객체를 가진다(복사하면 새 키로 다시 암호화). 새 파일은 R2 에 먼저 올리고 DB 를 쓰며, DB 쓰기가 실패하면 방금 올린 파일을 지운다.
     교체·삭제된 예전 객체는 DB 가 더 이상 가리키지 않게 된 **뒤에** 지운다. R2 삭제가 실패하면 어느 행도 가리키지 않는 객체가 남을 수 있다 → 14절 sweepOrphans 가 24시간 뒤 치운다.
   첨부파일 또는 experience_text 중 하나는 있어야 지원할 수 있다.
@@ -166,41 +179,44 @@ docs/                이 문서, API.md, TASKS.md
 | `FLAG_PRODUCTION_JOBS` | 생산직 공고 등록·노출 | 운영자 결정 |
 | `FLAG_PAID_LABEL` | "유료 제작" 표시 | 유료 제작물을 처음 게재하는 시점에 반드시 켠다 |
 
-## 6. 환경 (T-13)
+## 6. 환경 (T-13, T-19)
 
-| 환경 | wrangler.jsonc | Worker 이름 | 주소 | D1 · R2 | 데이터 | 키 없을 때 메일 |
-|---|---|---|---|---|---|---|
-| dev | 맨 위 + `--var APP_ENV:dev` (start.bat) | (로컬) | localhost:8787 | 로컬 D1·R2 | 가짜 | 콘솔 출력 (dev 만) |
-| test | 맨 위 | `recruit-test` | recruit.kimbbob.xyz (Custom Domain, Cloudflare Access 권장) | `recruit-test` · `recruit-test-files` | 가짜만 | 보내지 않음(`no_api_key`, 출력 없음) → 로그인 불가 |
-| production | `env.production` | `recruit` | 운영 도메인 (미정, `REPLACE_WITH_PRODUCTION_DOMAIN`) | `recruit-prod` · `recruit-prod-files` | 실제 | 보내지 않음 (배포도 `secrets.required` 로 막힘) |
+| 환경 | 어디 | 주소 | DB · 파일 | 데이터 | 키 없을 때 메일 |
+|---|---|---|---|---|---|
+| test | 운영자 PC (`.env` 의 `APP_ENV=test`) — **지금 하나뿐인 서버** (개발·시연·시험을 함께) | recruit.kimbbob.xyz (Cloudflare Tunnel → 127.0.0.1:8787) | PostgreSQL `recruit` · `F:\works\Recruit-01-data\files` | 가짜만 | 보내지 않음(`no_api_key`) → 로그인 불가 |
+| dev | 개발자 PC (`APP_ENV=dev`) | http://127.0.0.1:8787 | 개발자의 PostgreSQL · 폴더 | 가짜 | 콘솔 출력 (dev 만) |
+| production | (나중) 다른 PC·DB·폴더·`.env` | 운영 도메인 (미정) | 따로 | 실제 | 보내지 않음 |
 
-- **물려지지 않는 키:** Cloudflare 문서(https://developers.cloudflare.com/workers/wrangler/configuration/ "Non-inheritable keys")와 wrangler 4.166 설정 스키마에 따르면 `vars`·`d1_databases`·`r2_buckets`·`ai`·`secrets` 는
-  named environment 로 물려지지 않는다 → `env.production` 에 모두 다시 적었다(`test/deploy-checks.test.ts` 가 vars 이름이 같은지 확인). `triggers`·`observability`·`routes`·`workers_dev` 는 물려지지만 같은 값으로 다시 적었다.
-  맨 위 vars 에 줄을 더하면 production 에도 더한다.
-- `workers_dev`·`preview_urls` 는 두 환경 모두 끔 (Access 를 거치지 않는 두 번째 주소가 생기지 않게).
-- **Workers Logs:** `observability.logs.enabled = true`, `invocation_logs = false`(요청마다의 자동 기록을 남기지 않고 코드가 찍은 줄 — `maint:`·`error:` 등, 개인정보 없음 — 만 남긴다).
-- **Workers AI:** 운영에만 (7절).
-- **비밀값**(`ENC_KEY`, `SESSION_PEPPER`, `RESEND_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`)은 `wrangler secret put <이름> [--env production]` 으로 환경마다 **새 값**을 넣는다. 운영은 앞의 셋이 `secrets.required`.
+- **설정 = `.env` 하나** (`.env.example` 에 모든 이름과 설명). 서버는 알려진 이름만 읽어 `Env` 를 만든다(`server-env.readServerConfig`) — 필수 값(APP_ENV·APP_ORIGIN·DATABASE_URL·ENC_KEY·SESSION_PEPPER)이 없으면 시작하지 않는다.
+  데이터·백업 폴더가 코드 폴더 안이면 시작하지 않는다 (첨부파일이 git·빌드에 섞이지 않게). 기능 플래그는 없으면 off.
+- **127.0.0.1 에서만 듣는다.** 바깥에서는 터널로만 들어온다. 앱은 요청 IP 를 쓰지 않는다 — 필요해지면 터널이 붙이는 `CF-Connecting-IP` 만 믿는다(`X-Forwarded-For` 는 꾸밀 수 있다).
+  출처 검사(`auth.sameOrigin`)는 요청 주소의 출처 또는 `APP_ORIGIN` 과 같은 Origin 만 받는다 — 터널 뒤에서 요청 주소가 `http://127.0.0.1:8787`·`http://recruit.kimbbob.xyz` 여도 브라우저의 Origin(`https://recruit.kimbbob.xyz`)이 `APP_ORIGIN` 과 같아 통과한다 (test/server.test.ts).
+- 디버거(`--inspect`)가 켜져 있으면 dev 가 아닌 서버는 시작하지 않는다. 요청 본문은 12MB 까지(사업자 서류 10MB + 폼).
+- **로그:** 서버 출력에 `server:`·`maint:`·`backup:`·`error:` 줄만 (개인정보·비밀값 없음). 서비스 관리 프로그램이 모은다. 요청마다의 자동 기록은 남기지 않는다.
+- **비밀값**(`ENC_KEY`, `SESSION_PEPPER`, `DATABASE_URL`, `RESEND_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `BACKUP_PASSPHRASE`)은 `.env` 에만. 예전 테스트 서버의 데이터를 가져오므로 ENC_KEY·SESSION_PEPPER 는 그 서버의 값 그대로 (DEPLOY.md 3-1).
 - `ENC_KEY` 를 잃으면 이력서와 (백업 안의) 이력서를 복구할 수 없다. 운영자는 오프라인 사본을 보관한다.
-- 무료 플랜 한도: Workers 요청 10만/일·CPU 10ms/요청, D1 읽기 500만 행/일·쓰기 10만 행/일, D1 Time Travel 7일(유료 30일). 실제 이력서를 받는 시점부터는 유료 플랜(월 5달러)을 권장한다.
-- **배포·백업 절차는 docs/DEPLOY.md** (npm 스크립트 `deploy:*`·`predeploy:*`·`db:*:migrate`·`backup:*`, `scripts/`). 백업 = D1 export 를 비밀문구(scrypt) + AES-256-GCM 으로 암호화한 파일. R2 파일은 백업하지 않는다.
+- **설치·백업 절차는 docs/DEPLOY.md** (npm 스크립트 `build`·`start`·`db:migrate`·`maint`·`backup`·`restore`·`import:cloudflare`·`predeploy:prod`). 백업 = pg_dump + 첨부파일 폴더를 비밀문구(scrypt) + AES-256-GCM 으로 암호화한 파일 하나 (T-13 의 D1 백업과 달리 **파일도 들어 있다**).
+- T-19 전(Cloudflare): `wrangler.jsonc` 의 맨 위 = 테스트, `env.production` = 운영, Workers Logs, Workers AI(운영에만). 모두 없앴다.
 
 ### 6-1. 설정 점검 (`lib/config-check.ts`, `GET /admin/system`)
 
-- 순수 함수 `configChecks(env)` 가 항목마다 `ok | warning | problem` 과 결과 코드를 돌려준다: ENC_KEY(32바이트 base64), SESSION_PEPPER(16자 이상, 서버에서 `.dev.vars.example` 의 로컬 값이면 문제),
+- 순수 함수 `configChecks(env)` 가 항목마다 `ok | warning | problem` 과 결과 코드를 돌려준다: ENC_KEY(32바이트 base64), SESSION_PEPPER(16자 이상, 서버에서 예전 `.dev.vars.example` 의 로컬 값이면 문제),
   APP_ORIGIN(https, 자리표시자 없음), MAIL_FROM, RESEND_API_KEY(운영 = 문제, 테스트 = 경고), 신고번호(운영에서 경고 — 게재는 `publishBlocks` 가 막는다), 약관·방침의 【확인 필요】/【待确认】 개수(운영 = 문제),
-  OPERATOR_DOMAINS, 켜진 `FLAG_*`(경고), D1·R2 바인딩, 점검 모드, 현지화 엔진.
+  OPERATOR_DOMAINS, 켜진 `FLAG_*`(경고), DB·파일 저장소 연결, 점검 모드, 현지화 엔진(Claude·Gemini 키 수).
+- **실행 상태 점검 (T-19, `lib/system-check.ts`):** `runtimeChecks(facts)`(순수) + `gatherRuntimeFacts(env)` — DB 연결(`SELECT 1`), 적용된 마이그레이션(`schema_migrations` = `db/system.PG_MIGRATIONS` 인지, 빠지면 문제·모르는 것이 있으면 경고),
+  첨부파일 폴더 쓰기(빈 파일을 만들고 지움, 안 되면 문제), 백업 폴더 쓰기(경고), 디스크 남은 공간(`fs.statfs`, 2GB 미만 경고·500MB 미만 문제), 예약 작업(`maint.last_run`: 2시간 10분이 넘으면 문제, 막 켜졌으면 기다림, 실패한 단계가 있으면 경고, `SCHEDULER=off` 경고).
+  경로는 결과에 넣지 않는다(숫자·코드만). 서버 실행 정보(`env.RUNTIME`)가 없으면(테스트) DB·마이그레이션만 본다.
 - **비밀값의 값은 돌려주지 않는다** — `secretSummary` 는 이름·설정됨/없음·길이 구간(16자 미만/16~31/32 이상)뿐. 테스트가 결과 전체에 비밀값의 앞뒤 6자도 없는지 확인한다.
-- 화면은 관리자(TOTP 세션)만, `private, no-store`. 점검 표 + 비밀값 표 + 오늘 사용량 + 사용량 한도와 조건 알림(지금 적용되는 값·출처·발송 상태, T-17) + 보관 기간(읽기만) + cron 시간표. 적용된 마이그레이션 수는 Worker 안에서 알 수 없어 보이지 않고 `wrangler d1 migrations list` 를 안내한다.
+- 화면은 관리자(TOTP 세션)만, `private, no-store`. 점검 표 + 비밀값 표 + 오늘 사용량 + 사용량 한도와 조건 알림(지금 적용되는 값·출처·발송 상태, T-17) + 보관 기간(읽기만) + cron 시간표. 적용된 마이그레이션은 실행 상태 점검의 한 줄로 보인다 (T-19 전에는 Worker 안에서 알 수 없어 `wrangler d1 migrations list` 를 안내했다).
 - 점검 결과로 요청을 막지 않는다(사이트는 항상 뜬다). `/api/health` 는 `{ ok, env }` 그대로 (공개 주소에 점검 결과를 내지 않는다).
-- 배포 전에는 `scripts/predeploy.mjs` 가 같은 종류의 점검을 설정 파일·소스로 한다(자리표시자·신고번호·약관 표시(주석 제외)·git).
+- 운영 서버를 올리기 전에는 `npm run predeploy:prod -- --env-file <운영 .env>`(`scripts/predeploy.mjs`)가 같은 종류의 점검을 `.env`·소스로 한다(자리표시자·필수 값·신고번호·https·시연 로그인·약관 표시(주석 제외)·git·형식 검사·테스트).
 
 ### 6-2. 점검 모드 (`MAINTENANCE`, `lib/pause.ts`)
 
 - `MAINTENANCE = "on"`(대소문자·공백 무시) 이면 `src/index.tsx` 의 미들웨어(세션·언어 다음, 동의 확인·라우트 앞)가 503 점검 안내(한·중, `Retry-After: 1800`, `private, no-store`)를 보낸다.
 - 통과: 관리자 세션(TOTP 통과 세션만 관리자 — `loadUser`), `/api/health`, `/login*`·`/logout`·`/lang/*`(관리자가 로그인하는 길), `/admin*`(로그인하지 않았으면 원래대로 로그인·403), `public/` 정적 파일.
-- 라우트보다 먼저 돌므로 page-cache(9절)를 읽지도 쓰지도 않는다 — 캐시된 공개 화면도 나가지 않는다(테스트로 확인). 예약 작업(`scheduled`)은 멈추지 않는다.
-- 켜고 끄기: `wrangler.jsonc` 의 `"MAINTENANCE"` 또는 비상용 `npx wrangler deploy [--env production] --var MAINTENANCE:on` (docs/DEPLOY.md 6-2).
+- 라우트보다 먼저 돌므로 page-cache(9절)를 읽지도 쓰지도 않는다 — 캐시된 공개 화면도 나가지 않는다(테스트로 확인). 예약 작업은 멈추지 않는다.
+- 켜고 끄기: `.env` 의 `MAINTENANCE=on|off` → 서버 다시 시작 (docs/DEPLOY.md 9-1).
 
 ## 7. 공고 현지화 (T-05)
 
@@ -210,16 +226,14 @@ docs/                이 문서, API.md, TASKS.md
 → 기업이 원문 | 한국어 | 대조본을 나란히 보고 승인 → `publishBlocks()` 가 빈 배열이면 게재. 연봉·근무시간·근무지 등은 구조 항목으로 받아 번역하지 않는다.
 
 - **엔진 층** `src/lib/localize/`: `types.ts`(LocalizeEngine 인터페이스), `prompt.ts`(프롬프트·JSON 출력 해석), `index.ts`(순서·시간 제한·`localizeJob`),
-  `registry.ts`(엔진 목록), `engines/`(claude · gemini · workers_ai, OpenAI 호환 엔진 만들기 `openai-compat.ts`).
-- **순서:** `LOCALIZE_ENGINE` 이 쓸 수 있으면 먼저, 나머지는 claude → gemini → workers_ai 중 키·바인딩이 있는 것. 엔진당 한 번(재시도 없음), 호출당 25초,
+  `registry.ts`(엔진 목록), `engines/`(claude · gemini, OpenAI 호환 엔진 만들기 `openai-compat.ts`). T-19 에서 Workers AI 엔진을 뺐다 (Cloudflare 안에서만 부를 수 있다).
+- **순서:** `LOCALIZE_ENGINE` 이 쓸 수 있으면 먼저, 나머지는 claude → gemini 중 키가 있는 것. 예전 공고의 `localize_engine = 'workers_ai'` 는 "다시 만들기" 때 모르는 엔진으로 보고 기본 순서로 한다. 엔진당 한 번(재시도 없음), 호출당 25초,
   전체 55초를 넘기면 다음 엔진을 시작하지 않는다. "다시 만들기" 는 지난번 엔진(`jobs.localize_engine`) 다음부터. 모두 안 되면 수동 입력.
 - **보내는 것:** 중국어 제목·본문뿐. 원문에 이메일·전화번호가 있으면 저장 단계에서 거부한다. 연락처·연봉 등 구조 항목은 프롬프트에 넣지 않는다.
 - **출력:** JSON 만 받는다. 빈 값·JSON 아님·길이 초과는 실패로 보고 다음 엔진으로. 엔진 출력은 믿을 수 없는 글이므로 화면에는 JSX 이스케이프로만 출력한다.
 - **기록:** 콘솔에는 엔진 id 와 오류 종류(HTTP 상태)만. 기업 화면에는 엔진 이름을 보여주지 않는다(관리자 화면에만).
 - **캐시:** `translations` 테이블은 쓰지 않는다 (결과는 공고 행에 저장되고, "다시 만들기" 는 새 결과가 필요하다).
-- **변수:** `LOCALIZE_ENGINE`, `LOCALIZE_CLAUDE_MODEL`, `LOCALIZE_GEMINI_MODEL`, `LOCALIZE_WORKERS_AI_MODEL`(비우면 코드 기본값). 비밀값 `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`.
-  Workers AI 는 `wrangler.jsonc` 의 `"ai"` 바인딩이 있어야 한다 — **운영(`env.production`)에만** 켰다. 로컬 `wrangler dev` 에서도 원격 호출이라 맨 위(테스트 = 로컬 개발)에 두면
-  로그인하지 않은 PC 에서 `wrangler dev` 가 시작되지 않는다(T-13 에서 확인, docs/DEPLOY.md 6-5).
+- **변수:** `LOCALIZE_ENGINE`, `LOCALIZE_CLAUDE_MODEL`, `LOCALIZE_GEMINI_MODEL`(비우면 코드 기본값). 비밀값 `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` (`.env`). 엔진은 서버에서만 부른다 (CLAUDE.md 규칙 7).
 - **상태:** 원문·한국어가 바뀌면 `localize_status = review`, 게재 중이면 미게재로(`jobs.planJobSave`). 기업이 한국어를 직접 고치면 대조본을 지운다.
   숫자 대조(`jobs.digitDiff`)는 경고만 하고 게재 조건이 아니다. 모든 쓰기는 `jobs.rev`(내용 버전)가 화면을 연 때와 같을 때만 반영한다.
 
@@ -240,7 +254,8 @@ docs/                이 문서, API.md, TASKS.md
   `company_name_public = 0` 이면 기업 이름·id 를 SQL 에서부터 NULL 로 받아 "기업명 비공개" 로 표시하고 기업 페이지로 연결하지 않는다.
 - **언어:** 공고 글은 한국어로만 게재된다. 중국어 화면도 제목·본문은 한국어 그대로이고 화면 문구만 중국어다.
 - **연락·지원:** 상세에는 기업이 입력한 연락처(mailto)와 지원 칸(11절)을 둔다. 비로그인(캐시되는 화면)의 지원 칸은 누구에게나 같은 "지원하기" 링크뿐이다 — 캐시된 HTML 에 사용자별 내용이 들어가지 않게.
-- **캐시 (`lib/page-cache.ts`):** `/`, `/jobs`, `/jobs/:id` 의 **로그인 쿠키(sid)가 없는** GET 만 Workers Cache API(`caches.default`)에 **60초** 저장한다.
+- **캐시 (`lib/page-cache.ts`):** `/`, `/jobs`, `/jobs/:id` (와 `/terms`·`/privacy`) 의 **로그인 쿠키(sid)가 없는** GET 만 **서버 메모리**(`MemoryPageCache`, `env.PAGE_CACHE`)에 **60초** 저장한다
+  (T-19 전에는 Workers Cache API `caches.default`). 크기 한도: 항목 500개·항목 하나 512KB·합계 32MB (넘으면 오래 넣은 것부터 버림). 서버를 다시 켜면 비워진다. `env.PAGE_CACHE` 가 없으면(테스트) 캐시하지 않는다.
   - 키 = 경로 + 이름순으로 정렬한 검색 조건 + 판별된 언어(`?lang=` → `lang` 쿠키 → Accept-Language). 같은 주소도 언어마다 따로 저장된다.
   - 응답 머리글 `Cache-Control: public, max-age=60`, `Vary: Cookie, Accept-Language` (브라우저가 언어 쿠키·로그인 쿠키가 바뀐 뒤 저장해 둔 화면을 다시 쓰지 않게).
     200 이고 Set-Cookie 가 없는 응답만 저장한다. 404·302 는 `private, no-store`.
@@ -248,7 +263,7 @@ docs/                이 문서, API.md, TASKS.md
   - 필터 폼은 빈 칸도 보내므로 `/jobs` 는 정규화 주소(`jobsHref`)가 아니면 302 로 보내 같은 조건이 한 캐시 항목을 쓰게 한다.
     숨긴 필터(아래 "보일 필터")도 정규화 주소에서 빠지므로 캐시 키에 설정을 따로 넣지 않는다.
   - **알려진 한계:** 마감·차단·게재 중단·기업 승인 취소된 공고도 **최대 60초** 캐시에서 보일 수 있다 (마감일이 지난 공고도 마찬가지).
-    그래서 TTL 을 짧게 둔다. 배포 직후에도 이전 화면이 최대 60초 보일 수 있다. Cache API 는 데이터센터별이라 지역마다 따로 채워진다.
+    그래서 TTL 을 짧게 둔다. 서버는 하나라 모든 방문자가 같은 캐시를 본다 (T-19 전 Cache API 는 데이터센터별이었다).
   - `X-Page-Cache: hit | miss | bypass` 머리글로 확인할 수 있다.
 - **페이지:** 20건씩, `published_at DESC, id DESC`. 전체 개수를 세지 않고 21건을 읽어 다음 페이지 여부만 안다. 100페이지(2,000건) 넘게는 줄인다.
 - **인덱스:** 기본 목록(생산직 플래그 꺼짐)은 기존 `idx_jobs_status(status, job_family, published_at)` 를 최신 순으로 읽고 LIMIT 에서 멈춘다
@@ -383,7 +398,7 @@ docs/                이 문서, API.md, TASKS.md
 
 ## 14. 예약 작업: 자동 마감·보관 기한 삭제·정리 (T-12)
 
-코드: `src/lib/retention.ts`(기본값·범위·설정 해석, 한 곳), `src/lib/retention-setting.ts`(설정 읽기), `src/lib/maintenance.ts`(단계·시간표·상한·실행기), `src/db/maintenance.ts`(SQL), `src/index.tsx` 의 `scheduled`.
+코드: `src/lib/retention.ts`(기본값·범위·설정 해석, 한 곳), `src/lib/retention-setting.ts`(설정 읽기), `src/lib/maintenance.ts`(단계·시간표·상한·실행기), `src/db/maintenance.ts`(SQL), `src/lib/scheduler.ts`(매시 정각에 부르는 실행기, T-19 — 예전 `src/index.tsx` 의 `scheduled`).
 **이 작업은 데이터를 지운다.** 모든 UPDATE·DELETE 는 호출부가 넘긴 시각으로 거는 시간 조건 + 행 수 한도 + "아직 처리 전" 조건을 가지며, 두 번 실행해도 더 바뀌지 않는다.
 
 ### 14-1. 보관 기간 = 관리자 설정 = 개인정보처리방침 3항 (T-12c)
@@ -445,7 +460,10 @@ docs/                이 문서, API.md, TASKS.md
 
 ### 14-2. 시간표와 상한
 
-cron 은 **매시 정각 한 번**(`wrangler.jsonc` `"0 * * * *"`, `scheduledTime` 의 UTC 시각으로 단계를 고른다), 한 번에 **한 단계**만 한다 (`SCHEDULE`, 24칸).
+**매시 정각 한 번**(T-19: 서버 안의 `Scheduler` 가 다음 정각까지 기다렸다가 **그 정각의 시각(초)**으로 부른다 — 예전 cron `"0 * * * *"` 의 `scheduledTime` 과 같다. PC 가 잠들어 있던 동안의 정각은 건너뛴다),
+한 번에 **한 단계**만 한다 (`SCHEDULE`, 24칸 — 그대로).
+앞 실행이 아직 돌고 있으면 그 정각은 건너뛴다(쌓지 않음, `maint: skipped reason=previous_run_still_running`). 프로세스 사이에는 PostgreSQL 권고 잠금(`db/locks`, `pg_try_advisory_lock`)을 얻은 쪽만 실행한다(`locked_by_other_process`).
+끝나면 `site_settings` 'maint.last_run' 에 {at, finished_at, ok, steps} 를 남긴다 (/admin/system). 단계를 골라 지금 실행: `npm run maint -- <단계>` (같은 잠금, HTTP 경로 없음).
 
 | UTC | KST | 단계 | | UTC | KST | 단계 |
 |---|---|---|---|---|---|---|
@@ -466,13 +484,14 @@ cron 은 **매시 정각 한 번**(`wrangler.jsonc` `"0 * * * *"`, `scheduledTim
 
 **같은 실행에 붙는 단계 (T-10, `SHARED_SLOTS`):** 24칸이 모두 차 있어 조건 알림(`sendAlerts`)은 가벼운 단계 **뒤에** 같은 실행에서 돈다 —
 00 UTC(09 KST, report 뒤 — 매일 알림 시각) · 04(13 KST, dropOldRows 뒤) · 06(15 KST, purgeVerificationDocs 뒤) · 10(19 KST, dropOldRows 뒤). 앞 단계의 동작은 그대로다.
-실행기는 보관 기간 설정을 한 번 읽고, 단계마다 따로 try·로그 한 줄, 집계는 한 번에 기록한다. `force`(dev 의 `maint:<단계>`)는 그 단계 하나만. 계산은 17절.
+실행기는 보관 기간 설정을 한 번 읽고, 단계마다 따로 try·로그 한 줄, 집계는 한 번에 기록한다. `force`(`npm run maint -- <단계>`, 예전 dev 의 cron 문자열 `maint:<단계>`)는 그 단계 하나만. 계산은 17절.
 상한(`CAPS`, 한 번 실행): 공고 마감 10 · 안내 공고 10 · 안내 메일 10 · 지원 기한 붙이기/떼기/자동 종료 각 50 · 내용 삭제 10 · 표마다 행 삭제 200 · 서류 5 · R2 목록 100 · 고아 삭제 10 · 참조 확인 IN 50개.
-→ 하루 처리량 최대: 공고 마감 50, 안내 메일 50, 지원 내용 삭제 50, 표마다 600행, 서류 10, 고아 40. 남은 것은 다음 차례에 이어서 한다 (기한보다 늦어질 수 있다 — 규모가 커지면 상한을 올리거나 유료 플랜).
+→ 하루 처리량 최대: 공고 마감 50, 안내 메일 50, 지원 내용 삭제 50, 표마다 600행, 서류 10, 고아 40. 남은 것은 다음 차례에 이어서 한다 (기한보다 늦어질 수 있다 — 규모가 커지면 상한을 올린다).
 
-**플랫폼 한도 (2026-11 Cloudflare 문서 확인):** Workers Free 는 cron 실행당 CPU 10ms, 실행당 하위 요청 50개(D1·R2 호출과 fetch 포함), cron 계정당 5개, cron 벽시계 15분.
-D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다), 문장당 바인딩 100개. 이 작업은 보수적으로 batch 안 문장도 하나씩 세어 **실행당 D1 문장 25개 이하, R2 호출 15개 이하**로 맞췄다
-(계산상 단계별 최대: closeJobs 18(메일 10통 포함) · purgeApplications 16 · markApplications 15 · dropOldRows 15(T-16 에서 3문장 더함) · 나머지 11 이하, 집계 기록 2 + 보관 기간 설정 읽기 1 포함 (T-12c). 테스트가 상한보다 많은 후보로 단계마다 25·15 이하인지 센다). CPU 10ms 는 테스트로 확인할 수 없다 — 배포 뒤 대시보드에서 확인한다.
+**상한을 바꾸지 않은 이유 (T-19):** 이 숫자들은 원래 Workers Free 의 한도(cron 실행당 CPU 10ms·하위 요청 50개, D1 실행당 쿼리 50개·문장당 바인딩 100개) 때문에 정했다 —
+실행당 DB 문장 25개 이하(batch 안 문장도 하나씩), 파일 호출 15개 이하. PC 서버에는 그 한도가 없지만 **그대로 두었다:** 데이터를 지우는 작업 한 번의 크기를 묶어 두는 안전장치이고
+(잘못된 조건이 생겨도 한 번에 지우는 양이 작다), 이 서비스의 규모(지원서 하루 수십 건)에서는 하루 처리량이 남는다. 테스트(`test/maintenance.test.ts`)가 상한보다 많은 후보로 단계마다 25·15 이하인지 계속 센다 — 늘릴 때는 테스트와 같이 바꾼다.
+계산상 단계별 최대: closeJobs 18(메일 10통 포함) · purgeApplications 16 · markApplications 15 · dropOldRows 15 · 나머지 11 이하 (집계 기록 2 + 보관 기간 설정 읽기 1 포함). 참조 확인 IN 50개도 그대로(PostgreSQL 바인딩 한도는 65535).
 
 ### 14-3. 단계마다 하는 일 (src/db/maintenance.ts 의 문장 주석에 무엇을 지우는지 적혀 있다)
 
@@ -502,8 +521,8 @@ D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다)
 - **DB 를 먼저, R2 를 나중에.** 반대로 하다 끊기면 DB 가 없는 파일을 가리키게 되고(지원서·이력서 화면 오류), 이 순서로 하다 끊기면 아무도 가리키지 않는 **암호문** 객체가 남을 뿐이다(rfiles/ 는 고아 정리가 24시간 뒤 치운다).
 - 실행기(`runMaintenance`)는 단계를 try/catch 로 감싸고 예외를 밖으로 내보내지 않는다. 로그는 실행마다 한 줄 `maint: step=<이름> ok|failed counts=<숫자 JSON>` — 오류 내용·키·이메일·id 는 남기지 않는다.
   (Resend 키가 없으면 `lib/email.sendMail` 은 **`APP_ENV === 'dev'` 에서만** 받는 주소와 본문을 콘솔에 출력한다. 테스트·운영 서버에서는 출력하지 않고 `no_api_key` 로 실패한다 — T-13.)
-- 정리 작업을 실행하는 **HTTP 경로는 없다.** `scheduled` 만 실행한다. 개발용으로 cron 문자열 `maint:<단계>` 로 단계를 고르는 것은 `APP_ENV === 'dev'` 일 때만 받는다(배포 환경의 cron 문자열은 `wrangler.jsonc` 에 적은 `"0 * * * *"` 뿐이라 닿지 않는다. test 환경에서 같은 문자열을 보내도 시간표대로 실행됨을 확인).
-- `users` 행은 이 작업에서 지우지 않는다: `jobs.created_by`·`access_log.actor_id`·`application_events.actor_id`·`consents.user_id` 등이 외래키로 가리킨다(D1 은 외래키를 검사한다). 탈퇴 계정은 이메일이 익명화된 상태로 남는다 → 남은 일.
+- 정리 작업을 실행하는 **HTTP 경로는 없다.** 서버 안의 실행기(`lib/scheduler.ts`)가 매시 정각에, 또는 서버 PC 에서 `npm run maint -- <단계>`(`src/maint-cli.ts`, 같은 DB 잠금, 운영이면 단계 이름을 한 번 더 입력)로만 실행한다 (T-19 — 예전에는 Worker `scheduled` 와 dev 의 cron 문자열 `maint:<단계>`).
+- `users` 행은 이 작업에서 지우지 않는다: `jobs.created_by`·`access_log.actor_id`·`application_events.actor_id`·`consents.user_id` 등이 외래키로 가리킨다(PostgreSQL 도 외래키를 검사한다). 탈퇴 계정은 이메일이 익명화된 상태로 남는다 → 남은 일.
 
 ## 15. 남용 방지 한도 (T-05c)
 
@@ -527,7 +546,7 @@ D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다)
 - **쓰지 않는 경우:** 엔진이 없으면(현지화는 `no_engine` 검사가 먼저, 미리 보기는 `availableEngines` 확인) 몫을 잡지 않는다. 검증 전 기업의 초대는 메일을 보내지 않으므로 잡지 않는다.
 - **무게:** 한도가 걸린 동작마다 작은 문장 1~2개(기업 몫·사이트 몫)를 더한다. 초안 한도는 기존 INSERT 한 문장에 조건을 붙였다(문장 수 그대로).
 - **보이는 곳:** 기업 화면에는 그 요청에서 한도에 걸렸을 때만 안내가 보인다(숫자는 `{n}` 으로 넣는다, 한국어·중국어). 관리자 첫 화면의 "오늘 사용량" 상자에 사이트 번역 호출·기업 메일 `쓴 수 / 한도`(읽기 두 번).
-- **변수:** 같은 이름의 vars(`wrangler.jsonc` 에 빈 값으로 적어 둠). 앞뒤 공백을 뺀 0~1,000,000 의 정수만 받고, 비었거나 그 밖의 값은 기본값(`limitsOf`). 0 은 "그 기능을 쓰지 않음".
+- **변수:** 같은 이름의 `.env` 변수(`.env.example` 에 빈 값으로 적어 둠, T-19 전에는 `wrangler.jsonc` vars). 앞뒤 공백을 뺀 0~1,000,000 의 정수만 받고, 비었거나 그 밖의 값은 기본값(`limitsOf`). 0 은 "그 기능을 쓰지 않음".
   **T-17 부터는 관리자 설정이 먼저다** (15-1) — 변수는 관리자 화면에서 정하지 않은 칸에만 쓰인다.
 - **개인정보 없음:** `usage_counters` 의 subject 는 기업 id·관리자 user id·`'site'` 뿐(이메일·IP 없음). 35일 지난 행은 14절 dropOldRows 가 지운다.
 - **쓰지 않은 초안 삭제 (T-12c):** 게재할 수 없는 기업(미검증)이 초안 한도에서 멈추지 않게, 기업 담당자는 **초안이고 한 번도 게재된 적이 없고(`published_at IS NULL`) 지원이 하나도 없는**(취소 포함) 공고만 지울 수 있다
@@ -553,7 +572,7 @@ D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다)
 | `MAIL_PER_COMPANY_DAY` | 100 | 0~5000, ≤ `MAIL_SITE_DAY` | 사이트 몫을 같이 쓴다 |
 | `DRAFT_JOBS_PER_COMPANY` | 20 | 1~100 | 0 이면 아무 기업도 공고를 쓸 수 없다, 100 은 초안을 쌓아 두지 못하게 |
 | `ALERT_MAIL_SITE_DAY` | 40 | 0~100 | Resend 무료 플랜 하루 100통(로그인 인증코드와 같이 씀) |
-| `ALERT_SEND_PER_RUN` | 8 | 0~10 | Workers Free cron 실행당 하위 요청 50개, 알림 한 통 = 3개 (17-5) |
+| `ALERT_SEND_PER_RUN` | 8 | 0~50 | 한 실행이 너무 길어지지 않게 (메일 한 통 약 1초). T-19 전 0~10 — Workers Free cron 실행당 하위 요청 50개 (17-5) |
 
 - **기업 ≤ 사이트:** 폼 검사(`validateLimitsForm`)에서만 건다. 읽을 때는 다시 걸지 않는다 — 관리자가 기업 몫만 정한 뒤 변수의 사이트 몫이 더 작아져도 사이트 몫이 먼저 막으므로 해가 없다.
 - **무료 플랜 안내(설정 아님):** 화면에 Resend 무료 플랜 설명을 늘 적고, `MAIL_SITE_DAY + ALERT_MAIL_SITE_DAY > 70` 이면 노란 경고(막지 않음). 기본값(1000 + 40)이면 경고가 보인다.
@@ -651,7 +670,7 @@ D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다)
 0. 설정 읽기 한 번(T-17): 보일 필터 + 한도·알림 켜기/끄기(`getSettings`, 한 문장).
 1. 정리(한 batch, 각 50행): 탈퇴 계정의 알림 · **12개월** 동안 바꾸지 않았고 그동안 메일이 없었거나 꺼져 있는 알림 · 180일 지난 토큰. (밤·점검 중에도 한다. 발송이 멈춘 동안에는 12개월 알림은 지우지 않는다 — 사이트가 보내지 않아 생긴 공백으로 지우지 않게.)
 2. 점검 모드면 끝. **발송이 멈춘 상태(15-1)면 끝** — 알림을 읽지도 바꾸지도 않는다(차례·`checked_until`·`fail_count`·상태 그대로, 몫·토큰·email_log 없음). 다시 켜면 `checked_until` 이 그대로라 **멈춘 동안 게재된 공고도 다음 메일에 들어간다**(최신 10건 + "외 N건", 테스트). **한국 시간 21:00~08:00 이면 끝**(차례 그대로 — 정보통신망법 제50조 제3항의 야간 광고성 정보 전송 제한. 이 메일이 광고성 정보인지는 **정해지지 않았다 — 전문가 확인 필요**. 보수적으로 지킨다).
-3. 차례가 된 알림을 오래된 차례부터 최대 `ALERT_SEND_PER_RUN`(기본 8, 최대 10, 0 = 끔): 켜짐 + 수신 동의 있음 + 계정 `active` 인 구직자 + 지금 판의 약관·방침 동의(철회 안 됨). 정지·탈퇴·동의 전 회원의 알림은 읽지 않는다(차례 그대로).
+3. 차례가 된 알림을 오래된 차례부터 최대 `ALERT_SEND_PER_RUN`(기본 8, 최대 50 — T-19 전 10, 0 = 끔): 켜짐 + 수신 동의 있음 + 계정 `active` 인 구직자 + 지금 판의 약관·방침 동의(철회 안 됨). 정지·탈퇴·동의 전 회원의 알림은 읽지 않는다(차례 그대로).
 4. 보일 필터 설정 + 항목 목록 → 알림마다 실제 조건 → 새 공고(읽기 batch 한 번): `publicJobWhere` + `filterWhere` + `checked_until < published_at <= 지금 - 1초`, 최신 순 10건 + 전체 수(`COUNT(*) OVER ()`).
    "지금 - 1초" 까지만 보고 `checked_until` 을 거기로 옮긴다 → 이번 초에 게재된 공고는 다음 차례에(두 번 보내거나 빠뜨리지 않는다).
 5. 새 공고가 없음 · 적용되는 조건이 없음 → 메일 없이 `next_due_at` 만(새 공고 없음은 `checked_until` 도) 넘긴다(batch 한 번). 메일 몫·email_log 를 쓰지 않는다.
@@ -666,13 +685,14 @@ D1 Free 는 실행당 쿼리 50개(문서상 `batch()` 는 한 번으로 센다)
 ### 17-5. 시각·한도·하위 요청
 
 - 시각: 14-2 의 `SHARED_SLOTS` — 00 UTC(09 KST, report 뒤) · 04(13 KST) · 06(15 KST) · 10(19 KST). 모두 08~21시 안(테스트). → 하루 최대 4 × 8 = **32통**(기본값), 메일 몫 40 보다 작다. 알림이 이보다 많으면 밀린다(남은 일).
-- **왜 실행당 8(최대 10)인가 — 브리프의 기본 20 은 무료 플랜에서 되지 않는다:** Workers Free 는 실행당 하위 요청 50개(D1·R2 호출과 fetch 포함, 14-2). 메일 한 통 = Resend fetch 1 + `email_log` 1(sendMail 안) + 기록 1 = 3.
+- **T-19: 최대를 10 → 50 으로 넓혔다.** 아래 계산은 Workers Free 의 "실행당 하위 요청 50개" 때문이었고 PC 서버에는 그 한도가 없다. 기본 8 과 하루 알림 메일 몫(40, Resend 무료 플랜)은 그대로라 실제 발송 수는 같다. 50 은 한 실행이 너무 길어지지 않게 둔 상한이다. (예전 계산:)
+- **왜 실행당 8(최대 10)이었나 — 브리프의 기본 20 은 무료 플랜에서 되지 않았다:** Workers Free 는 실행당 하위 요청 50개(D1·R2 호출과 fetch 포함, 14-2). 메일 한 통 = Resend fetch 1 + `email_log` 1(sendMail 안) + 기록 1 = 3.
   고정 = 설정(필터 + 한도, T-17 에서 한 문장으로 합침) 1 + 정리 1 + 차례 1 + 항목 1 + 공고 1 + 넘기기 1 + 몫 2 = 8 → 알림 단계 최대 8 + 3n (T-17 전과 같다 — 측정: 넘길 것이 없을 때 7 + 3n, 멈춤이면 2). 붙는 앞 단계(report 5 · purgeVerificationDocs 7(R2 5 포함) · dropOldRows 1) + 실행기 3 을 더하면
   n = 8 → 최대 42(측정: 00 UTC 39 · 04 35 · 06 41), n = 10 → 48, n = 20 → 78(초과). 테스트가 상한보다 많은 후보로 실행당 45 이하인지 센다(기본 8).
   T-17: 관리자 화면 범위의 최대 10 으로도 측정한다(측정: 00 UTC 45 · 04 41 · 06 47 · 10 41 — 50 이하, 06 UTC 는 여유 45 를 넘는다. 10 은 무료 플랜 한도 안이지만 여유가 3뿐이다).
   이 단계는 14-2 의 "D1 문장 25개(batch 안 문장도 하나씩)" 기준 대신 **하위 요청 수**(batch = 1)로 맞췄다 — 문장 기준이면 8통도 넘는다(8통 = 문장 약 40).
-- CPU: 메일 한 통마다 토큰·SHA-256·글 만들기 정도. 10ms 한도는 배포 뒤 대시보드에서 확인(T-12b 와 같이).
-- 한도: `ALERT_MAIL_SITE_DAY`(40, `lib/limits.DEFAULT_LIMITS`), `ALERT_SEND_PER_RUN`(8, 최대 10, `lib/limits`). 관리자 화면(15-1) → 변수 → 기본값. 어느 쪽이든 0 이면 발송 멈춤(관리자 "끄기" 와 같은 상태).
+- CPU: 메일 한 통마다 토큰·SHA-256·글 만들기 정도 (T-19 부터 CPU 한도 없음).
+- 한도: `ALERT_MAIL_SITE_DAY`(40, `lib/limits.DEFAULT_LIMITS`), `ALERT_SEND_PER_RUN`(8, 최대 50, `lib/limits`). 관리자 화면(15-1) → 변수 → 기본값. 어느 쪽이든 0 이면 발송 멈춤(관리자 "끄기" 와 같은 상태).
   Resend 무료 플랜은 하루 100통을 로그인 인증코드와 같이 쓴다 — `MAIL_SITE_DAY` 를 60 으로 낮춘 상태(DEPLOY.md 1장)에서 알림 40 을 더하면 인증코드 몫이 남지 않을 수 있다(DEPLOY.md).
 
 ### 17-6. 개인정보처리방침

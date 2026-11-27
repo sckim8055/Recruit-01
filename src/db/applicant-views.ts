@@ -2,9 +2,10 @@
 // 지원서 내용(resume_snapshot)·메일 글은 읽지 않는다 — 이벤트 개수만.
 //
 // [sqlite] COUNT(*) 가 숫자로 온다 (PostgreSQL 은 bigint → 문자열일 수 있어 Number() 로 바꾼다).
+import type { Db } from './types';
 
 /** 한 공고의 지원별 면접 요청 메일 수 (한 번의 묶음 조회). 보낸 적이 없는 지원은 들어 있지 않다. */
-export async function countInterviewMailsByJob(db: D1Database, jobId: string): Promise<Record<string, number>> {
+export async function countInterviewMailsByJob(db: Db, jobId: string): Promise<Record<string, number>> {
   const r = await db.prepare(
     `SELECT e.application_id AS id, COUNT(*) AS n
      FROM application_events e JOIN applications a ON a.id = e.application_id

@@ -7,7 +7,8 @@ import { PRIVACY_VERSION, TERMS_VERSION } from '../src/lib/consent';
 import { PUBLIC_FILES } from '../src/lib/static-files';
 import { PRIVACY } from '../src/legal/privacy';
 import { TERMS } from '../src/legal/terms';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
+import type { Db } from '../src/db/types';
 
 const ENC_KEY = b64url(new Uint8Array(32).fill(5)).replace(/-/g, '+').replace(/_/g, '/');
 const PEPPER = 'test-pepper';
@@ -52,7 +53,7 @@ function world() {
   const db = {
     prepare: (sql: string) => { sqls.push(sql); return d1.prepare(sql); },
     batch: (s: never) => d1.batch(s),
-  } as unknown as D1Database;
+  } as unknown as Db;
   const env = {
     APP_ENV: 'dev', APP_ORIGIN: ORIGIN, DB: db, FILES, ENC_KEY, SESSION_PEPPER: PEPPER, REGISTRATION_NO: '', MAIL_FROM: '',
     FLAG_PRODUCTION_JOBS: 'off', FLAG_HEADHUNTER_POSTING: 'off', FLAG_RESUME_ZH_SUMMARY: 'off', FLAG_PAID_LABEL: 'off',
@@ -104,7 +105,7 @@ describe('public/ 정적 파일', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('약관·개인정보처리방침', () => {
+describe.skipIf(!hasDb)('약관·개인정보처리방침', () => {
   it('한국어·중국어로 제목·시행일·모든 조항 제목·항목을 그리고, 주소는 글자 그대로', async () => {
     const w = world();
     for (const [path, doc] of [['/terms', TERMS], ['/privacy', PRIVACY]] as const) {
@@ -138,7 +139,7 @@ describe.skipIf(!hasSqlite)('약관·개인정보처리방침', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('동의 확인 (미들웨어)', () => {
+describe.skipIf(!hasDb)('동의 확인 (미들웨어)', () => {
   it('비로그인은 확인하지 않고, /jobs 는 consents 를 읽지 않는다', async () => {
     const w = world();
     for (const p of ['/', '/jobs', `/jobs/${J1}`, '/companies', '/terms']) {
@@ -197,7 +198,7 @@ describe.skipIf(!hasSqlite)('동의 확인 (미들웨어)', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('동의 화면', () => {
+describe.skipIf(!hasDb)('동의 화면', () => {
   it('비로그인은 /login, 화면의 체크 칸은 미리 체크되어 있지 않다', async () => {
     const w = world();
     expect((await w.get('/consent', null)).headers.get('location')).toBe('/login');
@@ -254,11 +255,11 @@ describe.skipIf(!hasSqlite)('동의 화면', () => {
     const w = world();
     const html = await (await w.get('/consent', 's1', { lang: 'zh' })).text();
     expect(html).toContain('我同意使用条款');
-    expect(html).toContain('境外保存');
+    expect(html).toContain('境外处理');
   });
 });
 
-describe.skipIf(!hasSqlite)('계정 화면', () => {
+describe.skipIf(!hasDb)('계정 화면', () => {
   it('이메일·유형·동의 내역·문서, 링크가 /my·/biz·머리글에 있다 (no-store)', async () => {
     const w = world();
     w.agree('s1');
@@ -300,7 +301,7 @@ describe.skipIf(!hasSqlite)('계정 화면', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('회원 탈퇴', () => {
+describe.skipIf(!hasDb)('회원 탈퇴', () => {
   it('이메일이 다르면 아무것도 바뀌지 않는다', async () => {
     const w = world();
     const page = await (await w.get('/my/account/delete', 's1')).text();

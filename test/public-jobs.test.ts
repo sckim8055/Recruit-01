@@ -7,6 +7,7 @@ import {
   parseEnabledFilters, parseJobFilter, parsePage, PUBLIC_PAGE_SIZE, readEnabledFiltersForm, serializeEnabledFilters,
   type FilterKey, type VisibilityInput,
 } from '../src/lib/public-jobs';
+import { hasDb, migratedDb } from './pg-test-db';
 import { pageCacheKey, PRIVATE_CACHE_CONTROL, PUBLIC_CACHE_CONTROL } from '../src/lib/page-cache';
 import { closesText, publicSalaryText } from '../src/views/public-jobs';
 import { parseKstDate } from '../src/lib/jobs';
@@ -110,20 +111,10 @@ describe('SQL 조각', () => {
   });
 });
 
-// SQLite 메모리 DB 에서 SQL 공개 조건과 isPubliclyVisible 이 같은 결과를 내는지 확인한다 (Node 22 의 node:sqlite).
-describe('SQL 공개 조건 = isPubliclyVisible', async () => {
-  type Db = { exec(s: string): void; prepare(s: string): { run(...a: unknown[]): void; all(...a: unknown[]): Record<string, unknown>[] } };
-  let DatabaseSync: (new (p: string) => Db) | null = null;
-  let fs: { readdirSync(p: string): string[]; readFileSync(p: string, e: 'utf8'): string } | null = null;
-  try {
-    const sqliteMod = 'node:sqlite', fsMod = 'node:fs';
-    DatabaseSync = ((await import(sqliteMod)) as { DatabaseSync: new (p: string) => Db }).DatabaseSync;
-    fs = (await import(fsMod)) as typeof fs;
-  } catch { /* node:sqlite 가 없는 Node 버전 */ }
-
-  it.skipIf(!DatabaseSync)('모든 경우에서 같다 (생산직 플래그 켬·끔, 필터 포함)', () => {
-    const db = new DatabaseSync!(':memory:');
-    for (const f of fs!.readdirSync('migrations').filter((x) => x.endsWith('.sql')).sort()) db.exec(fs!.readFileSync(`migrations/${f}`, 'utf8'));
+// 메모리 PostgreSQL(PGlite, test/pg-test-db.ts — 서버와 같은 스키마·자리표시자 규칙)에서 SQL 공개 조건과 isPubliclyVisible 이 같은 결과를 내는지 확인한다.
+describe('SQL 공개 조건 = isPubliclyVisible', () => {
+  it.skipIf(!hasDb)('모든 경우에서 같다 (생산직 플래그 켬·끔, 필터 포함)', () => {
+    const db = migratedDb().raw;
     db.exec("INSERT INTO users (id, email, role, created_at) VALUES ('u1','u1@example.test','company',0)");
     db.exec("INSERT INTO agencies (id, name, created_at) VALUES ('a1','가짜 헤드헌터',0)");
     const cases: (VisibilityInput & { id: string; entry_stage: string })[] = [];

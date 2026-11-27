@@ -10,7 +10,7 @@ export function b64url(bytes: Uint8Array): string {
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-export function fromB64(s: string): Uint8Array {
+export function fromB64(s: string): Uint8Array<ArrayBuffer> {
   const norm = s.replace(/-/g, '+').replace(/_/g, '/');
   const bin = atob(norm);
   const out = new Uint8Array(bin.length);

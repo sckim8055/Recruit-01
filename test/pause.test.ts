@@ -5,7 +5,7 @@ import app from '../src/index';
 import { b64url, sha256Hex } from '../src/lib/crypto';
 import { isMaintenanceOn, maintenanceBlocks, maintenanceExempt } from '../src/lib/pause';
 import { agreeRequired } from './consent-fixture';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
 
 const ENC_KEY = b64url(new Uint8Array(32).fill(5)).replace(/-/g, '+').replace(/_/g, '/');
 const PEPPER = 'fake-pepper-for-tests-0123';
@@ -14,7 +14,7 @@ const ORIGIN = 'http://localhost';
 
 type Who = 'seeker' | 'company' | 'admin' | 'admin_nomfa';
 
-function world(vars: Record<string, string> = {}) {
+function world(vars: Record<string, unknown> = {}) {
   const { raw, d1 } = migratedDb();
   raw.exec(`INSERT INTO users (id, email, role, status, created_at) VALUES
     ('seeker','s@example.test','seeker','active',0), ('company','c@example.test','company','active',0),
@@ -28,7 +28,7 @@ function world(vars: Record<string, string> = {}) {
   const cookie = async (who: Who | null): Promise<Record<string, string>> => {
     if (!who) return { cookie: 'lang=ko' };
     const token = `tok-${who}`;
-    raw.prepare('INSERT OR IGNORE INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?)')
+    raw.prepare('INSERT INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING')
       .run(await sha256Hex(`${PEPPER}|${token}`), who, 0, 4_000_000_000, who === 'admin' ? 1 : 0);
     if (who !== 'admin' && who !== 'admin_nomfa') agreeRequired(raw, who);
     return { cookie: `sid=${token}; lang=ko` };
@@ -62,7 +62,7 @@ describe('점검 모드 판단 (순수 함수)', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('점검 모드 (라우트)', () => {
+describe.skipIf(!hasDb)('점검 모드 (라우트)', () => {
   it('켜면: 방문자·로그인한 구직자·기업 담당자는 503 (한·중), 관리자·health·로그인 화면은 그대로', async () => {
     const w = world({ MAINTENANCE: 'on' });
     for (const [path, who] of [['/', null], ['/jobs', null], ['/my', 'seeker'], ['/biz', 'company'], ['/privacy', null], ['/my/resumes', 'seeker']] as const) {
@@ -86,15 +86,15 @@ describe.skipIf(!hasSqlite)('점검 모드 (라우트)', () => {
   it('켜져 있는 동안 공개 화면 캐시를 읽지 않는다 (캐시에 화면이 있어도 503)', async () => {
     const match = vi.fn(async () => new Response('<p>CACHED PAGE</p>', { status: 200, headers: { 'content-type': 'text/html' } }));
     const put = vi.fn(async () => undefined);
-    vi.stubGlobal('caches', { default: { match, put } });
-    const on = world({ MAINTENANCE: 'on' });
+    // T-19: 캐시는 Cloudflare Cache API(caches.default) 대신 env.PAGE_CACHE (서버 메모리) — 같은 match·put 모양의 가짜를 넣는다.
+    const on = world({ MAINTENANCE: 'on', PAGE_CACHE: { match, put } });
     const res = await on.get('/jobs');
     expect(res.status).toBe(503);
     expect(await res.text()).not.toContain('CACHED PAGE');
     expect(match).not.toHaveBeenCalled();
     expect(put).not.toHaveBeenCalled();
     // 끄면 원래대로 캐시를 쓴다 (가짜 캐시가 동작하는지 확인)
-    const off = world({ MAINTENANCE: 'off' });
+    const off = world({ MAINTENANCE: 'off', PAGE_CACHE: { match, put } });
     const hit = await off.get('/jobs');
     expect(await hit.text()).toContain('CACHED PAGE');
     expect(hit.headers.get('x-page-cache')).toBe('hit');
@@ -108,7 +108,7 @@ describe.skipIf(!hasSqlite)('점검 모드 (라우트)', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('GET /admin/system (T-13)', () => {
+describe.skipIf(!hasDb)('GET /admin/system (T-13)', () => {
   it('관리자(TOTP 통과)만: 점검 표·비밀값 유무·시간표·보관 기간, no-store, 비밀값은 보이지 않는다', async () => {
     const w = world();
     const res = await w.get('/admin/system', 'admin');

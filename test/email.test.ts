@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/env';
 import { sendMail } from '../src/lib/email';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
 import app from '../src/index';
 import { b64url } from '../src/lib/crypto';
 
@@ -23,7 +23,7 @@ function setup(appEnv: string, key?: string) {
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-describe.skipIf(!hasSqlite)('sendMail: 키가 없을 때 (T-13)', () => {
+describe.skipIf(!hasDb)('sendMail: 키가 없을 때 (T-13)', () => {
   it('dev: 콘솔에 출력하고 성공으로 본다', async () => {
     const s = setup('dev');
     expect(await sendMail(s.env, MAIL)).toBe(true);
@@ -67,7 +67,7 @@ describe.skipIf(!hasSqlite)('sendMail: 키가 없을 때 (T-13)', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('sendMail: 머리글 (T-10, 선택 항목 headers)', () => {
+describe.skipIf(!hasDb)('sendMail: 머리글 (T-10, 선택 항목 headers)', () => {
   const bodyOf = (m: ReturnType<typeof vi.fn>) => JSON.parse(String((m.mock.calls[0] as unknown as [string, RequestInit])[1].body)) as Record<string, unknown>;
   it('headers 가 있으면 Resend 요청 본문의 headers 로 그대로 넘긴다', async () => {
     const s = setup('test', 'fake-key');

@@ -104,13 +104,16 @@ describe('설정 점검 (T-13)', () => {
   it('점검 모드·현지화 엔진', () => {
     expect(one({ MAINTENANCE: 'on' }, 'maintenance').level).toBe('warning');
     expect(one({ ANTHROPIC_API_KEY: '' }, 'localize')).toMatchObject({ level: 'warning', code: 'none' });
-    expect(one({ ANTHROPIC_API_KEY: '', AI: { run: () => null } }, 'localize')).toMatchObject({ level: 'ok', n: 1 });
+    // T-19: Workers AI 바인딩(AI)은 더 이상 엔진으로 세지 않는다 — Gemini 키로 확인
+    expect(one({ ANTHROPIC_API_KEY: '', AI: { run: () => null } }, 'localize')).toMatchObject({ level: 'warning', code: 'none' });
+    expect(one({ ANTHROPIC_API_KEY: '', GEMINI_API_KEY: 'g' }, 'localize')).toMatchObject({ level: 'ok', n: 1 });
   });
 
   it('결과에도 비밀값 표에도 비밀값이 없다 (설정됨/없음·길이 구간만)', () => {
-    const env = good({ ENC_KEY: KEY32, SESSION_PEPPER: PEPPER, GEMINI_API_KEY: 'AIza-fake-gemini-key-0000000000' });
+    const DBURL = 'postgres://recruit:fake-db-password-000@localhost:5433/recruit';
+    const env = good({ ENC_KEY: KEY32, SESSION_PEPPER: PEPPER, GEMINI_API_KEY: 'AIza-fake-gemini-key-0000000000', DATABASE_URL: DBURL });
     const out = JSON.stringify([configChecks(env), secretSummary(env), configChecks(good({ ENC_KEY: btoa('short-key-value') }))]);
-    for (const secret of [KEY32, PEPPER, RESEND, ANTH, 'AIza-fake-gemini-key-0000000000', btoa('short-key-value')]) {
+    for (const secret of [KEY32, PEPPER, RESEND, ANTH, 'AIza-fake-gemini-key-0000000000', btoa('short-key-value'), DBURL, 'fake-db-password-000']) {
       expect(out).not.toContain(secret);
       expect(out).not.toContain(secret.slice(0, 6));
       expect(out).not.toContain(secret.slice(-6));
@@ -121,6 +124,9 @@ describe('설정 점검 (T-13)', () => {
       { name: 'RESEND_API_KEY', set: true, length: 'medium' },
       { name: 'ANTHROPIC_API_KEY', set: true, length: 'long' },
       { name: 'GEMINI_API_KEY', set: true, length: 'medium' },
+      // T-19: DB 접속 문자열·자동 백업 비밀문구도 비밀값 표에 (값은 없음)
+      { name: 'DATABASE_URL', set: true, length: 'long' },
+      { name: 'BACKUP_PASSPHRASE', set: false, length: 'none' },
     ]);
     expect(secretSummary({}).every((s) => !s.set && s.length === 'none')).toBe(true);
     expect([lengthClass('a'.repeat(15)), lengthClass('a'.repeat(16)), lengthClass('a'.repeat(32))]).toEqual(['short', 'medium', 'long']);

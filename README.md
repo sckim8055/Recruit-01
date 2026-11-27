@@ -1,62 +1,61 @@
 # recruit
 
-한국에 진출한 중국기업 전용 채용정보 사이트 (직업정보제공사업 형태). Cloudflare Workers + D1 + R2.
+한국에 진출한 중국기업 전용 채용정보 사이트 (직업정보제공사업 형태). Node.js 26 + PostgreSQL 16 + PC 의 파일 폴더, Cloudflare Tunnel 뒤 (T-19 — 전에는 Cloudflare Workers + D1 + R2).
 
 - 설계: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - 경로·API: [docs/API.md](docs/API.md)
 - 할 일 목록: [docs/TASKS.md](docs/TASKS.md)
 - 개발 규칙: [CLAUDE.md](CLAUDE.md)
-- **서버에 올리기·백업·문제 대처 (운영자용): [docs/DEPLOY.md](docs/DEPLOY.md)**
+- **설치·백업·데이터 가져오기·문제 대처 (운영자용): [docs/DEPLOY.md](docs/DEPLOY.md)**
+- DB 이전 기록과 동시성: [docs/DB-PORTING.md](docs/DB-PORTING.md)
 
-## 로컬에서 실행하기 (Windows)
+## 실행하기
 
-Node.js 22 이상이 필요하다.
-
-```
-npm install
-copy .dev.vars.example .dev.vars
-```
-
-`.dev.vars` 를 열어 두 값을 채운다.
+서버는 하나다 (recruit.kimbbob.xyz = 운영자 PC). 설치·서비스 등록·터널은 **docs/DEPLOY.md** 2~5장. 짧게:
 
 ```
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+Copy-Item .env.example .env
+notepad .env
+npm ci
+npm run db:migrate
+npm run build
+npm start
 ```
 
-위 명령의 출력값을 `ENC_KEY=` 뒤에 붙인다. `SESSION_PEPPER` 는 예시 파일의 로컬 전용 값을 그대로 써도 된다. (이 값들은 README 나 대화창에 적지 않는다. 서버에는 새로 만든 다른 값을 넣는다 — docs/DEPLOY.md 2-4.)
+`.env` 에 PostgreSQL 접속 문자열(`DATABASE_URL`)·`ENC_KEY`·`SESSION_PEPPER`·`DATA_DIR` 등을 채운다 (DEPLOY.md 3장 — 값은 README·대화창에 적지 않는다).
+서버는 http://127.0.0.1:8787 에서만 듣는다. Windows 에서는 `start.bat` 을 더블클릭해도 설치 → 마이그레이션 → 빌드 → 시작을 한 번에 한다 (Node 경로 `F:\works\node-v26.13.1-win-x64`).
 
-```
-npm run db:local
-npx wrangler dev --var APP_ENV:dev
-```
+개발자 PC 에서 시험할 때는 `.env` 를 `APP_ENV=dev`, `APP_ORIGIN=http://127.0.0.1:8787` 로 둔다. 그러면 `RESEND_API_KEY` 가 없을 때 로그인 인증코드가 메일 대신 **서버 창**에 출력된다
+(`dev` 일 때만. `test`·`production` 은 출력하지 않으므로 Resend 키가 있어야 로그인할 수 있다).
 
-Windows 에서는 위 두 줄 대신 폴더의 **`start.bat` 을 더블클릭**해도 된다 (패키지 설치 확인 → 로컬 DB 갱신 → 서버 시작을 한 번에 한다. 끝낼 때는 창에서 Ctrl+C).
-
-브라우저에서 http://localhost:8787 을 연다. 로그인 인증코드는 메일로 가지 않고 **터미널 창**에 출력된다
-(`RESEND_API_KEY` 가 없고 `APP_ENV` 가 `dev` 일 때만. 테스트·운영 서버는 출력하지 않으므로 Resend 키가 있어야 로그인할 수 있다).
-로컬 실행에는 Cloudflare 로그인이 필요 없다.
+| 명령 | 하는 일 |
+|---|---|
+| `npm run build` | `dist/server.mjs`·`dist/maint.mjs` 만들기 (esbuild) |
+| `npm start` | `node --env-file=.env dist/server.mjs` |
+| `npm run db:migrate` | `migrations/pg/` 적용 (이미 한 것은 건너뜀) |
+| `npm run maint -- <단계>` | 정리 작업 단계 하나를 지금 (아래 "자동 정리 작업") |
+| `npm run backup` · `npm run restore -- <파일>` | 암호화 백업 (DB + 첨부파일) · 풀기 (DEPLOY.md 7장) |
+| `npm run import:cloudflare [-- --dry-run]` | 예전 Cloudflare 테스트 서버의 데이터 가져오기 (한 번, DEPLOY.md 6장) |
+| `npm run predeploy:prod -- --env-file <파일>` | (나중) 운영 서버 점검 |
 
 ## 현지화 엔진 (공고 한국어 초안)
 
 엔진 키가 없어도 사이트는 동작한다. 이때 기업은 한국어 초안을 직접 입력한다(수동 입력).
 자동으로 만들려면 아래 중 하나 이상을 준비한다.
 
-1. **Claude**: https://platform.claude.com 에서 API 키를 만든다.
-2. **Gemini**: https://aistudio.google.com 에서 API 키를 만든다.
-3. **Workers AI**: 키가 필요 없다. 운영 서버(`env.production`)에는 켜져 있다. 테스트 서버·로컬에는 켜지 않았다 — 켜면 로그인하지 않은 PC 에서 `wrangler dev` 가 시작되지 않는다 (docs/DEPLOY.md 6-5).
+1. **Claude** (기본): https://platform.claude.com 에서 API 키를 만든다.
+2. **Gemini** (선택): https://aistudio.google.com 에서 API 키를 만든다.
 
-로컬에서는 `.dev.vars` 에 키를 한 줄씩 적는다 (이 파일은 git 에 올라가지 않는다).
+(T-19 에서 Cloudflare Workers AI 는 뺐다.) `.env` 에 키를 한 줄씩 적고 서버를 다시 시작한다 (이 파일은 git 에 올라가지 않는다).
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 GEMINI_API_KEY=AIza...
 ```
 
-테스트 서버에는 `npx wrangler secret put ANTHROPIC_API_KEY` (또는 `GEMINI_API_KEY`), 운영 서버에는 같은 명령 뒤에 `--env production` 을 붙여 실행하고 키를 붙여 넣는다.
-
-어느 엔진을 먼저 쓸지는 `wrangler.jsonc` 의 `"LOCALIZE_ENGINE"` 에 `claude`, `gemini`, `workers_ai` 중 하나를 적어 정한다.
-비워 두면 claude → gemini → workers_ai 순서로 키가 있는 것을 쓰고, 실패하면 다음 엔진으로 넘어간다.
-모델을 바꾸려면 `LOCALIZE_CLAUDE_MODEL` · `LOCALIZE_GEMINI_MODEL` · `LOCALIZE_WORKERS_AI_MODEL` 에 모델 id 를 적는다(비우면 기본값).
+어느 엔진을 먼저 쓸지는 `.env` 의 `LOCALIZE_ENGINE` 에 `claude` 또는 `gemini` 를 적어 정한다.
+비워 두면 claude → gemini 순서로 키가 있는 것을 쓰고, 실패하면 다음 엔진으로 넘어간다.
+모델을 바꾸려면 `LOCALIZE_CLAUDE_MODEL` · `LOCALIZE_GEMINI_MODEL` 에 모델 id 를 적는다(비우면 기본값).
 키를 넣은 뒤 관리자 화면의 "현지화 엔진 비교"(`/admin/localize-test`)에서 엔진별 결과와 걸린 시간을 비교해 볼 수 있다.
 
 ## 남용 방지 한도 (번역 호출·메일·초안 개수)
@@ -76,11 +75,10 @@ GEMINI_API_KEY=AIza...
 - 로그인 인증코드 메일, 새 지원자 알림 메일, 자동 정리 작업의 메일은 세지 않는다.
 - 번역 엔진이 없거나(키 없음) 메일을 보내지 않는 경우(검증 전 기업의 초대)는 한도를 쓰지 않는다. 엔진·메일이 **실패해도 한 번 쓴 것으로 센다**(되돌리지 않는다).
 - **한도 바꾸기 (T-17):** 관리자 화면 → 사이트 설정 → "사용량 한도" 에서 바꾸고 확인 화면에서 저장한다. 바로 적용되고 다시 배포할 필요가 없다 (docs/DEPLOY.md 1장).
-  칸마다 범위가 있다(예: 조건 알림 메일 0~100, 한 번에 처리하는 알림 0~10, 초안 1~100). "기본값으로 되돌리기" 로 관리자 값을 지울 수 있다.
+  칸마다 범위가 있다(예: 조건 알림 메일 0~100, 한 번에 처리하는 알림 0~50, 초안 1~100). "기본값으로 되돌리기" 로 관리자 값을 지울 수 있다.
   Resend 무료 플랜은 하루 100통이므로 무료 플랜 동안은 기업 메일 + 조건 알림 메일 한도의 합을 70 정도로 두기를 권한다 (화면에 경고가 보인다).
-- **변수(예전 방법, 관리자 설정이 없는 칸에만 쓰임):** `wrangler.jsonc` 의 `"vars"`(테스트는 맨 위, 운영은 `env.production` 안)에서 해당 줄의 `""` 안에 숫자를 적고 다시 배포한다.
+- **변수(예전 방법, 관리자 설정이 없는 칸에만 쓰임):** `.env` 의 같은 이름 줄(예: `MAIL_SITE_DAY=40`)에 숫자를 적고 서버를 다시 시작한다 (T-19 전에는 `wrangler.jsonc` 의 `"vars"`).
   비워 두거나 숫자가 아니면 기본값을 쓴다. `0` 을 적으면 그 기능을 쓰지 않는다(예: 자동 번역 끄기).
-  로컬에서 시험할 때는 `npx wrangler dev --var MAIL_PER_COMPANY_DAY:2` 처럼 붙인다.
 - **오늘 사용량 보기:** 관리자 첫 화면(`/admin`)의 "오늘 사용량" 상자에 사이트 전체 자동 번역 호출 수와 기업 메일 수가 `쓴 수 / 한도` 로 나온다.
 - 횟수 기록(`usage_counters`)에는 기업 id·관리자 id·날짜·횟수만 있다(이메일 없음). 35일이 지난 기록은 자동 정리 작업이 지운다.
 
@@ -88,7 +86,7 @@ GEMINI_API_KEY=AIza...
 
 로그인 화면 아래쪽 "시연 계정으로 둘러보기" 에서 인증코드 없이 들어갈 수 있는 계정 다섯 개가 나옵니다 (구직자 2, 기업 담당자 3). 기업·공고·이력서·지원은 모두 지어낸 예시입니다.
 
-- 켜고 끄기: `wrangler.jsonc` 맨 위(테스트) `vars` 의 `DEMO_LOGIN` — `"on"` / `"off"`. 바꾼 뒤 `deploy-test.bat` 으로 다시 배포합니다. 운영 구역은 항상 `"off"` 입니다 (다른 값이면 배포 전 점검이 막습니다).
+- 켜고 끄기: `.env` 의 `DEMO_LOGIN=on` / `off` → 서버 다시 시작. 운영 서버는 항상 `off` 입니다 (다른 값이면 `predeploy:prod` 가 막고, 코드도 운영에서는 켜지 않습니다).
 - 데이터는 처음 시연 로그인할 때 자동으로 들어가고, 하루에 한 번쯤(24시간이 지난 뒤의 첫 시연 로그인 때) 처음 모습으로 되돌아갑니다. 따로 실행할 명령은 없습니다.
 - 시연 계정의 주소(`@demo.example`)로는 메일이 실제로 나가지 않습니다. 운영자(관리자) 화면은 시연 계정으로 열 수 없습니다.
 - 예시 내용을 바꾸려면 `src/lib/demo-data.ts` 를 고치고 `src/lib/demo.ts` 의 `DEMO_SEED_VERSION` 을 1 올립니다. 자세한 것은 `docs/ARCHITECTURE.md` 18절.
@@ -100,47 +98,20 @@ npm run typecheck
 npm test
 ```
 
-## 서버에 올리기 (테스트 recruit.kimbbob.xyz · 운영)
+## 서버 설치·운영
 
-**docs/DEPLOY.md** 를 따른다. 자주 쓰는 명령 (Windows 는 `deploy-test.bat`·`backup-prod.bat` 더블클릭으로도 된다):
-
-| 명령 | 하는 일 |
-|---|---|
-| `npm run deploy:test` | 형식 검사·테스트·설정 점검 → 테스트 서버 배포 |
-| `npm run deploy:prod` | 위 + 약관 표시·신고번호·git 점검 → 도메인 입력 확인 → 운영 서버 배포 |
-| `npm run db:test:migrate` · `db:prod:migrate` | 서버 DB 에 마이그레이션 적용 (운영은 백업 확인) |
-| `npm run backup:test` · `backup:prod` | 서버 DB 를 내려받아 비밀문구로 암호화한 백업 (`backups/`) |
-| `npm run predeploy:test` · `predeploy:prod` | 배포 전 점검만 |
-
-배포한 뒤 관리자 화면 **시스템 점검**(`/admin/system`)에서 빨간 항목이 없는지 본다. 사이트를 잠시 멈추는 점검 모드(`MAINTENANCE`)는 docs/DEPLOY.md 6-2.
-
-## 채용정보 검색 조건 고르기
-
-채용정보 목록(/jobs)의 검색 칸에 어떤 조건을 보일지는 관리자 화면 **관리자 → 사이트 설정**(`/admin/settings`)에서 체크해 저장한다. 코드를 고칠 필요가 없다.
-처음에는 중국어 수준·보고 라인·근무지 세 개만 보인다. 숨긴 조건도 공고 내용에는 그대로 나오며, 로그인하지 않은 방문자 화면에는 최대 60초 뒤에 반영된다.
-
-## 직무·업계·근무지 항목 고치기
-
-공고 작성 폼과 검색 칸의 직무·업계·근무지 목록은 **관리자 → 직무·업계·근무지 항목**(`/admin/options`)에서 고친다. 코드를 고칠 필요가 없다.
-- 추가: 해당 구역 아래 "새 항목 추가" 에 코드(영문 소문자, 예: `semiconductor`)·한국어 이름·중국어 이름·순서를 적고 추가한다. **코드는 나중에 바꿀 수 없다.**
-- 그만 쓰기: 줄의 "사용 종료" 를 누른다. 새 공고와 검색 칸에서 빠지고, 이미 그 항목을 쓴 공고에는 이름이 그대로 보인다. 다시 쓰려면 "다시 사용". 항목은 지우지 않는다.
-- 이름·순서는 줄에서 고쳐 "저장" 한다 (기존 공고에도 새 이름이 보인다). 로그인하지 않은 방문자 화면에는 최대 60초 뒤에 반영된다.
-
-## 이력서와 ENC_KEY
-
-구직자의 이력서 내용과 첨부파일은 `ENC_KEY` 로 암호화해 저장한다(DB·R2 어느 쪽을 열어도 내용이 보이지 않는다).
-**`ENC_KEY` 를 잃거나 바꾸면 저장된 이력서와 첨부파일은 복구할 수 없다** — 화면에는 "열 수 없는 이력서" 로 나오고 삭제만 할 수 있다.
-그래서 `ENC_KEY` 는 처음 넣을 때 오프라인(USB·종이 등)에 사본을 보관하고, 서버마다 넣은 값을 바꾸지 않는다.
+**docs/DEPLOY.md** 를 따른다 (DB 만들기 → .env → 설치 → 서비스 관리 프로그램 → 데이터 가져오기 → 백업 → 주소 전환).
+설치·코드를 바꾼 뒤 관리자 화면 **시스템 점검**(`/admin/system`)에서 빨간 항목이 없는지 본다. 사이트를 잠시 멈추는 점검 모드(`MAINTENANCE`)는 docs/DEPLOY.md 9-1.
 
 ## 관리자 계정 만들기
 
 관리자는 화면에서 가입할 수 없다. 먼저 그 이메일로 일반 로그인을 한 번 한 뒤, DB 에서 역할을 바꾼다.
 
 ```
-npx wrangler d1 execute DB --local --command "UPDATE users SET role='admin' WHERE email='내이메일@example.com'"
+& "C:\Program Files\PostgreSQL\16\bin\psql.exe" -h localhost -p 5433 -U recruit -d recruit -c "UPDATE users SET role='admin' WHERE email='내이메일@example.com'"
 ```
 
-(테스트 서버는 `--local` 대신 `--remote`, 운영 서버는 `--remote --env production`.) 로그아웃한 뒤 다시 로그인하면 2단계 인증 등록 화면이 나온다.
+(서버 PC 의 PowerShell 에서. `recruit` DB 비밀번호를 묻는다 — DEPLOY.md 2장.) 로그아웃한 뒤 다시 로그인하면 2단계 인증 등록 화면이 나온다.
 휴대폰의 TOTP 인증 앱(Microsoft Authenticator, Google Authenticator, 1Password, 腾讯身份验证器 등 아무 앱)에서 QR 코드를 찍거나 "설정 키 입력"을 골라 화면의 키를 입력하고,
 앱에 나오는 6자리 번호를 입력하면 **복구 코드 8개**가 한 번 표시된다. 종이에 적거나 비밀번호 관리 프로그램에 저장한 뒤 "저장했습니다 → 계속" 을 누르면 `/admin` 으로 들어간다.
 다음 로그인부터는 이메일 인증코드 + 앱의 6자리 번호(또는 복구 코드 하나)가 필요하다.
@@ -150,7 +121,7 @@ npx wrangler d1 execute DB --local --command "UPDATE users SET role='admin' WHER
 인증 앱과 복구 코드를 **모두** 잃어버린 관리자는 화면으로 되돌릴 수 없다. 다른 관리자 또는 운영 담당자가 DB 에서 초기화한다:
 
 ```
-npx wrangler d1 execute DB --local --command "UPDATE users SET totp_secret=NULL, totp_last_step=NULL, totp_enabled_at=NULL WHERE email='내이메일@example.com'; DELETE FROM totp_recovery_codes WHERE user_id=(SELECT id FROM users WHERE email='내이메일@example.com'); DELETE FROM sessions WHERE user_id=(SELECT id FROM users WHERE email='내이메일@example.com')"
+& "C:\Program Files\PostgreSQL\16\bin\psql.exe" -h localhost -p 5433 -U recruit -d recruit -c "UPDATE users SET totp_secret=NULL, totp_last_step=NULL, totp_enabled_at=NULL WHERE email='내이메일@example.com'; DELETE FROM totp_recovery_codes WHERE user_id=(SELECT id FROM users WHERE email='내이메일@example.com'); DELETE FROM sessions WHERE user_id=(SELECT id FROM users WHERE email='내이메일@example.com')"
 ```
 
 그다음 로그인하면 처음처럼 등록 화면과 새 복구 코드가 나온다.
@@ -183,7 +154,7 @@ npx wrangler d1 execute DB --local --command "UPDATE users SET totp_secret=NULL,
 - 관리자 계정은 화면에서 탈퇴할 수 없다. 꼭 지워야 하면 먼저 역할을 구직자로 바꾼 뒤(아래 명령), 그 계정으로 로그인해 계정 화면에서 탈퇴한다.
 
 ```
-npx wrangler d1 execute DB --remote --command "UPDATE users SET role='seeker', totp_secret=NULL, totp_last_step=NULL, totp_enabled_at=NULL WHERE email='지울관리자@example.com'; DELETE FROM totp_recovery_codes WHERE user_id=(SELECT id FROM users WHERE email='지울관리자@example.com')"
+& "C:\Program Files\PostgreSQL\16\bin\psql.exe" -h localhost -p 5433 -U recruit -d recruit -c "UPDATE users SET role='seeker', totp_secret=NULL, totp_last_step=NULL, totp_enabled_at=NULL WHERE email='지울관리자@example.com'; DELETE FROM totp_recovery_codes WHERE user_id=(SELECT id FROM users WHERE email='지울관리자@example.com')"
 ```
 
 ## 자동 정리 작업 (매시 정각)
@@ -222,25 +193,17 @@ npx wrangler d1 execute DB --remote --command "UPDATE users SET role='seeker', t
 - 공고 자동 마감을 끄면 마감일이 없는 공고는 기업이 직접 마감할 때까지 게재된다. 마감일이 지난 공고는 그대로 자동 마감된다.
 
 **잘 돌았는지 보는 법**
-1. Cloudflare 대시보드 → Workers & Pages → `recruit-test`(운영은 `recruit`) → **Logs**(또는 `npx wrangler tail`, 운영은 뒤에 `--env production`)에서 매시 한 줄 `maint: step=<단계> ok counts={…}` 를 본다. `failed` 가 보이면 개발자에게 알린다.
-   이 줄에는 숫자만 있다(이메일·파일 이름·id 없음).
-2. (선택) 매일 아침 9시(한국 시간)에 전날 처리 수를 메일로 받으려면 `wrangler.jsonc` 의 `"OPS_EMAIL": ""` 에 받을 주소를 적고 다시 배포한다. 비워 두면 보내지 않는다.
-   메일에는 개수만 들어 있다. (메일 발송에는 Resend 키가 필요하다 — docs/DEPLOY.md 2-6.)
+1. 서버 로그(서비스 관리 프로그램의 로그 창)에서 매시 한 줄 `maint: step=<단계> ok counts={…}` 를 본다. `failed` 가 보이면 개발자에게 알린다.
+   이 줄에는 숫자만 있다(이메일·파일 이름·id 없음). `/admin/system` 의 "예약 작업" 줄에 마지막 실행이 몇 분 전인지 보인다.
+2. (선택) 매일 아침 9시(한국 시간)에 전날 처리 수를 메일로 받으려면 `.env` 의 `OPS_EMAIL=` 에 받을 주소를 적고 서버를 다시 시작한다. 비워 두면 보내지 않는다.
+   메일에는 개수만 들어 있다. (메일 발송에는 Resend 키가 필요하다 — docs/DEPLOY.md 3-2.)
 
-**로컬에서 직접 실행해 보기 (개발자용)**
-
-```
-npx wrangler dev --var APP_ENV:dev --test-scheduled
-```
-
-다른 창에서 (wrangler 4.166 에서 확인):
+**단계 하나를 지금 실행해 보기**
 
 ```
-curl "http://localhost:8787/cdn-cgi/local/scheduled?cron=maint:closeJobs"
-curl "http://localhost:8787/__scheduled?cron=maint:closeJobs"
+npm run maint -- closeJobs
 ```
 
-`maint:` 뒤에는 `closeJobs` · `markApplications` · `purgeApplications` · `dropOldRows` · `purgeVerificationDocs` · `sweepOrphans` · `report` · `sendAlerts`(조건 알림, T-10) 중 하나를 쓴다.
-조건 알림은 한국 시간 21:00~08:00 에는 보내지 않으므로, 밤에 시험할 때는 시각을 붙인다(밀리초): `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=maint:sendAlerts&time=1795305660000"` (= 2026-11-22 09:01 한국 시간). `/__scheduled` 는 `time` 을 무시한다(wrangler 4.166 에서 확인).
-단계를 고르는 이 방법은 `APP_ENV` 가 `dev` 일 때만 된다. `cron=0+*+*+*+*` 로 보내면 지금 시각(UTC)의 단계가 돌고, `&time=<밀리초>` 를 붙이면 그 시각으로 실행한다.
-결과는 wrangler 창의 `maint:` 줄과 `npx wrangler d1 execute DB --local --command "…"` 로 확인한다. 정리 작업을 실행하는 웹 주소는 없다.
+단계: `closeJobs` · `markApplications` · `purgeApplications` · `dropOldRows` · `purgeVerificationDocs` · `sweepOrphans` · `report` · `sendAlerts`(조건 알림, T-10).
+서버의 정각 실행과 같은 DB 잠금을 잡는다(겹치면 "다른 예약 작업이 돌고 있습니다"). 운영 서버(`APP_ENV=production`)에서는 단계 이름을 한 번 더 입력해야 한다.
+조건 알림은 한국 시간 21:00~08:00 에는 보내지 않는다(그 시각에는 `sendAlerts` 가 아무것도 보내지 않고 끝난다). 정리 작업을 실행하는 웹 주소는 없다.

@@ -3,6 +3,7 @@
 // 목록 함수는 개인정보(지원서 내용)를 돌려주지 않는다: 암호문(resume_snapshot)은 getApplicationWithJob 만 읽는다.
 //
 // [sqlite] batch = 한 트랜잭션, changes = rowCount. file_r2_key IS NOT NULL 을 0/1 로 돌려준다 (PostgreSQL 은 boolean → 호출부 비교 수정).
+import type { Db } from './types';
 
 /** 지원자 목록의 한 줄. 이름·연락처 같은 내용은 없다 (열어야 보인다). */
 export interface ApplicantListRow {
@@ -15,7 +16,7 @@ export interface ApplicantListRow {
 }
 
 /** 한 공고의 지원 목록 (지원한 순서). 취소된 지원도 줄은 나오지만 내용은 이미 지워져 있고 열 수 없다. */
-export async function listJobApplications(db: D1Database, jobId: string): Promise<ApplicantListRow[]> {
+export async function listJobApplications(db: Db, jobId: string): Promise<ApplicantListRow[]> {
   const r = await db.prepare(
     `SELECT id, status, created_at, status_changed_at, cross_border_consent_at,
             CASE WHEN file_r2_key IS NOT NULL THEN 1 ELSE 0 END AS has_file
@@ -25,7 +26,7 @@ export async function listJobApplications(db: D1Database, jobId: string): Promis
 }
 
 /** 기업의 공고별 지원 수: 전체(취소 제외) / 아직 열지 않은 것. 공고 목록의 숫자 표시에 쓴다. */
-export async function countApplicationsByJob(db: D1Database, companyId: string): Promise<Record<string, { total: number; unread: number }>> {
+export async function countApplicationsByJob(db: Db, companyId: string): Promise<Record<string, { total: number; unread: number }>> {
   const r = await db.prepare(
     `SELECT a.job_id AS job_id,
             SUM(CASE WHEN a.status != 'withdrawn' THEN 1 ELSE 0 END) AS total,
@@ -55,7 +56,7 @@ export interface ApplicationWithJob {
   job_title_ko: string | null;
 }
 
-export async function getApplicationWithJob(db: D1Database, id: string): Promise<ApplicationWithJob | null> {
+export async function getApplicationWithJob(db: Db, id: string): Promise<ApplicationWithJob | null> {
   return db.prepare(
     `SELECT a.id, a.job_id, a.seeker_id, a.resume_snapshot, a.file_r2_key, a.cross_border_consent_at, a.status, a.status_changed_at, a.created_at,
             j.company_id, j.agency_id, j.created_by AS job_created_by, j.title_ko AS job_title_ko
@@ -67,7 +68,7 @@ export async function getApplicationWithJob(db: D1Database, id: string): Promise
  * 기업이 지원서를 열었다는 이벤트를 남기고 상태를 옮긴다 (규칙 3: 상태는 이벤트로만 바뀐다).
  * 상태가 from 일 때만 실행된다. to 는 호출부가 rules.nextStatus(from, 'viewed') 로 계산한 값이다.
  */
-export async function markViewed(db: D1Database, v: { id: string; actorId: string; from: string; to: string; ts: number }): Promise<boolean> {
+export async function markViewed(db: Db, v: { id: string; actorId: string; from: string; to: string; ts: number }): Promise<boolean> {
   const res = await db.batch([
     db.prepare(
       `INSERT INTO application_events (id, application_id, event, actor_id, at)
@@ -79,7 +80,7 @@ export async function markViewed(db: D1Database, v: { id: string; actorId: strin
 }
 
 /** 이 지원에 그 이벤트가 몇 번 있었는가 (면접 요청 메일 횟수 제한에 쓴다). */
-export async function countEvents(db: D1Database, applicationId: string, event: string): Promise<number> {
+export async function countEvents(db: Db, applicationId: string, event: string): Promise<number> {
   const r = await db.prepare('SELECT COUNT(*) AS n FROM application_events WHERE application_id = ? AND event = ?').bind(applicationId, event).first<{ n: number }>();
   return Number(r?.n ?? 0);
 }
@@ -90,7 +91,7 @@ export async function countEvents(db: D1Database, applicationId: string, event: 
  * from 과 같으면(이미 그 상태) 이벤트만 남는다. 이벤트가 들어갔으면 true.
  */
 export async function recordMailEvent(
-  db: D1Database, m: { id: string; actorId: string; event: 'interview_mail' | 'reject_mail'; from: string; to: string; maxSame: number; ts: number },
+  db: Db, m: { id: string; actorId: string; event: 'interview_mail' | 'reject_mail'; from: string; to: string; maxSame: number; ts: number },
 ): Promise<boolean> {
   const eventId = crypto.randomUUID();
   const res = await db.batch([
@@ -120,19 +121,22 @@ export interface AccessLogRow {
   at: number;
 }
 
-/** 열람 기록 (관리자 화면). 최근 순, before(시각) 이전 것부터 limit 개. */
-export async function listAccessLog(db: D1Database, q: { limit: number; before?: number | null; targetType?: string | null }): Promise<AccessLogRow[]> {
+/**
+ * 열람 기록 (관리자 화면). 최근 순, before(시각) 이전 것부터 limit 개.
+ * [pg] 같은 값을 두 번 바인딩하는 선택 조건: null 이면 형을 정할 수 없어 `CAST(? AS BIGINT)`·`CAST(? AS TEXT)` 로 적는다 (T-19).
+ */
+export async function listAccessLog(db: Db, q: { limit: number; before?: number | null; targetType?: string | null }): Promise<AccessLogRow[]> {
   const r = await db.prepare(
     `SELECT l.id, l.actor_id, l.actor_role, u.email AS actor_email, l.target_type, l.target_id, l.reason, l.at
      FROM access_log l LEFT JOIN users u ON u.id = l.actor_id
-     WHERE (? IS NULL OR l.at < ?) AND (? IS NULL OR l.target_type = ?)
+     WHERE (CAST(? AS BIGINT) IS NULL OR l.at < ?) AND (CAST(? AS TEXT) IS NULL OR l.target_type = ?)
      ORDER BY l.at DESC, l.id LIMIT ?`,
   ).bind(q.before ?? null, q.before ?? null, q.targetType ?? null, q.targetType ?? null, q.limit).all<AccessLogRow>();
   return r.results;
 }
 
 /** 내 지원서를 누가 언제 열었는지 (구직자 화면). 사유·열람자 주소는 돌려주지 않는다 — 역할과 시각만. */
-export async function listViewsOfApplication(db: D1Database, applicationId: string, excludeActorId: string): Promise<Array<{ actor_role: string; at: number }>> {
+export async function listViewsOfApplication(db: Db, applicationId: string, excludeActorId: string): Promise<Array<{ actor_role: string; at: number }>> {
   const r = await db.prepare(
     `SELECT actor_role, at FROM access_log WHERE target_type = 'application' AND target_id = ? AND actor_id != ? ORDER BY at DESC LIMIT 50`,
   ).bind(applicationId, excludeActorId).all<{ actor_role: string; at: number }>();

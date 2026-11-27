@@ -1,4 +1,4 @@
-// 남용 방지 한도 (T-05c) — app.fetch 로 라우트 전체를 돈다. SQLite 메모리 DB + 가짜 R2 + Resend 를 잡는 fetch + Workers AI 바인딩 흉내(번역 엔진).
+// 남용 방지 한도 (T-05c) — app.fetch 로 라우트 전체를 돈다. 메모리 PostgreSQL + 가짜 파일 저장소 + Resend·Claude 를 잡는 fetch (번역 엔진은 Claude 흉내 — T-19 에서 Workers AI 를 뺐다).
 // 한도는 변수로 작게 바꿔 시험한다 (LOCALIZE_PER_COMPANY_DAY 등). 모든 데이터는 가짜다 (CLAUDE.md 규칙 10).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import app from '../src/index';
@@ -6,7 +6,7 @@ import { b64url, sha256Hex } from '../src/lib/crypto';
 import { kstDay, SCOPES, SITE } from '../src/lib/quota';
 import { now } from '../src/env';
 import { agreeRequired } from './consent-fixture';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
 
 const ENC_KEY = b64url(new Uint8Array(32).fill(7)).replace(/-/g, '+').replace(/_/g, '/');
 const PEPPER = 'test-pepper';
@@ -35,15 +35,19 @@ function world(o: { engine?: boolean; vars?: Record<string, string> } = {}) {
     delete: async (k: string) => { store.delete(k); },
   };
   const engineCalls: string[] = [];
-  const AI = o.engine ? { run: async (_m: string, input: unknown) => { engineCalls.push(JSON.stringify(input)); return { response: ENGINE_OUT }; } } : undefined;
   const env: Record<string, unknown> = {
     APP_ENV: 'dev', APP_ORIGIN: ORIGIN, DB: d1, FILES, ENC_KEY, SESSION_PEPPER: PEPPER, REGISTRATION_NO: '',
     RESEND_API_KEY: 'test-key', MAIL_FROM: 'Recruit <no-reply@x.test>',
     FLAG_PRODUCTION_JOBS: 'off', FLAG_HEADHUNTER_POSTING: 'off', FLAG_RESUME_ZH_SUMMARY: 'off', FLAG_PAID_LABEL: 'off',
-    ...(AI ? { AI } : {}), ...(o.vars ?? {}),
+    ...(o.engine ? { ANTHROPIC_API_KEY: 'fake-anthropic-key' } : {}), ...(o.vars ?? {}),
   };
   const mails: Array<{ to: string[]; subject: string }> = [];
   vi.stubGlobal('fetch', vi.fn(async (u: unknown, init?: RequestInit) => {
+    // 번역 엔진 (Claude Messages API 흉내 — o.engine 일 때만 키가 있어 불린다)
+    if (String(u) === 'https://api.anthropic.com/v1/messages') {
+      engineCalls.push(String(init!.body));
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: ENGINE_OUT }] }), { status: 200 });
+    }
     expect(String(u)).toBe('https://api.resend.com/emails');
     mails.push(JSON.parse(String(init!.body)));
     return new Response('{}', { status: 200 });
@@ -53,7 +57,7 @@ function world(o: { engine?: boolean; vars?: Record<string, string> } = {}) {
     if (!who) return { cookie: `lang=${lang}` };
     if (!sessions.has(who)) {
       const token = `tok-${who}`;
-      raw.prepare('INSERT OR IGNORE INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?)')
+      raw.prepare('INSERT INTO sessions (id, user_id, created_at, expires_at, mfa) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING')
         .run(await sha256Hex(`${PEPPER}|${token}`), who, 0, 4_000_000_000, who === 'adm' ? 1 : 0);
       agreeRequired(raw, who);
       sessions.set(who, token);
@@ -101,7 +105,7 @@ async function applyAs(w: World, who: 's1' | 's2' | 's3') {
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-describe.skipIf(!hasSqlite)('남용 방지 한도 (T-05c)', () => {
+describe.skipIf(!hasDb)('남용 방지 한도 (T-05c)', () => {
   beforeEach(() => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -222,7 +226,7 @@ describe.skipIf(!hasSqlite)('남용 방지 한도 (T-05c)', () => {
     const loc = r.headers.get('location')!;
     expect(loc).toBe(`/biz/jobs/${J1}/applicants?ok=rejected&sent=2&failed=0&limited=1&pool=company`);
     expect(w.mails.length).toBe(2);
-    const st = w.rows('SELECT status FROM applications ORDER BY created_at, rowid').map((x) => x.status);
+    const st = w.rows('SELECT status FROM applications ORDER BY created_at, ctid').map((x) => x.status);
     expect(st.filter((s) => s === 'rejected').length).toBe(2);
     expect(w.rows("SELECT * FROM application_events WHERE event = 'reject_mail'").length).toBe(2);
     const list = await (await w.get(loc)).text();
@@ -305,7 +309,7 @@ describe.skipIf(!hasSqlite)('남용 방지 한도 (T-05c)', () => {
 
   it('관리자 엔진 비교: 엔진 수만큼 세고, 넘으면 엔진을 부르지 않는다', async () => {
     const w = world({ engine: true, vars: { ADMIN_LOCALIZE_TEST_DAY: '2' } });
-    const form = [['title', '销售经理'], ['body', '负责销售'], ['engines', 'workers_ai']] as Array<[string, string]>;
+    const form = [['title', '销售经理'], ['body', '负责销售'], ['engines', 'claude']] as Array<[string, string]>;
     expect((await w.post('/admin/localize-test', form, 'adm')).status).toBe(200);
     expect((await w.post('/admin/localize-test', form, 'adm')).status).toBe(200);
     expect(w.engineCalls.length).toBe(4);
@@ -320,7 +324,7 @@ describe.skipIf(!hasSqlite)('남용 방지 한도 (T-05c)', () => {
   it('관리자 엔진 비교도 사이트 번역 몫에 막힌다', async () => {
     const w = world({ engine: true, vars: { LOCALIZE_SITE_DAY: '3' } });
     w.setUsage(SCOPES.localizeSite, SITE, 3);
-    const r = await w.post('/admin/localize-test', [['title', '销售经理'], ['body', '负责销售'], ['engines', 'workers_ai']], 'adm');
+    const r = await w.post('/admin/localize-test', [['title', '销售经理'], ['body', '负责销售'], ['engines', 'claude']], 'adm');
     expect(r.status).toBe(400);
     expect(await r.text()).toContain('사이트 전체의 자동 번역 한도(3회)에 도달해 실행하지 않았습니다');
     expect(w.engineCalls.length).toBe(0);
@@ -359,7 +363,7 @@ describe.skipIf(!hasSqlite)('남용 방지 한도 (T-05c)', () => {
     await w.post(`/biz/applications/${a}/interview/preview`, { message: MSG });
     await w.post(`/biz/applications/${a}/interview/send`, { message: MSG });
     await w.post('/biz/members/invite', { email: 'new1@example.test' });
-    await w.post('/admin/localize-test', [['title', '销售经理'], ['body', '负责销售'], ['engines', 'workers_ai']], 'adm');
+    await w.post('/admin/localize-test', [['title', '销售经理'], ['body', '负责销售'], ['engines', 'claude']], 'adm');
     const all = w.rows('SELECT scope, subject, day, n FROM usage_counters ORDER BY scope, subject');
     expect(all.map((x) => `${x.scope}:${x.subject}:${x.n}`)).toEqual([
       'admin_localize_test:adm:1', 'localize_company:c1:2', 'localize_site:site:3', 'mail_company:c1:2', 'mail_site:site:2',

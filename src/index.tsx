@@ -1,4 +1,5 @@
-// 진입점. 화면(SSR)과 API 를 하나의 Worker 로 제공한다. 정적 파일은 public/ 에서 자동 제공된다.
+// 앱(Hono). 화면(SSR)과 API. Node 서버(src/server.ts)가 이 앱 앞에 public/ 정적 파일을 붙여 127.0.0.1 에서 연다 (T-19).
+// 테스트는 app.fetch(요청, 가짜 env) 로 부른다.
 import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
 import type { AppEnv, Env } from './env';
@@ -22,7 +23,6 @@ import { legal } from './routes/legal';
 import { NO_STORE } from './routes/guards';
 import { ConsentRequired } from './views/account';
 import { homeCache } from './routes/jobs';
-import { devForcedStep, runMaintenance } from './lib/maintenance';
 import { MAINTENANCE_RETRY_AFTER, maintenanceBlocks } from './lib/pause';
 import { MaintenancePage } from './views/pages';
 import { isOneClickUnsubscribe, isUnsubscribePath } from './lib/alerts';
@@ -99,13 +99,6 @@ app.onError((err, c) => {
   return c.text('Internal Server Error', 500);
 });
 
-export default {
-  fetch: app.fetch,
-  // 예약 작업 (T-12, 매시 정각 — wrangler.jsonc "0 * * * *"). 한 번에 한 단계만 한다 (lib/maintenance.SCHEDULE, docs/ARCHITECTURE.md 14절).
-  // 단계를 골라 실행하는 것(cron 문자열 "maint:<단계>")은 APP_ENV 가 dev 일 때만 받는다 — 배포 환경의 cron 문자열은 wrangler.jsonc 에 적은 것뿐이다.
-  // 정리 작업을 실행하는 HTTP 경로는 없다.
-  async scheduled(ev: ScheduledController, env: Env, ctx: ExecutionContext) {
-    const force = env.APP_ENV === 'dev' ? devForcedStep(ev.cron) : undefined;
-    ctx.waitUntil(runMaintenance(env, Math.floor(ev.scheduledTime / 1000), { force }));
-  },
-} satisfies ExportedHandler<Env>;
+// 예약 작업(T-12)은 Cloudflare cron 대신 서버 안의 실행기가 매시 정각에 돌린다 (src/lib/scheduler.ts, T-19).
+// 단계를 골라 실행하는 것은 관리자 화면이 아니라 PC 의 명령(npm run maint -- <단계>)으로만 한다 — 정리 작업을 실행하는 HTTP 경로는 없다.
+export default app;

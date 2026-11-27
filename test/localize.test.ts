@@ -3,12 +3,12 @@ import { claude, claudeText, DEFAULT_CLAUDE_MODEL } from '../src/lib/localize/en
 import { DEFAULT_GEMINI_MODEL, gemini, geminiText } from '../src/lib/localize/engines/gemini';
 import { chatText } from '../src/lib/localize/engines/http';
 import { openAiCompatEngine } from '../src/lib/localize/engines/openai-compat';
-import { DEFAULT_WORKERS_AI_MODEL, workersAi } from '../src/lib/localize/engines/workers-ai';
 import { availableEngines, engineOrder, localizeJob, runEngine } from '../src/lib/localize';
 import { BACK_SYSTEM, LOCALIZE_SYSTEM, MAX_RAW_OUTPUT, backRequest, localizeRequest, parseBack, parseJsonOutput, parseLocalized } from '../src/lib/localize/prompt';
 import { ENGINES } from '../src/lib/localize/registry';
 import { EngineError, type LocalizeEngine } from '../src/lib/localize/types';
 
+// engineOrder 는 id 목록만 다루는 순수 함수라 세 번째 id 로 예전 엔진 이름 'workers_ai' 를 그대로 쓴다 (T-19 에서 엔진은 뺐지만 DB 의 jobs.localize_engine 에 남을 수 있다).
 const ALL = ['claude', 'gemini', 'workers_ai'];
 
 describe('engineOrder', () => {
@@ -22,7 +22,7 @@ describe('engineOrder', () => {
   });
   it('지난번 엔진이 지금 쓸 수 없으면 기본 순서', () => expect(engineOrder(ALL, ['claude', 'gemini'], null, 'workers_ai')).toEqual(['claude', 'gemini']));
   it('쓸 수 있는 엔진이 없으면 빈 배열 (수동 입력)', () => expect(engineOrder(ALL, [], 'claude')).toEqual([]));
-  it('registry 는 workers_ai 로 끝난다', () => expect(ENGINES.map((e) => e.id)).toEqual(ALL));
+  it('registry 는 claude → gemini (T-19: Workers AI 를 뺐다)', () => expect(ENGINES.map((e) => e.id)).toEqual(['claude', 'gemini']));
 });
 
 describe('프롬프트', () => {
@@ -156,10 +156,9 @@ function mockFetch(body: unknown, status = 200) {
 describe('어댑터', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('available: 키·바인딩이 있을 때만', () => {
-    expect([claude.available({}), gemini.available({ GEMINI_API_KEY: ' ' }), workersAi.available({})]).toEqual([false, false, false]);
-    expect([claude.available({ ANTHROPIC_API_KEY: 'k' }), gemini.available({ GEMINI_API_KEY: 'k' }), workersAi.available({ AI: { run: async () => ({}) } })])
-      .toEqual([true, true, true]);
+  it('available: 키가 있을 때만', () => {
+    expect([claude.available({}), gemini.available({ GEMINI_API_KEY: ' ' })]).toEqual([false, false]);
+    expect([claude.available({ ANTHROPIC_API_KEY: 'k' }), gemini.available({ GEMINI_API_KEY: 'k' })]).toEqual([true, true]);
   });
 
   it('claude: x-api-key·anthropic-version 헤더, 기본 모델, text 블록만', async () => {
@@ -192,23 +191,6 @@ describe('어댑터', () => {
   it('gemini: 후보가 없으면(차단 등) bad_response', async () => {
     mockFetch({ promptFeedback: { blockReason: 'SAFETY' } });
     await expect(gemini.complete({ GEMINI_API_KEY: 'k' }, req, signal)).rejects.toThrow('bad_response');
-  });
-
-  it('workers_ai: 바인딩에 messages 와 max_tokens, 두 출력 모양을 모두 읽는다', async () => {
-    const run = vi.fn(async () => ({ choices: [{ message: { content: 'OUT' } }] }));
-    expect(await workersAi.complete({ AI: { run } }, req, signal)).toBe('OUT');
-    expect(run).toHaveBeenCalledWith(DEFAULT_WORKERS_AI_MODEL, {
-      messages: [{ role: 'system', content: 'SYS' }, { role: 'user', content: 'USER' }], max_tokens: 100,
-    });
-    const run2 = vi.fn(async (_m: string, _i: unknown) => ({ response: 'OUT2' }));
-    expect(await workersAi.complete({ AI: { run: run2 }, LOCALIZE_WORKERS_AI_MODEL: '@cf/x/y' }, req, signal)).toBe('OUT2');
-    expect(run2.mock.calls[0]![0]).toBe('@cf/x/y');
-  });
-  it('workers_ai: 시간 제한', async () => {
-    const ac = new AbortController();
-    const p = workersAi.complete({ AI: { run: () => new Promise(() => {}) } }, req, ac.signal);
-    ac.abort();
-    await expect(p).rejects.toThrow('timeout');
   });
 
   it('openai 호환 엔진 만들기: Bearer 헤더, /chat/completions', async () => {

@@ -8,7 +8,8 @@ import {
 import { DEFAULT_LIMITS, kstDay, limitsOf, loadLimits, SCOPES, SITE, takeAdminLocalizeTest, takeCompanyMail, takeLocalize, todayUsage } from '../src/lib/quota';
 import { ALERT_RUN_DEFAULT, ALERT_RUN_MAX } from '../src/lib/alerts';
 import { readUsage } from '../src/db/usage';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
+import type { Db } from '../src/db/types';
 
 const admin = (values: Partial<Record<LimitKey, unknown>>, extra: Record<string, unknown> = {}) => JSON.stringify({ values, ...extra });
 const DEFAULTS: LimitValues = { ...DEFAULT_LIMITS, ALERT_SEND_PER_RUN: ALERT_RUN_DEFAULT };
@@ -62,10 +63,10 @@ describe('lib/limits: 관리자 설정 → 설정 파일 → 기본값', () => {
     }
   });
 
-  it('설정 파일 값은 예전 규칙 그대로 (0~1,000,000, 처리 수는 최대 10으로 줄임)', () => {
+  it('설정 파일 값은 예전 규칙 그대로 (0~1,000,000, 처리 수는 최대 50으로 줄임 — T-19 전 10)', () => {
     expect(resolveLimits({ MAIL_SITE_DAY: '60000' }, null).values.MAIL_SITE_DAY).toBe(60000); // 화면 범위(5000)는 화면 입력에만
     expect(resolveLimits({ MAIL_SITE_DAY: 'abc' }, null).source.MAIL_SITE_DAY).toBe('default');
-    expect(resolveLimits({ ALERT_SEND_PER_RUN: '20' }, null).values.ALERT_SEND_PER_RUN).toBe(ALERT_RUN_MAX);
+    expect(resolveLimits({ ALERT_SEND_PER_RUN: '80' }, null).values.ALERT_SEND_PER_RUN).toBe(ALERT_RUN_MAX);
     expect(resolveLimits({ DRAFT_JOBS_PER_COMPANY: '0' }, null).values.DRAFT_JOBS_PER_COMPANY).toBe(0);
     // limitsOf(변수 → 기본값)는 예전과 같다
     expect(limitsOf({ MAIL_SITE_DAY: '7' }).MAIL_SITE_DAY).toBe(7);
@@ -90,11 +91,11 @@ describe('lib/limits: 관리자 설정 → 설정 파일 → 기본값', () => {
     expect(mailPlanWarning(DEFAULTS)).toBe(true);
   });
 
-  it('범위: 처리 수 최대 10, 알림 메일 100, 초안 1~100, 사이트 5000', () => {
+  it('범위: 처리 수 최대 50 (T-19 전 10), 알림 메일 100, 초안 1~100, 사이트 5000', () => {
     const r = Object.fromEntries(LIMIT_SPEC.map((s) => [s.key, [s.min, s.max]]));
     expect(r).toEqual({
       LOCALIZE_SITE_DAY: [0, 5000], LOCALIZE_PER_COMPANY_DAY: [0, 5000], ADMIN_LOCALIZE_TEST_DAY: [0, 1000], MAIL_SITE_DAY: [0, 5000],
-      MAIL_PER_COMPANY_DAY: [0, 5000], DRAFT_JOBS_PER_COMPANY: [1, 100], ALERT_MAIL_SITE_DAY: [0, 100], ALERT_SEND_PER_RUN: [0, 10],
+      MAIL_PER_COMPANY_DAY: [0, 5000], DRAFT_JOBS_PER_COMPANY: [1, 100], ALERT_MAIL_SITE_DAY: [0, 100], ALERT_SEND_PER_RUN: [0, 50],
     });
     for (const s of LIMIT_SPEC) expect(s.default >= s.min && s.default <= s.max, s.key).toBe(true);
   });
@@ -106,7 +107,7 @@ describe('lib/limits: 폼 검사', () => {
   it('기본값 폼은 통과', () => expect(validateLimitsForm(formOf())).toEqual({ ok: true, value: DEFAULTS }));
 
   it('정수 아님·범위 밖', () => {
-    const r = validateLimitsForm(formOf({ MAIL_SITE_DAY: '5001', ALERT_SEND_PER_RUN: '11', DRAFT_JOBS_PER_COMPANY: '0', ALERT_MAIL_SITE_DAY: '101', LOCALIZE_SITE_DAY: '1.5', ADMIN_LOCALIZE_TEST_DAY: '' }));
+    const r = validateLimitsForm(formOf({ MAIL_SITE_DAY: '5001', ALERT_SEND_PER_RUN: '51', /* T-19: 최대 50 */ DRAFT_JOBS_PER_COMPANY: '0', ALERT_MAIL_SITE_DAY: '101', LOCALIZE_SITE_DAY: '1.5', ADMIN_LOCALIZE_TEST_DAY: '' }));
     expect(r).toEqual({ ok: false, errors: {
       MAIL_SITE_DAY: 'out_of_range', ALERT_SEND_PER_RUN: 'out_of_range', DRAFT_JOBS_PER_COMPANY: 'out_of_range', ALERT_MAIL_SITE_DAY: 'out_of_range',
       LOCALIZE_SITE_DAY: 'not_integer', ADMIN_LOCALIZE_TEST_DAY: 'not_integer',
@@ -161,7 +162,7 @@ describe('lib/limits: 저장 계획', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('lib/quota: 관리자 설정이 몫 잡기에 바로 반영된다 (다시 배포 없음)', () => {
+describe.skipIf(!hasDb)('lib/quota: 관리자 설정이 몫 잡기에 바로 반영된다 (다시 배포 없음)', () => {
   const TS = Date.UTC(2027, 0, 15, 3, 0, 0) / 1000;
   const setLimits = (raw: ReturnType<typeof migratedDb>['raw'], json: string) =>
     raw.prepare(`INSERT INTO site_settings (key, value, updated_by, updated_at) VALUES (?,?,NULL,0)
@@ -203,7 +204,7 @@ describe.skipIf(!hasSqlite)('lib/quota: 관리자 설정이 몫 잡기에 바로
   it('미리 읽은 한도를 넘기면 설정을 다시 읽지 않는다 (불합격 묶음)', async () => {
     const { d1 } = migratedDb();
     let reads = 0;
-    const db = { prepare: (sql: string) => { if (sql.includes('site_settings')) reads++; return d1.prepare(sql); }, batch: (s: never) => d1.batch(s) } as unknown as D1Database;
+    const db = { prepare: (sql: string) => { if (sql.includes('site_settings')) reads++; return d1.prepare(sql); }, batch: (s: never) => d1.batch(s) } as unknown as Db;
     const L = { ...DEFAULT_LIMITS };
     for (let i = 0; i < 3; i++) await takeCompanyMail({ DB: db }, 'co-1', TS, L);
     expect(reads).toBe(0);

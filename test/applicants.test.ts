@@ -7,7 +7,7 @@ import { b64url, importEncKey } from '../src/lib/crypto';
 import { sealResume, type ResumeBody } from '../src/lib/resume';
 import { countApplicationsByJob, getApplicationWithJob, listAccessLog, listJobApplications, listViewsOfApplication } from '../src/db/applicants';
 import type { Env } from '../src/env';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
 
 const KEY = b64url(new Uint8Array(32).fill(7)).replace(/-/g, '+').replace(/_/g, '/');
 const mk = (p: Partial<Actor>): Actor => ({ id: 'm1', role: 'company', companyIds: [], hqCompanyIds: [], agencyIds: [], ...p });
@@ -26,7 +26,7 @@ describe('관리자 사유', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('지원서 열기', () => {
+describe.skipIf(!hasDb)('지원서 열기', () => {
   const setup = async () => {
     const { raw, d1 } = migratedDb();
     const sealed = await sealResume(await importEncKey(KEY), body);

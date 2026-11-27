@@ -320,30 +320,55 @@
       `db/demo.ts` · `POST /login/demo` · 로그인 화면의 시연 계정 칸 · `DEMO_LOGIN` 변수(테스트 "on", 운영 "off") · 배포 전 점검·`/admin/system` 항목 · 시연 주소로는 메일을 보내지 않음 ·
       시연 계정 탈퇴 막기. 운영(production)에서는 설정과 상관없이 꺼져 있다 — `test/demo-routes.test.ts` 가 확인한다. 테스트: `test/demo.test.ts`, `test/demo-routes.test.ts`.
       **하지 않은 것(운영자와 정할 것):** 시연 운영자 계정 — 관리자의 쓰기·열람마다 "대상이 시연 데이터인가" 검사를 `authz.ts` 에 넣어야 해서 따로 정한다.
+- [x] T-19 표준 스택 전환: Cloudflare Workers(D1 + R2 + cron + Cache API) → 운영자 PC 의 **Node.js 26 + PostgreSQL 16 + 로컬 폴더**, Cloudflare Tunnel 뒤 (운영자 결정: 서버 하나 = recruit.kimbbob.xyz, `APP_ENV=test`).
+      **실행:** `src/server.ts`(@hono/node-server, 127.0.0.1:PORT 만, 본문 12MB 제한, public/ 정적 파일, SIGINT·SIGTERM·SIGBREAK 정상 종료, 디버거 켜져 있으면 dev 말고는 시작 안 함), `.env`(`node --env-file`), esbuild → `dist/server.mjs`·`dist/maint.mjs`.
+      **DB:** `src/db/pg.ts`(D1 모양 어댑터: `?`→`$n`+숫자 형, batch = SERIALIZABLE 트랜잭션, 40001·40P01·23505 다시 실행, SELECT changes 0, bigint → 숫자), `migrations/pg/0001_init.sql`(SQLite 0001~0013 의 최종 모양, COLLATE "C", BIGINT),
+      `npm run db:migrate`(schema_migrations·지문·잠금). SQL 고친 곳 6곳 (DB-PORTING 2장). 동시성 표와 실제 PostgreSQL 병렬 시험 (DB-PORTING 4장, `test/pg-concurrency.test.ts`).
+      **파일:** `src/lib/storage.ts`(R2 와 같은 put·get·delete·list, DATA_DIR\files, 키 검사·임시 파일 → 이름 바꾸기, S3 를 붙일 수 있는 FileStore 모양). 암호화·AAD 는 그대로.
+      **예약 작업:** `src/lib/scheduler.ts`(매시 정각, 같은 SCHEDULE, 앞 실행이 돌면 건너뜀, 권고 잠금, `maint.last_run` 기록), 수동 실행 `npm run maint -- <단계>`(HTTP 경로 없음).
+      **캐시:** `page-cache.ts` → 서버 메모리(MemoryPageCache, 같은 키·60초·비로그인만, 500개·512KB·32MB), `env.PAGE_CACHE` 가 없으면(테스트) 캐시 없음.
+      **뺀 것:** Workers AI 엔진, `@cloudflare/workers-types`, Worker `scheduled`, `wrangler.jsonc`, `deploy-test.bat`·`backup-prod.bat`, `scripts/deploy.mjs`·`restore-decrypt.mjs`, `.dev.vars.example`(→ `.env.example`), 예전 `start.bat`(→ 새 start.bat).
+      **/admin/system:** 바인딩 점검 대신 DB 연결·마이그레이션·파일/백업 폴더 쓰기·디스크 여유·예약 작업 마지막 실행(`lib/system-check.ts`), 비밀값 표에 DATABASE_URL·BACKUP_PASSPHRASE(값 없음).
+      **백업:** `npm run backup`(pg_dump -Fc + 첨부파일 → AES-256-GCM + scrypt 한 파일 `recruit-<날짜>.enc`, 평문 없음), `npm run restore -- <파일>`(폴더 + RESTORE-STEPS.txt), 선택 자동 백업(BACKUP_AUTO).
+      **가져오기:** `npm run import:cloudflare [-- --dry-run]` (wrangler d1 export → node:sqlite → 한 트랜잭션·행마다 저장점·ON CONFLICT(기본 키) DO NOTHING, 유일 제약 충돌은 되돌림, ENC_KEY 확인, 파일은 wrangler r2 object get).
+      **한도:** `ALERT_SEND_PER_RUN` 최대 10 → 50 (Workers 하위 요청 50개 때문이었다. 기본 8·하루 알림 메일 한도는 그대로). 정리 작업 CAPS·BUDGET 은 안전장치로 그대로 (ARCHITECTURE 14-2).
+      **테스트:** PGlite(`test/pg-test-db.ts`, 서버와 같은 createDb) 로 전체. 새 시험: pg-adapter · pg-schema · pg-concurrency(PG_TEST_URL) · storage · scheduler · page-cache-memory · server · import(+가짜 wrangler) · backup.
+      **확인한 것 (개발 PC, PostgreSQL 16.15 · Node 26.13.1 · Chromium):** typecheck, 전체 시험, `npm run db:migrate`(recruit 계정·scram 비밀번호), `npm run build && npm start`, 가입·동의·기업 등록·서류·공고·한국어 직접 입력·승인·게재,
+      이력서(PDF 첨부)·지원·기업이 지원서 열기·첨부 내려받기(같은 바이트, 디스크에는 RF1 암호문), 관리자 로그인 + TOTP 등록·복구 코드, 기업 승인, `/admin/system`(새 점검 6줄 모두 정상), 정각 예약 작업 실행,
+      `npm run maint`, `npm run backup` → `npm run restore` → `pg_restore` 로 새 DB, 서버가 127.0.0.1:8787 하나만 듣는 것, 가짜 wrangler + 실제 PostgreSQL 로 가져오기 명령 전체.
+      **확인하지 못한 것:** 실제 Cloudflare 계정에서 `wrangler d1 export`·`r2 object get`(인자는 wrangler 4.166 의 도움말로만 확인), Windows 경로·PowerShell 명령·`start.bat`·서비스 관리 프로그램 칸 이름,
+      `fs.statfs` 의 Windows 디스크 여유, Windows 의 SIGTERM(서비스 관리 프로그램이 어떻게 끄는지), Cloudflare Tunnel 뒤의 Host·Origin·Secure 쿠키, 주소 전환(T-20), Resend 실제 발송, Claude/Gemini 실호출,
+      http://127.0.0.1 에서 `APP_ENV=test` 의 Secure 쿠키 로그인.
+      **바뀐 동작:** 4장 동시 요청이 D1 처럼 차례대로 처리됨(READ COMMITTED 였다면 깨졌을 한도 6곳), 공개 화면 캐시는 데이터센터별이 아니라 서버 하나, `/favicon.ico` 등 정적 파일도 앞단에서, 화면 문구 중 wrangler·Cloudflare 를 말하던 줄(시스템 점검·한도 설명), 정리 작업 하루 보고 메일의 마지막 줄.
 ## 운영자 설정 (사람이 하는 일 — 순서와 방법은 docs/DEPLOY.md)
 - [ ] O-1 GitHub 저장소에 이 폴더 올리기 (`predeploy:prod` 는 main 브랜치·저장하지 않은 변경 없음을 확인한다)
-- [ ] O-2 테스트 서버 준비: `wrangler login`, D1 `recruit-test` 생성 → `database_id` 교체, R2 `recruit-test-files` 생성 — DEPLOY.md 2-2 · 2-3
-- [ ] O-3 테스트 서버 비밀값: 새 `ENC_KEY`·`SESSION_PEPPER` 를 만들어 비밀번호 관리 프로그램 + 종이 사본에 보관 → `wrangler secret put` — DEPLOY.md 2-4 (선택: Claude 키 2-5)
-- [ ] O-4 Resend 가입·`kimbbob.xyz` 도메인 인증·`RESEND_API_KEY` (없으면 테스트 서버에서 아무도 로그인할 수 없다) — DEPLOY.md 2-6
-- [ ] O-5 첫 배포: `npm run db:test:migrate` → `deploy-test.bat` → recruit.kimbbob.xyz 자동 연결 확인 → 관리자 계정 + TOTP → `/admin/system` 빨강 0 → 확인 목록 10줄 — DEPLOY.md 2-7 ~ 2-11
-- [ ] O-6 Cloudflare Access 로 recruit.kimbbob.xyz 를 운영자만 접속하게 잠그기 — DEPLOY.md 2-12 (문서 미확인 단계)
-- [ ] O-7 복구 연습 한 번 (테스트 서버: 백업 → Time Travel → 백업 파일을 새 DB 에) — DEPLOY.md 5-5. 하면 DEPLOY.md 5-3 의 "해 보지 않은 절차" 표시를 지운다
-- [ ] O-8 (나중) 운영 서버: 도메인 구매·Cloudflare 추가, 직업정보제공사업 신고번호, 약관·방침 【확인 필요】 채움 + 전문가 검토, Resend 운영 도메인, 운영용 새 ENC_KEY, 유료 플랜, `predeploy:prod` 통과 — DEPLOY.md 3장
+- [ ] O-2 (T-19) PC 준비: PostgreSQL 16 에 `recruit` 계정·DB, `.env`(예전 테스트 서버의 ENC_KEY·SESSION_PEPPER, Resend 키) — DEPLOY.md 2·3장
+- [ ] O-3 (T-19) 처음 설치·시험 실행: `npm ci` → `npm run db:migrate` → `npm run build` → `npm start` → `/api/health` — DEPLOY.md 4장
+- [ ] O-4 (T-19) 서비스 관리 프로그램 등록 (빌드·시작 전 명령·시작 명령·포트 8787·서브도메인 recruit·디버거 끔) — DEPLOY.md 5장
+- [ ] O-5 (T-19) 예전 테스트 서버 데이터 가져오기: `npm run import:cloudflare -- --dry-run` → 실제 → 확인 — DEPLOY.md 6장
+- [ ] O-6 Cloudflare Access 로 recruit.kimbbob.xyz 를 운영자만 접속하게 잠그기 (터널 주소에도 그대로) — 권장
+- [ ] O-7 복구 연습 한 번 (`npm run backup` → `npm run restore` → 다른 이름의 DB 에 pg_restore) — DEPLOY.md 7-5. 하면 DEPLOY.md 7-3 의 "해 보지 않은 절차" 표시를 지운다
+- [ ] O-8 (나중) 운영 서버: 도메인, 직업정보제공사업 신고번호, 약관·방침 【확인 필요】 채움 + 전문가 검토(**국외 이전·보관 위치 문구: Cloudflare 에 데이터를 두지 않게 되었다 — T-20**), Resend 운영 도메인, 운영용 새 ENC_KEY, `predeploy:prod` 통과 — DEPLOY.md 11장
 - [ ] O-9 (나중) 공공데이터포털 국세청 사업자 상태조회 키 발급 (T-04c), Gemini 키(선택)
 - [ ] O-10 (나중) 고용노동부 1350 문의 → 답에 따라 기능 플래그 결정 (켜기 전 조건: ARCHITECTURE 5장)
-- [ ] O-11 (운영 시작 뒤 매주) 운영 DB 암호화 백업 `backup-prod.bat` + PC 밖 사본 — DEPLOY.md 5-1
+- [ ] O-11 (매주) `npm run backup` + PC 밖 사본 — DEPLOY.md 7-1·7-2 (자동 백업은 7-4 의 장단점을 읽고 정한다)
+- [ ] T-20 (운영자, T-19 다음) 주소 전환과 Cloudflare 정리 — DEPLOY.md 8장 【실제 환경에서 미확인】:
+      1) 가져오기(O-5) 직전·직후로 예전 서버의 쓰기를 멈추고 가져오기를 한 번 더 → 2) Worker `recruit-test` 의 Custom Domain `recruit.kimbbob.xyz` 지우기(Worker 는 남김)
+      → 3) 서비스 관리 프로그램의 터널 호스트 `recruit.kimbbob.xyz` → `http://127.0.0.1:8787` → 4) 바깥(휴대폰 LTE)에서 `/api/health`·로그인 메일·`/admin/system` 확인
+      → 5) 며칠 뒤: 예전 서버 마지막 백업 → Worker·D1 `recruit-test`·R2 `recruit-test-files` 삭제 → `npx wrangler logout` → `npm uninstall wrangler`(devDependency, 가져오기에만 썼다)
+      → 6) (반영함, 처리방침 판 2026-11-4) 개인정보처리방침 6항과 동의 문구 `consent.privacy.overseas` 를 새 구성에 맞게 고쳤다: 데이터·파일은 운영자가 한국에서 관리하는 서버, Cloudflare 는 접속 연결(전송 중계), Resend 는 메일. 자동 번역 사업자에서 Cloudflare 를 뺐다. 기존 회원은 다음 로그인 때 다시 동의한다. 이 표현이 위탁·국외 이전 고지로 충분한지는 전문가 검토 목록에 둔다.
 
 ## 개발
-- [ ] T-05b 현지화 엔진 실호출 확인 (운영자가 키를 넣은 뒤): `/admin/localize-test` 로 claude·gemini·workers_ai 각각 호출해
+- [ ] T-05b 현지화 엔진 실호출 확인 (운영자가 키를 넣은 뒤): `/admin/localize-test` 로 claude·gemini 각각 호출해 (T-19 에서 workers_ai 는 뺐다)
       응답 모양·소요 시간(25초 안인지)·JSON 준수·숫자 보존을 확인하고, 기본 모델(`DEFAULT_*_MODEL`)이 맞는지 정한다.
       Gemini `thinkingLevel`, Workers AI 모델의 출력 모양(`choices` / `response`)과 `max_tokens` 인식 여부, Claude `anthropic-version` 을 새 버전(2026-10-21)으로 올릴지 함께 본다
 - [ ] T-06c 공개 화면 보완: 생산직 플래그를 켤 때 목록 질의 계획 다시 확인(`job_family IN (...)` 이면 정렬용 임시 B-tree 가 전체 게재 공고를 읽을 수 있음),
       공고가 수천 건을 넘으면 필터별 인덱스 필요 여부 확인(D1 대시보드의 rows read), 캐시를 우회하는 임의 검색 조건(홈 `/?x=`) 처리,
-      마감·차단 직후 캐시 즉시 지우기(지금은 최대 60초 남음 — 배포 환경의 Cache API purge 는 zone 단위라 확인 필요)
+      마감·차단 직후 캐시 즉시 지우기(지금은 최대 60초 남음 — T-19 부터 캐시가 서버 메모리라 `MemoryPageCache.clear()` 로 지울 수 있다)
 - [ ] T-04c 국세청 사업자 상태조회 (공공데이터포털 키 발급 후)
 - [ ] T-12b 정리 작업 남은 일: 탈퇴 계정(`users.status = 'deleted'`) 행 삭제 — jobs.created_by·access_log.actor_id·application_events.actor_id·consents.user_id 가 외래키로 가리켜 지금은 지우지 않는다
       (가리키는 행이 모두 기간이 지나 지워진 뒤에 지우거나, 가리키는 컬럼을 NULL 로 바꾸는 마이그레이션이 필요). R2 삭제에 실패한 `vdocs/` 객체 정리(지금은 `rfiles/` 만 고아 정리).
-      CPU 10ms 한도 실측(배포 뒤 대시보드). 처리량이 상한(하루 내용 삭제 50건 등)을 넘으면 상한 조정
+      처리량이 상한(하루 내용 삭제 50건 등)을 넘으면 상한 조정 (T-19: CPU 10ms 한도는 없어졌다 — 상한은 안전장치로 남겼다)
 - [ ] T-14 (플래그 뒤) 이력서 중국어 요약: 경력·기술 항목만 번역 → 구직자 승인(`summary_approved_at`) → 기업 화면에 원문과 나란히 표시,
       본사 공유(받는 사람은 이메일 인증코드로 확인, 7일 만료) → `summary_shared`
 - [ ] T-15 (플래그 뒤) 헤드헌터: 업체 등록·검증, 공고 등록 시 실제 구인 기업 지정, 지원 화면에 받는 곳 표시

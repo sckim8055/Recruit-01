@@ -8,7 +8,8 @@ import { LIMIT_KEYS, parseLimitsLog, parseStoredLimits } from '../src/lib/limits
 import { DEFAULT_LIMITS, kstDay } from '../src/lib/quota';
 import { ALERT_RUN_DEFAULT } from '../src/lib/alerts';
 import { agreeRequired } from './consent-fixture';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
+import type { Db } from '../src/db/types';
 
 const ENC_KEY = b64url(new Uint8Array(32).fill(7)).replace(/-/g, '+').replace(/_/g, '/');
 const PEPPER = 'test-pepper';
@@ -21,7 +22,7 @@ const EMAILS: Record<Who, string> = { s1: 'fake.lim1@example.test', owner: 'fake
 
 function world(vars: Record<string, string> = {}) {
   const { raw, d1 } = migratedDb();
-  raw.exec('PRAGMA foreign_keys = ON');
+  // (T-19) 외래키는 PostgreSQL 에서 항상 검사된다 — 예전의 PRAGMA foreign_keys = ON 은 필요 없다.
   const roles: Record<Who, string> = { s1: 'seeker', owner: 'company', adm: 'admin', adm0: 'admin' };
   for (const [id, role] of Object.entries(roles)) raw.prepare("INSERT INTO users (id, email, role, status, created_at) VALUES (?,?,?,'active',0)").run(id, EMAILS[id as Who], role);
   for (const id of ['s1', 'owner']) agreeRequired(raw, id);
@@ -30,7 +31,7 @@ function world(vars: Record<string, string> = {}) {
   raw.exec(`INSERT INTO jobs (id, company_id, created_by, job_family, title_ko, body_ko, localize_status, status, published_at, location, chinese_level, created_at, updated_at)
     VALUES ('${J1}','c1','owner','office','가짜 영업','본문','approved','published',1,'seoul','business',0,0)`);
   const sqls: string[] = [];
-  const db = { prepare: (sql: string) => { sqls.push(sql); return d1.prepare(sql); }, batch: (s: never) => d1.batch(s) } as unknown as D1Database;
+  const db = { prepare: (sql: string) => { sqls.push(sql); return d1.prepare(sql); }, batch: (s: never) => d1.batch(s) } as unknown as Db;
   const env = {
     APP_ENV: 'dev', APP_ORIGIN: ORIGIN, DB: db, FILES: {}, ENC_KEY, SESSION_PEPPER: PEPPER, REGISTRATION_NO: '', MAIL_FROM: '',
     FLAG_PRODUCTION_JOBS: 'off', FLAG_HEADHUNTER_POSTING: 'off', FLAG_RESUME_ZH_SUMMARY: 'off', FLAG_PAID_LABEL: 'off', ...vars,
@@ -81,7 +82,7 @@ let spies: ReturnType<typeof vi.spyOn>[] = [];
 beforeEach(() => { spies = (['log', 'error', 'warn'] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {})); });
 afterEach(() => spies.forEach((s) => s.mockRestore()));
 
-describe.skipIf(!hasSqlite)('관리자 사용량 한도·조건 알림 설정: 권한·no-store', () => {
+describe.skipIf(!hasDb)('관리자 사용량 한도·조건 알림 설정: 권한·no-store', () => {
   it('구직자·기업은 403, 비로그인·TOTP 안 거친 관리자는 로그인으로 — 모두 no-store, 저장 없음', async () => {
     const w = world();
     const paths: Array<[string, 'get' | 'post']> = [
@@ -109,17 +110,17 @@ describe.skipIf(!hasSqlite)('관리자 사용량 한도·조건 알림 설정: �
   });
 });
 
-describe.skipIf(!hasSqlite)('사용량 한도 저장', () => {
+describe.skipIf(!hasDb)('사용량 한도 저장', () => {
   it('설정 화면: 지금 값·범위·출처(기본값·설정 파일), 무료 플랜 경고, 바꾼 적 없음', async () => {
     const w = world({ MAIL_SITE_DAY: '60', ALERT_MAIL_SITE_DAY: '30' });
     const html = await (await w.get('/admin/settings')).text();
     expect(html).toContain('action="/admin/settings/limits"');
     expect(html).toContain('name="MAIL_SITE_DAY" value="60" min="0" max="5000"');
-    expect(html).toContain('name="ALERT_SEND_PER_RUN" value="8" min="0" max="10"');
+    expect(html).toContain('name="ALERT_SEND_PER_RUN" value="8" min="0" max="50"'); // T-19: 최대 10 → 50
     expect(html).toContain('name="DRAFT_JOBS_PER_COMPANY" value="20" min="1" max="100"');
     expect(html).toMatch(/기업 메일 — 사이트 전체 하루[\s\S]*?<span class="badge">설정 파일<\/span> \(기본값 1000회\)/);
     expect(html).toMatch(/자동 번역 — 사이트 전체 하루[\s\S]*?<span class="badge">기본값<\/span>/);
-    expect(html).toContain('외부 호출 50개');
+    expect(html).toContain('50 까지만 받습니다'); // T-19: 이유 문구가 Workers 하위 요청 한도에서 실행 시간으로 바뀌었다
     expect(html).toContain('한도·알림 설정은 아직 이 화면에서 바꾼 적이 없습니다.');
     expect(html).toContain('기업 메일 60 + 조건 알림 메일 30 = 하루 90통'); // 60 + 30 = 90 > 70 → 경고(막지 않음)
     expect(html).toContain('보내는 중');
@@ -165,9 +166,10 @@ describe.skipIf(!hasSqlite)('사용량 한도 저장', () => {
 
   it('범위 밖·정수 아님·기업 > 사이트는 400 + 안내, 저장 없음 (확인 단계로 직접 보내도)', async () => {
     const w = world();
-    const r1 = await w.post('/admin/settings/limits', { ...FORM, ALERT_SEND_PER_RUN: '11', mode: 'save' });
+    // T-19: 처리 수 최대가 10 → 50 으로 넓어져 범위 밖 값을 51 로 시험한다
+    const r1 = await w.post('/admin/settings/limits', { ...FORM, ALERT_SEND_PER_RUN: '51', mode: 'save' });
     expect(r1.status).toBe(400);
-    expect(await r1.text()).toContain('0~10 사이로 입력해 주세요.');
+    expect(await r1.text()).toContain('0~50 사이로 입력해 주세요.');
     const r2 = await w.post('/admin/settings/limits', { ...FORM, MAIL_SITE_DAY: '50', MAIL_PER_COMPANY_DAY: '60', mode: 'save' });
     expect(r2.status).toBe(400);
     expect(await r2.text()).toContain('&quot;기업 메일 — 사이트 전체 하루&quot; 보다 클 수 없습니다.');
@@ -237,7 +239,7 @@ describe.skipIf(!hasSqlite)('사용량 한도 저장', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('/admin/system: 지금 적용되는 값과 출처, 알림 상태', () => {
+describe.skipIf(!hasDb)('/admin/system: 지금 적용되는 값과 출처, 알림 상태', () => {
   it('기본값·설정 파일·관리자 설정이 칸마다 보이고, 알림 끄면 "일시 중단 — 관리자가 껐습니다"', async () => {
     const w = world({ LOCALIZE_SITE_DAY: '200' });
     await save(w, 'limits', { ...FORM, LOCALIZE_SITE_DAY: '200', MAIL_SITE_DAY: '60', MAIL_PER_COMPANY_DAY: '60', mode: 'save' });
@@ -254,7 +256,7 @@ describe.skipIf(!hasSqlite)('/admin/system: 지금 적용되는 값과 출처, �
   });
 });
 
-describe.skipIf(!hasSqlite)('조건 알림 끄기: 구직자 화면', () => {
+describe.skipIf(!hasDb)('조건 알림 끄기: 구직자 화면', () => {
   const CREATE = { chinese_level: 'business', location: 'seoul', frequency: 'daily', optin: '1' };
 
   it('알림 끄기도 확인 화면을 거치고 결과를 쉬운 말로 보인다', async () => {

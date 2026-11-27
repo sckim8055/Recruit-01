@@ -1,7 +1,7 @@
-// 파일 업로드·내려받기 (R2 비공개 버킷). 검증 서류와 이력서 첨부가 이 파일을 거친다.
+// 파일 업로드·내려받기 (비공개 파일 저장소 env.FILES — T-19 부터 서버 PC 의 폴더, lib/storage.ts. 예전 R2). 검증 서류와 이력서 첨부가 이 파일을 거친다.
 // 원칙: ① 파일 종류는 확장자가 아니라 내용(앞부분 바이트)으로 판단한다 ② R2 키에 원래 파일명을 쓰지 않는다
 //       ③ 내려받기는 항상 권한 확인 → 열람 기록 → 전송 순서이며, 공개 주소를 만들지 않는다.
-// (기술설계서는 "5분 서명 URL"이었지만, 서명 URL 은 주소가 새면 권한 없이 열린다. Worker 가 권한을 확인한 뒤 직접 전송한다.)
+// (기술설계서는 "5분 서명 URL"이었지만, 서명 URL 은 주소가 새면 권한 없이 열린다. 서버가 권한을 확인한 뒤 직접 전송한다.)
 import { now, type Env } from '../env';
 import { canViewVerificationDoc, type Actor } from './authz';
 import { findVerificationDoc, insertVerificationDoc } from '../db/companies';

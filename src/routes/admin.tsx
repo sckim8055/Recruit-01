@@ -11,6 +11,7 @@ import { loadLimits, todayAlertMail, todayUsage } from '../lib/quota';
 import { limitsFrom } from '../lib/limits';
 import { countAlertsByStatus } from '../db/alerts';
 import { configChecks, secretSummary, worstLevel } from '../lib/config-check';
+import { gatherRuntimeFacts, runtimeChecks } from '../lib/system-check';
 import { SCHEDULE, SHARED_SLOTS } from '../lib/maintenance';
 import { loadRetention } from '../lib/retention-setting';
 import { SystemPage } from '../views/admin-system';
@@ -55,8 +56,9 @@ admin.get('/', async (c) => {
 // 요청을 막지 않고 보여 주기만 한다. 읽기: 사용량 두 번 + 보관 기간 설정 한 번 + 조건 알림 개수 한 번·오늘 알림 메일 한 번(T-10).
 // 공개 주소(/api/health)에는 점검 결과를 내지 않는다. 조건 알림은 개수만 — 누가 어떤 조건을 저장했는지는 읽지 않는다.
 admin.get('/system', async (c) => {
-  const checks = configChecks(c.env);
   const ts = now();
+  // T-19: Cloudflare 바인딩 점검 대신 실행 상태(DB 연결·마이그레이션·파일/백업 폴더·디스크·예약 작업 마지막 실행)를 더한다 (lib/system-check).
+  const checks = [...configChecks(c.env), ...runtimeChecks(await gatherRuntimeFacts(c.env, ts))];
   // T-17: 지금 쓰는 한도와 출처(관리자 설정·설정 파일·기본값)·알림 켜기/끄기를 한 번 읽어 사용량 줄에도 같은 값을 쓴다.
   const limits = await loadLimits(c.env);
   const L = limitsFrom(limits);

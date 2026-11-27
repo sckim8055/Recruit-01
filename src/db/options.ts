@@ -4,15 +4,16 @@
 // [sqlite] meta.changes(영향 행 수) → PostgreSQL 드라이버의 rowCount.
 // [sqlite] active 는 INTEGER 0/1. PostgreSQL 에서 boolean 으로 바꾸면 아래 SQL 의 `active = 1`·`active = 0` 과 lib/options.buildOptionSet 을 고친다.
 import type { OptionKind, OptionRow } from '../lib/options';
+import type { Db } from './types';
 
 /** 모든 종류·모든 행 (사용 종료 포함). 한 번에 읽는다 (약 50행). 정렬은 lib/options.buildOptionSet 이 한다. */
-export async function listOptions(db: D1Database): Promise<OptionRow[]> {
+export async function listOptions(db: Db): Promise<OptionRow[]> {
   return (await db.prepare('SELECT kind, code, label_ko, label_zh, sort, active FROM job_options').all<OptionRow>()).results;
 }
 
 /** 새 항목. 같은 (kind, code) 가 이미 있으면 아무것도 하지 않고 false (화면을 연 뒤 다른 관리자가 먼저 추가한 경우). */
 export async function insertOption(
-  db: D1Database, x: { kind: OptionKind; code: string; label_ko: string; label_zh: string; sort: number; userId: string; ts: number },
+  db: Db, x: { kind: OptionKind; code: string; label_ko: string; label_zh: string; sort: number; userId: string; ts: number },
 ): Promise<boolean> {
   const r = await db.prepare(
     `INSERT INTO job_options (kind, code, label_ko, label_zh, sort, active, created_at, updated_at, updated_by)
@@ -23,7 +24,7 @@ export async function insertOption(
 
 /** 이름·순서 고치기 (kind·code·active 는 바꾸지 않는다). 없는 항목이면 false. */
 export async function updateOption(
-  db: D1Database, x: { kind: OptionKind; code: string; label_ko: string; label_zh: string; sort: number; userId: string; ts: number },
+  db: Db, x: { kind: OptionKind; code: string; label_ko: string; label_zh: string; sort: number; userId: string; ts: number },
 ): Promise<boolean> {
   const r = await db.prepare(
     'UPDATE job_options SET label_ko = ?, label_zh = ?, sort = ?, updated_at = ?, updated_by = ? WHERE kind = ? AND code = ?',
@@ -40,7 +41,7 @@ export async function updateOption(
  *          동시에 사용 종료하면 둘 다 "둘 이상 남음" 을 보고 마지막 하나까지 꺼질 수 있다 (docs/DB-PORTING.md 4장).
  */
 export async function setOptionActive(
-  db: D1Database, x: { kind: OptionKind; code: string; active: boolean; userId: string; ts: number },
+  db: Db, x: { kind: OptionKind; code: string; active: boolean; userId: string; ts: number },
 ): Promise<boolean> {
   const r = x.active
     ? await db.prepare(
@@ -59,7 +60,7 @@ export async function setOptionActive(
  * 이 세 컬럼에는 인덱스가 없어 jobs 를 처음부터 끝까지 읽는다 — 관리자 화면에서만 쓰므로 둔다 (공고가 아주 많아지면 다시 본다).
  * [sqlite] COUNT(*) 가 숫자로 온다. PostgreSQL 에서는 bigint → 문자열일 수 있다 (`::int`, 확인 필요).
  */
-export async function countOptionUsage(db: D1Database): Promise<{ kind: OptionKind; code: string; n: number }[]> {
+export async function countOptionUsage(db: Db): Promise<{ kind: OptionKind; code: string; n: number }[]> {
   return (await db.prepare(
     `SELECT 'role_category' AS kind, role_category AS code, COUNT(*) AS n FROM jobs WHERE role_category IS NOT NULL GROUP BY role_category
      UNION ALL

@@ -7,13 +7,14 @@
 // 남는 것: 지원했다는 사실(행·상태·이벤트, 내용 없음), 동의 기록(철회 시각을 채움), 열람 기록, 그 회원이 만든 공고(기업의 자료).
 // R2 파일은 호출부(lib/account.ts)가 미리 키를 모아 두었다가 이 트랜잭션 뒤에 지운다.
 //
-// [sqlite] batch = 한 트랜잭션. lower(hex(randomblob(16))) 로 이벤트 id 를 만든다 (PostgreSQL: gen_random_uuid()).
+// [pg] batch = 한 트랜잭션 (BEGIN … COMMIT). 이벤트 id 는 replace(gen_random_uuid()::text, '-', '') (하이픈 없는 32자 — 예전 SQLite 의 lower(hex(randomblob(16))) 와 같은 모양, T-19).
 // [sqlite] 문장 수가 많다 — D1 은 batch 를 한 번의 왕복으로 처리한다.
+import type { Db } from './types';
 
 const ACTIVE = "('submitted','viewed','reviewing','interview')";
 
 /** 탈퇴를 막아야 하는 경우: 다른 담당자가 있는 기업의 대표 담당자(대표를 넘길 방법이 아직 없다). 그런 기업 수를 돌려준다. */
-export async function countOwnedCompaniesWithOthers(db: D1Database, userId: string): Promise<number> {
+export async function countOwnedCompaniesWithOthers(db: Db, userId: string): Promise<number> {
   const r = await db.prepare(
     `SELECT COUNT(*) AS n FROM company_members m
      WHERE m.user_id = ? AND m.member_role = 'owner'
@@ -26,13 +27,13 @@ export async function countOwnedCompaniesWithOthers(db: D1Database, userId: stri
  * 지운다. 계정이 활동 중(active)·정지(suspended)일 때만 실행되고, 이미 탈퇴한 계정이면 아무것도 바꾸지 않는다 → false.
  * marker: 이메일 자리에 넣을 무작위 표시 (예: deleted-<uuid>@deleted.invalid).
  */
-export async function eraseUser(db: D1Database, u: { id: string; email: string; marker: string; ts: number }): Promise<boolean> {
+export async function eraseUser(db: Db, u: { id: string; email: string; marker: string; ts: number }): Promise<boolean> {
   const alive = "EXISTS (SELECT 1 FROM users WHERE id = ? AND status != 'deleted')";
   const res = await db.batch([
     // 1) 진행 중인 지원: 취소 이벤트를 남긴다 (규칙 3 — 상태는 이벤트와 함께 바뀐다)
     db.prepare(
       `INSERT INTO application_events (id, application_id, event, actor_id, at)
-       SELECT lower(hex(randomblob(16))), id, 'withdrawn', ?, ? FROM applications WHERE seeker_id = ? AND status IN ${ACTIVE} AND ${alive}`,
+       SELECT replace(gen_random_uuid()::text, '-', ''), id, 'withdrawn', ?, ? FROM applications WHERE seeker_id = ? AND status IN ${ACTIVE} AND ${alive}`,
     ).bind(u.id, u.ts, u.id, u.id),
     // 2) 모든 지원서의 내용을 지운다. 진행 중이던 것은 '취소' 로, 이미 끝난 것은 상태를 그대로 둔다.
     //    여러 건을 한 문장으로 바꾸므로 SQL 의 CASE 로 쓴다 — 뜻은 rules.nextStatus(s, 'withdrawn') 와 같아야 하고,

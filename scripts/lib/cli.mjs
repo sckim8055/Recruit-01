@@ -1,17 +1,15 @@
-// 운영자 스크립트의 공통 도구 (T-13): 프로젝트 폴더, wrangler·tsc·vitest 실행, 물어보기, 비밀문구 입력(화면에 보이지 않게).
+// 운영자 스크립트의 공통 도구 (T-13, T-19): 프로젝트 폴더, tsc·vitest·wrangler(가져오기 한 번만) 실행, 물어보기, 비밀문구 입력(화면에 보이지 않게).
 // Windows(PowerShell·cmd)와 mac/linux 에서 같게 돈다: 셸을 거치지 않고 Node 로 각 도구의 진입 파일을 직접 실행한다
 // (경로에 공백·한글이 있어도 따옴표 문제가 없다). 새 npm 패키지는 쓰지 않는다.
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { parseJsonc } from './deploy-checks.mjs';
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const bin = (...p) => join(ROOT, 'node_modules', ...p);
 
-export const readConfig = () => parseJsonc(readFileSync(join(ROOT, 'wrangler.jsonc'), 'utf8'));
 
 function runNode(entry, args, opts = {}) {
   if (!existsSync(entry)) {
@@ -23,7 +21,7 @@ function runNode(entry, args, opts = {}) {
   return r.status ?? 1;
 }
 
-/** npx wrangler … 와 같다. 종료 코드를 돌려준다. */
+/** npx wrangler … 와 같다. 종료 코드를 돌려준다. T-19: 예전 Cloudflare 테스트 서버에서 데이터를 가져올 때(scripts/import-from-cloudflare.mjs)만 쓴다. */
 export const wrangler = (args) => runNode(bin('wrangler', 'bin', 'wrangler.js'), args);
 export const typecheck = () => runNode(bin('typescript', 'bin', 'tsc'), ['--noEmit']);
 export const unitTests = () => runNode(bin('vitest', 'vitest.mjs'), ['run']);

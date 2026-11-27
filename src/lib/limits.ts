@@ -2,8 +2,8 @@
 //
 // 한도 숫자의 기본값(DEFAULT_LIMITS)은 이 파일 한 곳에 있다 (lib/quota 가 다시 내보낸다). 실제로 쓰는 값은 칸마다 이 순서로 정한다 (resolveLimits):
 //   1) 관리자 설정 — site_settings 'limits' 한 줄(JSON)에 그 칸이 있고, 아래 LIMIT_SPEC 의 범위 안인 정수일 때
-//   2) 설정 파일 — 같은 이름의 변수(wrangler.jsonc vars)가 T-05c 의 규칙(0~1,000,000 의 정수)으로 읽힐 때.
-//      ALERT_SEND_PER_RUN 만은 예전처럼 최대 10 으로 줄인다 (alertRunCap).
+//   2) 설정 파일 — 같은 이름의 변수(.env, T-19 전에는 wrangler.jsonc vars)가 T-05c 의 규칙(0~1,000,000 의 정수)으로 읽힐 때.
+//      ALERT_SEND_PER_RUN 만은 최대 ALERT_RUN_MAX(50, T-19 전 10) 로 줄인다 (alertRunCap).
 //   3) 코드의 기본값
 // 관리자 설정은 저장할 때와 **읽을 때 모두** 범위를 검사한다: DB 에 범위 밖 값이 들어 있으면 그 칸은 없는 것으로 보고 2)·3) 으로 간다.
 // 변수의 범위(0~1,000,000)는 예전 그대로다 — 이미 배포된 설정을 바꾸지 않기 위해. 관리자 화면의 범위는 화면에서 넣는 값에만 걸린다.
@@ -54,10 +54,15 @@ export function limitsOf(env: Partial<Record<LimitName, string | undefined>>): L
   return Object.fromEntries(LIMIT_NAMES.map((k) => [k, parseLimit(env[k], DEFAULT_LIMITS[k])])) as Limits;
 }
 
-/** 예약 작업 한 번에 처리하는 알림 수: 기본 8, 최대 10 (0 = 끔). 이유는 docs/ARCHITECTURE.md 17-5 (하위 요청 50개). */
+/**
+ * 예약 작업 한 번에 처리하는 알림 수: 기본 8, 최대 50 (0 = 끔).
+ * T-19: 최대 10 은 Cloudflare Workers 무료 플랜의 "cron 실행당 하위 요청 50개"(알림 메일 한 통 = 3개) 때문이었다 → PC 서버에는 그 한도가 없어 50 으로 넓혔다.
+ * 기본값 8 과 하루 알림 메일 한도(ALERT_MAIL_SITE_DAY, Resend 무료 플랜 하루 100통)는 그대로다 — 실제로 나가는 메일 수는 하루 한도가 막는다.
+ * 50 은 한 실행이 너무 길어지지 않게(메일 한 통 ≈ 1초, Resend 초당 요청 한도) 둔 상한이다. docs/ARCHITECTURE.md 17-5.
+ */
 export const ALERT_RUN_DEFAULT = 8;
-export const ALERT_RUN_MAX = 10;
-/** 변수 ALERT_SEND_PER_RUN → 처리 수 (예전 규칙: 잘못된 값은 기본값, 10 보다 크면 10). */
+export const ALERT_RUN_MAX = 50;
+/** 변수 ALERT_SEND_PER_RUN → 처리 수 (잘못된 값은 기본값, ALERT_RUN_MAX 보다 크면 ALERT_RUN_MAX). */
 export const alertRunCap = (raw: string | undefined): number => Math.min(parseLimit(raw, ALERT_RUN_DEFAULT), ALERT_RUN_MAX);
 
 // ───────── 관리자 설정 (T-17)
@@ -89,7 +94,7 @@ export interface LimitSpecItem {
  * - 기업 메일: 사이트 0~5000 (오입력 방지 상한), 기업 0~5000 이고 사이트 몫 이하.
  * - 초안 개수: 1~100 (0 이면 아무 기업도 공고를 쓸 수 없다. 100 은 기업 하나가 초안을 쌓아 두지 못하게).
  * - 알림 메일: 0~100 (Resend 무료 플랜의 하루 100통 — 로그인 인증코드와 같이 쓴다).
- * - 알림 처리 수: 0~10 (Workers Free 는 cron 실행당 하위 요청 50개, 알림 메일 한 통 = 3개 — 17-5).
+ * - 알림 처리 수: 0~50 (T-19 전 0~10 — Workers Free 의 cron 실행당 하위 요청 50개 때문이었다. 17-5).
  */
 export const LIMIT_SPEC: readonly LimitSpecItem[] = [
   { key: 'LOCALIZE_SITE_DAY', default: DEFAULT_LIMITS.LOCALIZE_SITE_DAY, min: 0, max: 5000, scope: 'localize_site' },

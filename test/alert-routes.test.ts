@@ -5,7 +5,8 @@ import app from '../src/index';
 import { b64url, randomToken, sha256Hex } from '../src/lib/crypto';
 import { ALERT_MAX_PER_USER, ALERT_OPTIN_VERSION } from '../src/lib/alerts';
 import { agreeRequired } from './consent-fixture';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
+import type { Db } from '../src/db/types';
 
 const ENC_KEY = b64url(new Uint8Array(32).fill(7)).replace(/-/g, '+').replace(/_/g, '/');
 const PEPPER = 'test-pepper';
@@ -20,7 +21,7 @@ const EMAILS: Record<Who, string> = {
 
 function world() {
   const { raw, d1 } = migratedDb();
-  raw.exec('PRAGMA foreign_keys = ON');
+  // (T-19) 외래키는 PostgreSQL 에서 항상 검사된다 — 예전의 PRAGMA foreign_keys = ON 은 필요 없다.
   const roles: Record<Who, string> = { s1: 'seeker', s2: 'seeker', owner: 'company', adm: 'admin', late: 'seeker' };
   for (const [id, role] of Object.entries(roles)) raw.prepare("INSERT INTO users (id, email, role, status, created_at) VALUES (?,?,?,'active',0)").run(id, EMAILS[id as Who], role);
   for (const id of ['s1', 's2', 'owner']) agreeRequired(raw, id); // 'late' 는 동의 전
@@ -29,7 +30,7 @@ function world() {
   raw.exec(`INSERT INTO jobs (id, company_id, created_by, job_family, title_ko, body_ko, localize_status, status, published_at, location, chinese_level, created_at, updated_at)
     VALUES ('${J1}','c1','owner','office','가짜 영업','본문','approved','published',1,'seoul','business',0,0)`);
   const sqls: string[] = [];
-  const db = { prepare: (sql: string) => { sqls.push(sql); return d1.prepare(sql); }, batch: (s: never) => d1.batch(s) } as unknown as D1Database;
+  const db = { prepare: (sql: string) => { sqls.push(sql); return d1.prepare(sql); }, batch: (s: never) => d1.batch(s) } as unknown as Db;
   const env = {
     APP_ENV: 'dev', APP_ORIGIN: ORIGIN, DB: db, FILES: {}, ENC_KEY, SESSION_PEPPER: PEPPER, REGISTRATION_NO: '', MAIL_FROM: '',
     FLAG_PRODUCTION_JOBS: 'off', FLAG_HEADHUNTER_POSTING: 'off', FLAG_RESUME_ZH_SUMMARY: 'off', FLAG_PAID_LABEL: 'off',
@@ -71,7 +72,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-describe.skipIf(!hasSqlite)('/jobs 의 만들기 칸', () => {
+describe.skipIf(!hasDb)('/jobs 의 만들기 칸', () => {
   it('로그인한 구직자 + 조건이 있을 때만 보인다 (조건 없음·기업·비로그인은 없음)', async () => {
     const w = world();
     const withFilter = await (await w.get('/jobs?chinese_level=business&location=seoul', 's1')).text();
@@ -96,7 +97,7 @@ describe.skipIf(!hasSqlite)('/jobs 의 만들기 칸', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('만들기 POST /my/alerts', () => {
+describe.skipIf(!hasDb)('만들기 POST /my/alerts', () => {
   it('정규화한 조건(/jobs 파서)·빈도·수신 동의 시각과 판을 저장한다', async () => {
     const w = world();
     const res = await w.post('/my/alerts', { ...CREATE, role_category: 'sales', evil: "x' OR 1=1", lang: 'zh' }, 's1');
@@ -160,7 +161,7 @@ describe.skipIf(!hasSqlite)('만들기 POST /my/alerts', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('목록·빈도·끄기·다시 켜기·삭제', () => {
+describe.skipIf(!hasDb)('목록·빈도·끄기·다시 켜기·삭제', () => {
   it('목록은 지금 항목 이름으로 보이고, 숨긴 조건·사용 종료 항목을 알린다; 남의 알림 id 는 바꾸지 못한다', async () => {
     const w = world();
     await w.post('/my/alerts', CREATE, 's1');
@@ -208,7 +209,7 @@ describe.skipIf(!hasSqlite)('목록·빈도·끄기·다시 켜기·삭제', () 
   });
 });
 
-describe.skipIf(!hasSqlite)('해지 링크 /alerts/u/:token', () => {
+describe.skipIf(!hasDb)('해지 링크 /alerts/u/:token', () => {
   async function withToken() {
     const w = world();
     await w.post('/my/alerts', CREATE, 's1');
@@ -305,7 +306,7 @@ describe.skipIf(!hasSqlite)('해지 링크 /alerts/u/:token', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('관리자', () => {
+describe.skipIf(!hasDb)('관리자', () => {
   it('/admin/system 에는 개수만 (누구의 어떤 조건인지 없음)', async () => {
     const w = world();
     await w.post('/my/alerts', CREATE, 's1');

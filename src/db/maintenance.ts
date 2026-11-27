@@ -8,18 +8,19 @@
 //   상태 문장은 방금 넣은 이벤트가 있을 때만 바뀐다 (db/applicants.recordMailEvent 와 같은 방식).
 //
 // [sqlite] batch = 한 트랜잭션, meta.changes = rowCount (PostgreSQL: BEGIN … COMMIT, 순서 그대로).
-// [sqlite] 이벤트 id 를 lower(hex(randomblob(16))) 로 SQL 안에서 만든다 (db/account.eraseUser 와 같다. PostgreSQL: gen_random_uuid()::text).
+// [pg] 이벤트 id 를 replace(gen_random_uuid()::text, '-', '') 로 SQL 안에서 만든다 (하이픈 없는 32자, db/account.eraseUser 와 같다. T-19 전 SQLite: lower(hex(randomblob(16)))).
 // [sqlite] `x IN (SELECT … LIMIT ?)` 로 행 수를 제한한다 (SQLite 는 DELETE/UPDATE … LIMIT 을 기본으로 지원하지 않는다). PostgreSQL 도 같은 문법이 된다.
 // [sqlite] substr(key, 1, n) = '접두어' 로 접두어를 비교한다 (LIKE 를 쓰지 않는다 — '_' 가 와일드카드라서). PostgreSQL 도 substr 이 있다.
 // [sqlite] COUNT(*) 는 숫자로 온다 — 호출부가 Number() 로 감싼다.
 // [sqlite] 바인딩 수는 문장당 100개 이하 (D1 한도). IN 목록은 호출부가 50개 이하로 나눈다.
+import type { Db, DbStatement } from './types';
 
 const marks = (n: number): string => Array.from({ length: n }, () => '?').join(',');
 
 // ── 지원서의 실제 보관 일수 (T-12c)
 // 지원서마다 낼 때의 기간(applications.keep_days, NULL = 0011 이전 지원 → legacyDays)을 저장해 두고, 실제 기간 = MIN(낼 때의 기간, 지금 설정).
 // 줄이면 모두에게(더 일찍 지움), 늘리면 그 뒤에 낸 지원에만 적용된다 (늘린 기간을 예전 지원에 소급하지 않는다).
-// [sqlite] 여러 인자 MIN(a, b) 는 스칼라 최솟값 (PostgreSQL: LEAST(a, b)).
+// [pg] 두 값 중 작은 값은 LEAST(a, b) (T-19 전 SQLite 는 여러 인자 MIN(a, b) — PostgreSQL 의 MIN 은 집계 함수뿐이다).
 
 /** 보관 기간 설정에서 지원서에 쓰는 값 (일). */
 export interface AppKeep { keepDays: number; legacyDays: number }
@@ -27,7 +28,7 @@ export interface AppKeep { keepDays: number; legacyDays: number }
 export interface AppAutoClose extends AppKeep { autoCloseDays: number }
 
 /** 실제 보관 일수 SQL 식과 바인딩 (alias 는 applications 의 별칭 또는 표 이름). */
-const effKeep = (alias: string, k: AppKeep) => ({ sql: `MIN(COALESCE(${alias}.keep_days, ?), ?)`, binds: [k.legacyDays, k.keepDays] });
+const effKeep = (alias: string, k: AppKeep) => ({ sql: `LEAST(COALESCE(${alias}.keep_days, ?), ?)`, binds: [k.legacyDays, k.keepDays] });
 
 /** "now + 실제 보관 일수" 시각 (초) SQL 식. */
 const purgeAtSql = (alias: string, now: number, k: AppKeep) => {
@@ -42,7 +43,7 @@ const purgeAtSql = (alias: string, now: number, k: AppKeep) => {
  */
 const autoCloseBeforeSql = (alias: string, now: number, k: AppAutoClose) => {
   const e = effKeep(alias, k);
-  return { sql: `(? + (${e.sql} - MIN(?, ${e.sql} - 1)) * ${86_400})`, binds: [now, ...e.binds, k.autoCloseDays, ...e.binds] };
+  return { sql: `(? + (${e.sql} - LEAST(?, ${e.sql} - 1)) * ${86_400})`, binds: [now, ...e.binds, k.autoCloseDays, ...e.binds] };
 };
 
 // ───────── 1. 공고 자동 마감
@@ -51,7 +52,7 @@ const autoCloseBeforeSql = (alias: string, now: number, k: AppAutoClose) => {
  * 마감일(closes_at)이 지난 게재 중 공고를 마감한다 (공개 조건은 closes_at > 지금 이므로 이미 목록에서 빠져 있다).
  * 지우는 것: 없음. 바꾸는 것: status 'published' → 'closed', updated_at = now. 초안·차단 공고는 건드리지 않는다.
  */
-export async function closeJobsPastDeadline(db: D1Database, x: { now: number; limit: number }): Promise<number> {
+export async function closeJobsPastDeadline(db: Db, x: { now: number; limit: number }): Promise<number> {
   const r = await db.prepare(
     `UPDATE jobs SET status = 'closed', updated_at = ?
      WHERE id IN (SELECT id FROM jobs WHERE status = 'published' AND closes_at IS NOT NULL AND closes_at <= ? ORDER BY closes_at, id LIMIT ?)
@@ -66,7 +67,7 @@ export async function closeJobsPastDeadline(db: D1Database, x: { now: number; li
  * 지우는 것: 없음. 바꾸는 것: status 'published' → 'closed', updated_at = now. 초안·차단 공고는 건드리지 않는다.
  */
 export async function closeStaleJobs(
-  db: D1Database, x: { now: number; staleBefore: number; noticeBefore: number; limit: number },
+  db: Db, x: { now: number; staleBefore: number; noticeBefore: number; limit: number },
 ): Promise<number> {
   const cond = `status = 'published' AND closes_at IS NULL AND updated_at < ? AND close_notice_at IS NOT NULL AND close_notice_at <= ?`;
   const r = await db.prepare(
@@ -90,7 +91,7 @@ export interface CloseNoticeJobRow {
  * 읽기만 한다. 개인정보 없음(공고 제목·기업 id).
  */
 export async function listJobsNeedingCloseNotice(
-  db: D1Database, x: { now: number; deadlineBefore: number; staleBefore: number | null; limit: number },
+  db: Db, x: { now: number; deadlineBefore: number; staleBefore: number | null; limit: number },
 ): Promise<CloseNoticeJobRow[]> {
   const deadline = '(closes_at IS NOT NULL AND closes_at > ? AND closes_at <= ?)';
   const cond = x.staleBefore === null ? deadline : `(${deadline} OR (closes_at IS NULL AND updated_at < ?))`;
@@ -104,7 +105,7 @@ export async function listJobsNeedingCloseNotice(
 }
 
 /** 기업들의 활성 담당자 주소 (db/applications.companyMemberEmails 와 같은 조건, 기업 여러 개를 한 번에). companyIds 는 50개 이하. */
-export async function listActiveMemberEmails(db: D1Database, companyIds: string[]): Promise<Array<{ company_id: string; email: string }>> {
+export async function listActiveMemberEmails(db: Db, companyIds: string[]): Promise<Array<{ company_id: string; email: string }>> {
   if (!companyIds.length) return [];
   const r = await db.prepare(
     `SELECT m.company_id, u.email FROM company_members m JOIN users u ON u.id = m.user_id
@@ -117,7 +118,7 @@ export async function listActiveMemberEmails(db: D1Database, companyIds: string[
  * 안내 메일을 보냈다고 표시한다. 공고마다 읽었을 때의 updated_at 이 그대로일 때만 (그사이 기업이 저장했으면 표시하지 않는다 — 저장이 기간을 새로 시작한다).
  * 지우는 것: 없음. 바꾸는 것: close_notice_at = now. jobs 는 10개 이하.
  */
-export async function markCloseNoticeSent(db: D1Database, x: { now: number; jobs: Array<{ id: string; updated_at: number }> }): Promise<number> {
+export async function markCloseNoticeSent(db: Db, x: { now: number; jobs: Array<{ id: string; updated_at: number }> }): Promise<number> {
   if (!x.jobs.length) return 0;
   const pairs = x.jobs.map(() => '(id = ? AND updated_at = ?)').join(' OR ');
   const r = await db.prepare(
@@ -132,7 +133,7 @@ export async function markCloseNoticeSent(db: D1Database, x: { now: number; jobs
  * 마감·차단된 공고의 지원에 보관 기한을 붙인다 (purge_after = 마감을 확인한 때 + 실제 보관 일수 = MIN(낼 때의 기간, 지금 설정)). 취소된 지원은 이미 기한이 있다.
  * 지우는 것: 없음. 바꾸는 것: purge_after NULL → now + 실제 보관 일수. limit 행까지.
  */
-export async function markPurgeAfter(db: D1Database, x: { now: number; keep: AppKeep; limit: number }): Promise<number> {
+export async function markPurgeAfter(db: Db, x: { now: number; keep: AppKeep; limit: number }): Promise<number> {
   const at = purgeAtSql('applications', x.now, x.keep);
   const r = await db.prepare(
     `UPDATE applications SET purge_after = ${at.sql}
@@ -152,7 +153,7 @@ export async function markPurgeAfter(db: D1Database, x: { now: number; keep: App
  * 내용이 남은 지원만 (내용을 지운 행의 기한은 dropOldRows 의 2년 기준이라 건드리지 않는다), 취소된 지원 제외.
  * 지우는 것: 없음. 바꾸는 것: purge_after → 더 이른 시각. limit 행까지.
  */
-export async function lowerPurgeAfter(db: D1Database, x: { now: number; keep: AppKeep; limit: number }): Promise<number> {
+export async function lowerPurgeAfter(db: Db, x: { now: number; keep: AppKeep; limit: number }): Promise<number> {
   const inner = purgeAtSql('a', x.now, x.keep);
   const outer = purgeAtSql('applications', x.now, x.keep);
   const r = await db.prepare(
@@ -170,7 +171,7 @@ export async function lowerPurgeAfter(db: D1Database, x: { now: number; keep: Ap
  * 차단이 풀려 다시 초안·게재 중이 된 공고의 진행 중 지원: 붙여 두었던 보관 기한을 뗀다 (기한이 아직 오지 않았고 내용이 남아 있는 것만).
  * 지우는 것: 없음. 바꾸는 것: purge_after → NULL. 끝난 지원(불합격·종료·취소)과 기한이 지난 지원은 그대로 둔다. limit 행까지.
  */
-export async function unmarkPurgeAfter(db: D1Database, x: { now: number; openStatuses: string[]; limit: number }): Promise<number> {
+export async function unmarkPurgeAfter(db: Db, x: { now: number; openStatuses: string[]; limit: number }): Promise<number> {
   const m = marks(x.openStatuses.length);
   const r = await db.prepare(
     `UPDATE applications SET purge_after = NULL
@@ -191,7 +192,7 @@ export interface AppStatusRow { id: string; status: string }
  * 읽기만 한다 (id·상태만, 내용 없음).
  */
 export async function listAutoCloseCandidates(
-  db: D1Database, x: { now: number; cutoff: AppAutoClose; openStatuses: string[]; limit: number },
+  db: Db, x: { now: number; cutoff: AppAutoClose; openStatuses: string[]; limit: number },
 ): Promise<AppStatusRow[]> {
   const before = autoCloseBeforeSql('a', x.now, x.cutoff);
   const r = await db.prepare(
@@ -212,14 +213,14 @@ export interface AutoCloseGroup { from: string; to: string; ids: string[] }
  * 지우는 것: 없음.
  */
 function autoCloseStmts(
-  db: D1Database, g: AutoCloseGroup, now: number, before: { sql: string; binds: unknown[] }, needClosedJob: boolean,
-): D1PreparedStatement[] {
+  db: Db, g: AutoCloseGroup, now: number, before: { sql: string; binds: unknown[] }, needClosedJob: boolean,
+): DbStatement[] {
   const m = marks(g.ids.length);
   const jobCond = needClosedJob ? `AND EXISTS (SELECT 1 FROM jobs j WHERE j.id = a.job_id AND j.status IN ('closed','blocked'))` : '';
   return [
     db.prepare(
       `INSERT INTO application_events (id, application_id, event, actor_id, at)
-       SELECT lower(hex(randomblob(16))), a.id, 'auto_closed', NULL, ? FROM applications a
+       SELECT replace(gen_random_uuid()::text, '-', ''), a.id, 'auto_closed', NULL, ? FROM applications a
        WHERE a.id IN (${m}) AND a.status = ? AND a.purge_after IS NOT NULL AND a.purge_after < ${before.sql} ${jobCond}`,
     ).bind(now, ...g.ids, g.from, ...before.binds),
     db.prepare(
@@ -232,7 +233,7 @@ function autoCloseStmts(
 
 /** 자동 종료 (한 batch). 돌려주는 값: 넣은 이벤트 수, 바뀐 상태 수 (둘은 같아야 한다). */
 export async function autoCloseApplications(
-  db: D1Database, x: { groups: AutoCloseGroup[]; now: number; cutoff: AppAutoClose },
+  db: Db, x: { groups: AutoCloseGroup[]; now: number; cutoff: AppAutoClose },
 ): Promise<{ events: number; changed: number }> {
   const groups = x.groups.filter((g) => g.ids.length && g.from !== g.to);
   if (!groups.length) return { events: 0, changed: 0 };
@@ -246,7 +247,7 @@ export async function autoCloseApplications(
 export interface PurgeCandidateRow { id: string; status: string; file_r2_key: string | null }
 
 /** 보관 기한(purge_after)이 지났는데 내용·파일이 남아 있는 지원 (id·상태·파일 키만). 읽기만 한다. */
-export async function listPurgeCandidates(db: D1Database, x: { now: number; limit: number }): Promise<PurgeCandidateRow[]> {
+export async function listPurgeCandidates(db: Db, x: { now: number; limit: number }): Promise<PurgeCandidateRow[]> {
   const r = await db.prepare(
     `SELECT id, status, file_r2_key FROM applications
      WHERE purge_after IS NOT NULL AND purge_after < ? AND (resume_snapshot != '' OR file_r2_key IS NOT NULL)
@@ -262,7 +263,7 @@ export async function listPurgeCandidates(db: D1Database, x: { now: number; limi
  * 3) 그 지원의 국외 이전 동의(cross_border)를 철회로 표시 (withdrawn_at = now). 내용이 지워진 지원의 것만.
  */
 export async function erasePurgedApplications(
-  db: D1Database, x: { ids: string[]; groups: AutoCloseGroup[]; now: number },
+  db: Db, x: { ids: string[]; groups: AutoCloseGroup[]; now: number },
 ): Promise<{ events: number; changed: number; erased: number; consents: number }> {
   if (!x.ids.length) return { events: 0, changed: 0, erased: 0, consents: 0 };
   const groups = x.groups.filter((g) => g.ids.length && g.from !== g.to);
@@ -292,7 +293,7 @@ export async function erasePurgedApplications(
  * 이 키들 중 지금 어느 행(이력서 resumes.file_r2_key, 지원서 applications.file_r2_key)이라도 가리키는 키. 읽기만 한다.
  * keys 는 50개 이하 (문장당 바인딩 50개 — D1 한도 100 안).
  */
-export async function findReferencedFileKeys(db: D1Database, keys: string[]): Promise<Set<string>> {
+export async function findReferencedFileKeys(db: Db, keys: string[]): Promise<Set<string>> {
   if (!keys.length) return new Set();
   if (keys.length > 50) throw new Error('findReferencedFileKeys: too many keys');
   const m = marks(keys.length);
@@ -326,7 +327,7 @@ export interface DropOldRowsResult {
  * 보관 기간이 지난 행을 지운다 (한 batch, 자식 행 먼저). 표마다 limit 행까지 — 남은 것은 다음 차례에.
  * users 행은 지우지 않는다 (jobs.created_by·access_log.actor_id 등이 가리킨다). company_invites 도 건드리지 않는다.
  */
-export async function dropOldRows(db: D1Database, x: DropOldRowsInput): Promise<DropOldRowsResult> {
+export async function dropOldRows(db: Db, x: DropOldRowsInput): Promise<DropOldRowsResult> {
   // 내용이 지워진 지원: 복사본 ''·파일 키 없음·보관 기한이 erasedBefore 이전 (취소·탈퇴·보관 기한 삭제 후 2년)
   const erasedApp = `a.resume_snapshot = '' AND a.file_r2_key IS NULL AND a.purge_after IS NOT NULL AND a.purge_after < ?`;
   const res = await db.batch([
@@ -383,7 +384,7 @@ export async function dropOldRows(db: D1Database, x: DropOldRowsInput): Promise<
 export interface ExpiredDocRow { id: string; r2_key: string }
 
 /** 확인(승인·반려)이 reviewedBefore 이전에 끝난 서류 (vdocs/ 아래 키만). 확인 대기(pending) 서류는 나오지 않는다. 읽기만 한다. */
-export async function listExpiredVerificationDocs(db: D1Database, x: { reviewedBefore: number; limit: number }): Promise<ExpiredDocRow[]> {
+export async function listExpiredVerificationDocs(db: Db, x: { reviewedBefore: number; limit: number }): Promise<ExpiredDocRow[]> {
   const r = await db.prepare(
     `SELECT id, r2_key FROM verification_docs
      WHERE review_status IN ('approved','rejected') AND reviewed_at IS NOT NULL AND reviewed_at < ? AND substr(r2_key, 1, 6) = 'vdocs/'
@@ -396,7 +397,7 @@ export async function listExpiredVerificationDocs(db: D1Database, x: { reviewedB
  * 지우는 것: 서류 행(verification_docs) — 확인이 reviewedBefore 이전에 끝난 것만, 행마다 한 문장(한 batch). ids 는 10개 이하.
  * 돌려주는 값: 행마다 지워졌는지. R2 객체는 호출부가 이 뒤에 지운다.
  */
-export async function deleteVerificationDocRows(db: D1Database, x: { ids: string[]; reviewedBefore: number }): Promise<boolean[]> {
+export async function deleteVerificationDocRows(db: Db, x: { ids: string[]; reviewedBefore: number }): Promise<boolean[]> {
   if (!x.ids.length) return [];
   const res = await db.batch(x.ids.map((id) => db.prepare(
     `DELETE FROM verification_docs
@@ -408,7 +409,7 @@ export async function deleteVerificationDocRows(db: D1Database, x: { ids: string
 // ───────── 정리 작업의 설정값 (site_settings 의 maint.* 키)
 
 /** 정리 작업이 쓰는 값 저장 (updated_by 없음). key 는 'maint.' 로 시작해야 한다. */
-export async function putMaintSetting(db: D1Database, key: string, value: string, now: number): Promise<void> {
+export async function putMaintSetting(db: Db, key: string, value: string, now: number): Promise<void> {
   if (!key.startsWith('maint.')) throw new Error('putMaintSetting: bad key');
   await db.prepare(
     `INSERT INTO site_settings (key, value, updated_by, updated_at) VALUES (?,?,NULL,?)
@@ -417,12 +418,12 @@ export async function putMaintSetting(db: D1Database, key: string, value: string
 }
 
 /** 지우는 것: 정리 작업의 설정값 한 줄 (key 는 'maint.' 로 시작, now 이전에 쓴 것). */
-export async function deleteMaintSetting(db: D1Database, key: string, now: number): Promise<void> {
+export async function deleteMaintSetting(db: Db, key: string, now: number): Promise<void> {
   await db.prepare(`DELETE FROM site_settings WHERE key = ? AND substr(key, 1, 6) = 'maint.' AND updated_at <= ?`).bind(key, now).run();
 }
 
 /** 지우는 것: 날짜가 beforeKey 보다 이른 일별 집계(maint.stats.<yyyy-mm-dd>) 줄, 마지막으로 쓴 시각이 updatedBefore 이전인 것만. limit 줄까지. */
-export async function deleteOldMaintStats(db: D1Database, x: { beforeKey: string; updatedBefore: number; limit: number }): Promise<number> {
+export async function deleteOldMaintStats(db: Db, x: { beforeKey: string; updatedBefore: number; limit: number }): Promise<number> {
   const r = await db.prepare(
     `DELETE FROM site_settings WHERE key IN (
        SELECT key FROM site_settings WHERE substr(key, 1, 12) = 'maint.stats.' AND key < ? AND updated_at < ? LIMIT ?)`,
@@ -439,7 +440,7 @@ export interface MaintCounts {
 }
 
 /** 표의 개수만 읽는다 (탈퇴한 계정은 세지 않는다). 개인정보·id 없음. */
-export async function maintenanceCounts(db: D1Database): Promise<MaintCounts> {
+export async function maintenanceCounts(db: Db): Promise<MaintCounts> {
   const [u, j, a] = await db.batch([
     db.prepare("SELECT role AS k, COUNT(*) AS n FROM users WHERE status != 'deleted' GROUP BY role"),
     db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE status = 'published'"),

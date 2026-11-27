@@ -9,6 +9,7 @@
 import type { Flags } from '../env';
 import type { JobFilter } from '../lib/public-jobs';
 import { filterWhere, publicJobWhere } from './public-jobs';
+import type { Db } from './types';
 
 export interface AlertRow {
   id: string;
@@ -24,7 +25,7 @@ export interface AlertRow {
 const ROW_COLS = 'id, filter_json, frequency, status, paused_reason, next_due_at, last_sent_at, created_at';
 
 /** 내 알림 (만든 순서). 5개 한도라 LIMIT 은 여유로 둔다. */
-export async function listMyAlerts(db: D1Database, seekerId: string): Promise<AlertRow[]> {
+export async function listMyAlerts(db: Db, seekerId: string): Promise<AlertRow[]> {
   return (await db.prepare(`SELECT ${ROW_COLS} FROM alerts WHERE seeker_id = ? ORDER BY created_at, id LIMIT 20`).bind(seekerId).all<AlertRow>()).results;
 }
 
@@ -34,7 +35,7 @@ export type InsertAlertResult = 'ok' | 'limit' | 'duplicate';
  * 한 문장으로: 내 알림이 max 개 미만이고 같은 조건(filter_json 글자 그대로)의 알림이 없을 때만 넣는다.
  * 거절되면 어느 쪽인지 한 번 더 읽어 알려 준다.
  */
-export async function insertAlert(db: D1Database, x: {
+export async function insertAlert(db: Db, x: {
   id: string; seekerId: string; filterJson: string; frequency: string; now: number; nextDue: number; optinVersion: string; max: number;
 }): Promise<InsertAlertResult> {
   const res = await db.prepare(
@@ -50,14 +51,14 @@ export async function insertAlert(db: D1Database, x: {
 }
 
 /** 빈도 바꾸기 (다음 차례도 새 빈도로). */
-export async function setMyAlertFrequency(db: D1Database, x: { id: string; seekerId: string; frequency: string; nextDue: number; now: number }): Promise<boolean> {
+export async function setMyAlertFrequency(db: Db, x: { id: string; seekerId: string; frequency: string; nextDue: number; now: number }): Promise<boolean> {
   const res = await db.prepare('UPDATE alerts SET frequency = ?, next_due_at = ?, updated_at = ? WHERE id = ? AND seeker_id = ?')
     .bind(x.frequency, x.nextDue, x.now, x.id, x.seekerId).run();
   return res.meta.changes === 1;
 }
 
 /** 본인이 멈추기. 이미 멈춘 알림은 이유를 바꾸지 않는다. */
-export async function pauseMyAlert(db: D1Database, x: { id: string; seekerId: string; now: number }): Promise<boolean> {
+export async function pauseMyAlert(db: Db, x: { id: string; seekerId: string; now: number }): Promise<boolean> {
   const res = await db.prepare("UPDATE alerts SET status = 'paused', paused_reason = 'user', updated_at = ? WHERE id = ? AND seeker_id = ? AND status = 'active'")
     .bind(x.now, x.id, x.seekerId).run();
   return res.meta.changes === 1;
@@ -67,7 +68,7 @@ export async function pauseMyAlert(db: D1Database, x: { id: string; seekerId: st
  * 다시 켜기: 실패 수를 0 으로, 확인 기준을 지금으로 (멈춰 있던 동안 게재된 공고를 한꺼번에 보내지 않는다), 다음 차례를 새로 정한다.
  * 메일 수신 동의를 다시 받으므로 동의 시각·판도 바꾼다 (화면의 체크 칸).
  */
-export async function resumeMyAlert(db: D1Database, x: { id: string; seekerId: string; now: number; nextDue: number; optinVersion: string }): Promise<boolean> {
+export async function resumeMyAlert(db: Db, x: { id: string; seekerId: string; now: number; nextDue: number; optinVersion: string }): Promise<boolean> {
   const res = await db.prepare(
     `UPDATE alerts SET status = 'active', paused_reason = NULL, fail_count = 0, checked_until = ?, next_due_at = ?, optin_at = ?, optin_version = ?, updated_at = ?
      WHERE id = ? AND seeker_id = ? AND status = 'paused'`,
@@ -76,7 +77,7 @@ export async function resumeMyAlert(db: D1Database, x: { id: string; seekerId: s
 }
 
 /** 지우기 (해지 토큰은 ON DELETE CASCADE 로 같이 지워진다). */
-export async function deleteMyAlert(db: D1Database, x: { id: string; seekerId: string }): Promise<boolean> {
+export async function deleteMyAlert(db: Db, x: { id: string; seekerId: string }): Promise<boolean> {
   const res = await db.prepare('DELETE FROM alerts WHERE id = ? AND seeker_id = ?').bind(x.id, x.seekerId).run();
   return res.meta.changes === 1;
 }
@@ -86,7 +87,7 @@ export async function deleteMyAlert(db: D1Database, x: { id: string; seekerId: s
 export interface TokenAlertRow { id: string; seeker_id: string; filter_json: string; frequency: 'daily' | 'weekly'; status: 'active' | 'paused' }
 
 /** 토큰 해시 → 그 알림. 없거나(모르는 토큰·만료·지운 알림) 탈퇴한 계정이면 null. */
-export async function findAlertByToken(db: D1Database, tokenHash: string): Promise<TokenAlertRow | null> {
+export async function findAlertByToken(db: Db, tokenHash: string): Promise<TokenAlertRow | null> {
   return db.prepare(
     `SELECT a.id, a.seeker_id, a.filter_json, a.frequency, a.status FROM alert_unsub_tokens t JOIN alerts a ON a.id = t.alert_id
      JOIN users u ON u.id = a.seeker_id WHERE t.token_hash = ? AND u.status != 'deleted'`,
@@ -94,7 +95,7 @@ export async function findAlertByToken(db: D1Database, tokenHash: string): Promi
 }
 
 /** 해지 링크로 그 알림 하나를 멈춘다. 이미 멈췄으면 아무것도 바꾸지 않는다(이유도 그대로). 토큰이 가리키는 알림이 있으면 true. */
-export async function pauseAlertByToken(db: D1Database, x: { tokenHash: string; now: number }): Promise<boolean> {
+export async function pauseAlertByToken(db: Db, x: { tokenHash: string; now: number }): Promise<boolean> {
   const [, found] = await db.batch([
     db.prepare(
       `UPDATE alerts SET status = 'paused', paused_reason = 'unsubscribe', updated_at = ?
@@ -106,7 +107,7 @@ export async function pauseAlertByToken(db: D1Database, x: { tokenHash: string; 
 }
 
 /** 해지 링크로 그 사람의 모든 알림을 멈춘다. 멈춘 수. */
-export async function pauseAllByToken(db: D1Database, x: { tokenHash: string; now: number }): Promise<number> {
+export async function pauseAllByToken(db: Db, x: { tokenHash: string; now: number }): Promise<number> {
   const res = await db.prepare(
     `UPDATE alerts SET status = 'paused', paused_reason = 'unsubscribe', updated_at = ?
      WHERE status = 'active'
@@ -132,7 +133,7 @@ export interface DueAlertRow {
  * 보낼 차례가 된 알림, 오래된 차례부터 limit 개. 대상: 켜진 알림 + 수신 동의가 있음 + 계정이 활동 중인 구직자
  * + 지금 판의 이용약관·개인정보 동의가 있음(철회 안 됨). 정지·탈퇴·동의 전 회원의 알림은 읽지 않는다(차례도 그대로 둔다).
  */
-export async function listDueAlerts(db: D1Database, x: { now: number; termsVersion: string; privacyVersion: string; limit: number }): Promise<DueAlertRow[]> {
+export async function listDueAlerts(db: Db, x: { now: number; termsVersion: string; privacyVersion: string; limit: number }): Promise<DueAlertRow[]> {
   return (await db.prepare(
     `SELECT a.id, a.seeker_id, u.email, u.locale, a.filter_json, a.frequency, a.checked_until, a.fail_count
      FROM alerts a JOIN users u ON u.id = a.seeker_id
@@ -170,7 +171,7 @@ export function alertJobsSql(flags: Flags, now: number, f: JobFilter, since: num
 
 /** 여러 알림의 새 공고를 한 번에 (읽기 batch — 왕복 한 번). 결과는 넘긴 순서대로. */
 export async function listNewJobsForAlerts(
-  db: D1Database, x: { flags: Flags; now: number; limit: number; items: Array<{ filter: JobFilter; since: number; until: number }> },
+  db: Db, x: { flags: Flags; now: number; limit: number; items: Array<{ filter: JobFilter; since: number; until: number }> },
 ): Promise<AlertJobRow[][]> {
   if (!x.items.length) return [];
   const res = await db.batch(x.items.map((it) => {
@@ -184,7 +185,7 @@ export async function listNewJobsForAlerts(
  * 메일을 보낸 **뒤에** 기록한다 (한 batch): 이 메일의 해지 토큰 해시 + 알림의 확인 기준·다음 차례·보낸 시각, 실패 수 0.
  * 토큰은 알림이 아직 있을 때만 넣는다(그사이 지워졌으면 넣지 않는다 — 외래키). 알림 갱신은 아직 켜져 있을 때만.
  */
-export async function recordAlertSent(db: D1Database, x: { id: string; tokenHash: string; now: number; until: number; nextDue: number }): Promise<boolean> {
+export async function recordAlertSent(db: Db, x: { id: string; tokenHash: string; now: number; until: number; nextDue: number }): Promise<boolean> {
   const res = await db.batch([
     db.prepare('INSERT INTO alert_unsub_tokens (token_hash, alert_id, created_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM alerts WHERE id = ?)')
       .bind(x.tokenHash, x.id, x.now, x.id),
@@ -197,7 +198,7 @@ export async function recordAlertSent(db: D1Database, x: { id: string; tokenHash
 /**
  * 메일 없이 차례만 넘긴다 (한 batch): 새 공고가 없음(until 이 있으면 확인 기준도 옮김) 또는 적용되는 조건이 없음(until = null, 확인 기준 그대로).
  */
-export async function recordAlertsSkipped(db: D1Database, items: Array<{ id: string; until: number | null; nextDue: number }>): Promise<number> {
+export async function recordAlertsSkipped(db: Db, items: Array<{ id: string; until: number | null; nextDue: number }>): Promise<number> {
   if (!items.length) return 0;
   const res = await db.batch(items.map((it) => (it.until === null
     ? db.prepare("UPDATE alerts SET next_due_at = ? WHERE id = ? AND status = 'active'").bind(it.nextDue, it.id)
@@ -206,7 +207,7 @@ export async function recordAlertsSkipped(db: D1Database, items: Array<{ id: str
 }
 
 /** 보내지 못함: 차례·확인 기준은 그대로(다음 실행에 다시), 실패 수 + 1, max 번째면 멈춤. 멈췄으면 true. */
-export async function recordAlertFailure(db: D1Database, x: { id: string; now: number; max: number }): Promise<boolean> {
+export async function recordAlertFailure(db: Db, x: { id: string; now: number; max: number }): Promise<boolean> {
   const r = await db.prepare(
     `UPDATE alerts SET fail_count = fail_count + 1,
        status = CASE WHEN fail_count + 1 >= ? THEN 'paused' ELSE status END,
@@ -225,7 +226,7 @@ export async function recordAlertFailure(db: D1Database, x: { id: string; now: n
  * 3) 180일 지난 해지 토큰 (그보다 오래된 메일의 링크는 "만료" 안내).
  * 알림을 지우면 그 알림의 토큰은 ON DELETE CASCADE 로 함께 지워진다.
  */
-export async function sweepAlerts(db: D1Database, x: { unusedBefore: number; tokenBefore: number; limit: number }): Promise<{ deleted_users: number; unused: number; tokens: number }> {
+export async function sweepAlerts(db: Db, x: { unusedBefore: number; tokenBefore: number; limit: number }): Promise<{ deleted_users: number; unused: number; tokens: number }> {
   const [a, b, c] = await db.batch([
     db.prepare(
       `DELETE FROM alerts WHERE id IN (
@@ -242,7 +243,7 @@ export async function sweepAlerts(db: D1Database, x: { unusedBefore: number; tok
 }
 
 /** 관리자 화면: 켜진·멈춘 알림 수 (개수만 — 누구의 어떤 조건인지는 읽지 않는다). */
-export async function countAlertsByStatus(db: D1Database): Promise<{ active: number; paused: number }> {
+export async function countAlertsByStatus(db: Db): Promise<{ active: number; paused: number }> {
   const rows = (await db.prepare('SELECT status AS k, COUNT(*) AS n FROM alerts GROUP BY status').all<{ k: string; n: number }>()).results;
   const get = (k: string) => Number(rows.find((r) => r.k === k)?.n ?? 0);
   return { active: get('active'), paused: get('paused') };

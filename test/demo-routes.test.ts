@@ -11,7 +11,7 @@ import { DEMO_APPLICATIONS, DEMO_COMPANIES, DEMO_JOBS, DEMO_RESUMES, DEMO_USERS 
 import { seedDemo } from '../src/lib/demo-seed';
 import { sendMail } from '../src/lib/email';
 import { configIssues } from '../scripts/lib/deploy-checks.mjs';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
 
 const ENC_KEY = b64url(new Uint8Array(32).fill(9)).replace(/-/g, '+').replace(/_/g, '/');
 const ORIGIN = 'https://recruit.example.test';
@@ -62,7 +62,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe.skipIf(!hasSqlite)('운영 서버에서는 시연 로그인이 없다', () => {
+describe.skipIf(!hasDb)('운영 서버에서는 시연 로그인이 없다', () => {
   for (const over of [{ APP_ENV: 'production' }, { APP_ENV: 'production', DEMO_LOGIN: 'on' }, { DEMO_LOGIN: 'off' }, { DEMO_LOGIN: undefined }, { APP_ENV: 'staging' }]) {
     it(`${JSON.stringify(over)}: 로그인 화면에 시연 계정 칸이 없고, POST /login/demo 는 404 이며, 아무 데이터도 생기지 않는다`, async () => {
       const w = world(over);
@@ -81,7 +81,7 @@ describe.skipIf(!hasSqlite)('운영 서버에서는 시연 로그인이 없다',
   }
 });
 
-describe.skipIf(!hasSqlite)('시연 로그인 (테스트 서버)', () => {
+describe.skipIf(!hasDb)('시연 로그인 (테스트 서버)', () => {
   it('로그인 화면에 시연 계정이 모두 보이고, 처음 로그인할 때 시연 데이터가 들어간다', async () => {
     const w = world();
     const html = await (await w.req('/login')).text();
@@ -214,7 +214,7 @@ describe.skipIf(!hasSqlite)('시연 로그인 (테스트 서버)', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('되돌리기', () => {
+describe.skipIf(!hasDb)('되돌리기', () => {
   /** 방문자가 시연 계정으로 해 놓은 일 + 시연 계정이 아닌 회원이 시연 공고에 낸 지원. */
   function mess(w: ReturnType<typeof world>) {
     const x = (sql: string, ...a: unknown[]) => w.raw.prepare(sql).run(...(a as never[]));
@@ -332,7 +332,7 @@ describe.skipIf(!hasSqlite)('되돌리기', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('시연 주소로는 메일을 보내지 않는다', () => {
+describe.skipIf(!hasDb)('시연 주소로는 메일을 보내지 않는다', () => {
   it('Resend 를 부르지 않고 기록만 남긴다. 테스트 서버에서는 보낸 것으로, 운영에서는 실패로 처리한다', async () => {
     const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchSpy);
@@ -361,16 +361,15 @@ describe('설정 점검', () => {
     expect(demo({ DEMO_LOGIN: 'on' })).toEqual({ id: 'demo', level: 'problem', code: 'on_production' });
     expect(demo({ DEMO_LOGIN: 'on', APP_ENV: 'test' })).toEqual({ id: 'demo', level: 'warning', code: 'on' });
   });
-  it('배포 전 점검: 운영 구역에 DEMO_LOGIN 이 있으면 배포를 막는다 (테스트 구역은 막지 않는다)', () => {
-    const cfg = (prodVars: Record<string, unknown>) => ({
-      name: 'recruit-test', vars: { APP_ENV: 'test', DEMO_LOGIN: 'on' },
-      env: { production: { workers_dev: false, routes: [{ pattern: 'jobs.example.test', custom_domain: true }],
-        vars: { APP_ENV: 'production', APP_ORIGIN: 'https://jobs.example.test', REGISTRATION_NO: '제2026-1호', ...prodVars } } },
+  it('운영 점검: 운영 .env 의 DEMO_LOGIN 이 "off" 가 아니면 막는다 (T-19: wrangler.jsonc 구역 대신 .env, 테스트 서버는 점검 대상이 아니다)', () => {
+    const vars = (o: Record<string, string>) => ({
+      APP_ENV: 'production', APP_ORIGIN: 'https://jobs.example.test', REGISTRATION_NO: '제2026-1호', MAIL_FROM: 'Recruit <a@jobs.example.test>',
+      OPERATOR_DOMAINS: 'jobs.example.test', DATABASE_URL: 'postgres://x', ENC_KEY: 'k', SESSION_PEPPER: 'fake-pepper-0123456789', RESEND_API_KEY: 'r',
+      DATA_DIR: 'D:\\data', ...o,
     });
-    expect(configIssues(cfg({}), 'production').errors).toEqual([]);
-    expect(configIssues(cfg({ DEMO_LOGIN: 'off' }), 'production').errors).toEqual([]);
-    expect(configIssues(cfg({ DEMO_LOGIN: 'on' }), 'production').errors.join('\n')).toContain('DEMO_LOGIN');
-    expect(configIssues(cfg({ DEMO_LOGIN: '' }), 'production').errors.join('\n')).toContain('DEMO_LOGIN');
-    expect(configIssues(cfg({}), 'test').errors).toEqual([]);
+    expect(configIssues(vars({})).errors).toEqual([]);
+    expect(configIssues(vars({ DEMO_LOGIN: 'off' })).errors).toEqual([]);
+    expect(configIssues(vars({ DEMO_LOGIN: 'on' })).errors.join('\n')).toContain('DEMO_LOGIN');
+    expect(configIssues(vars({ DEMO_LOGIN: '' })).errors.join('\n')).toContain('DEMO_LOGIN');
   });
 });

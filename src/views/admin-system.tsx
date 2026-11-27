@@ -15,7 +15,7 @@ const fill = (s: string, v: Record<string, string | number>) => Object.entries(v
 const BADGE: Record<CheckLevel, string> = { ok: 'badge s-verified', warning: 'badge l-review', problem: 'badge s-rejected' };
 
 export const SystemPage = (p: {
-  locale: Locale; appEnv: string; worst: CheckLevel; checks: CheckItem[]; secrets: SecretState[];
+  locale: Locale; appEnv: string; worst: CheckLevel; checks: ReadonlyArray<Pick<CheckItem, 'level' | 'code' | 'n'> & { id: string }>; secrets: SecretState[];
   schedule: readonly StepName[]; usage: TodayUsage; retention: RetentionSettings;
   /** 시간표 단계 뒤에 같은 실행에서 하는 단계 (UTC 시 → 단계, T-10). */
   shared?: Readonly<Record<number, StepName>>;

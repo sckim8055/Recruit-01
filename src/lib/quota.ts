@@ -1,6 +1,6 @@
 // 남용 방지 한도 (T-05c). 운영자가 비용을 내는 것(번역 API 호출·메일 발송)과 누구나 만들 수 있는 것(공고 초안)에 하루·개수 한도를 둔다.
 // 한도 숫자의 기본값은 lib/limits.ts 한 곳(DEFAULT_LIMITS)에 있다. 실제로 쓰는 값은 관리자 설정(/admin/settings, T-17) → 같은 이름의 변수
-// (wrangler.jsonc vars) → 기본값 순서로 칸마다 정한다 (loadLimits, lib/limits.resolveLimits). 몫을 잡을 때마다 설정 한 행을 읽는다(캐시 없음).
+// (.env, T-19 전에는 wrangler.jsonc vars) → 기본값 순서로 칸마다 정한다 (loadLimits, lib/limits.resolveLimits). 몫을 잡을 때마다 설정 한 행을 읽는다(캐시 없음).
 //
 // - 하루 몫은 한국 시간 0시(= UTC 15:00)에 새 날짜 행으로 시작한다. 한도를 바꿔도 오늘 이미 센 수는 그대로다 (소급해서 지우거나 되돌리지 않는다).
 // - 하루는 한국 시간(UTC+9) 0시에 바뀐다 (kstDay). 횟수는 usage_counters 에 (범위, 대상, 날짜) 마다 센다 — 대상은 id 또는 'site' 뿐이다.

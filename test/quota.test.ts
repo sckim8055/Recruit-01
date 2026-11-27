@@ -2,7 +2,8 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_LIMITS, LIMIT_MAX, LIMIT_NAMES, SCOPES, SITE, kstDay, limitsOf, parseLimit, takeAdminLocalizeTest, takeCompanyMail, takeLocalize, todayUsage } from '../src/lib/quota';
 import { readUsage, takeQuota } from '../src/db/usage';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
+import type { Db } from '../src/db/types';
 
 describe('kstDay (한국 시간 0시에 날짜가 바뀐다)', () => {
   // 2027-01-14 15:00:00 UTC = 2027-01-15 00:00:00 KST
@@ -46,7 +47,7 @@ describe('limitsOf / parseLimit', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('takeQuota (한 문장 가드)', () => {
+describe.skipIf(!hasDb)('takeQuota (한 문장 가드)', () => {
   const day = '2027-01-15';
   const key = { scope: 'localize_company', subject: 'co-1', day };
 
@@ -108,9 +109,9 @@ describe.skipIf(!hasSqlite)('takeQuota (한 문장 가드)', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('lib/quota: 기업 몫 → 사이트 몫', () => {
+describe.skipIf(!hasDb)('lib/quota: 기업 몫 → 사이트 몫', () => {
   const TS = Date.UTC(2027, 0, 15, 3, 0, 0) / 1000;
-  const envOf = (d1: D1Database, v: Record<string, string> = {}) => ({ DB: d1, ...v });
+  const envOf = (d1: Db, v: Record<string, string> = {}) => ({ DB: d1, ...v });
 
   it('기업 몫이 먼저 거절되면 사이트 몫은 건드리지 않는다', async () => {
     const { d1 } = migratedDb();

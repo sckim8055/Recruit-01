@@ -10,7 +10,7 @@ import { useRecoveryCode } from '../src/db/twofa';
 import { STEPS } from '../src/lib/maintenance';
 import { deleteAccount } from '../src/lib/account';
 import { agreeRequired } from './consent-fixture';
-import { hasSqlite, migratedDb } from './sqlite-d1';
+import { hasDb, migratedDb } from './pg-test-db';
 
 const ENC_KEY = b64url(new Uint8Array(32).fill(7)).replace(/-/g, '+').replace(/_/g, '/');
 const PEPPER = 'test-pepper-2fa';
@@ -143,7 +143,7 @@ describe('복구 코드 (순수 함수)', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('회원: 2단계 인증 켜기', () => {
+describe.skipIf(!hasDb)('회원: 2단계 인증 켜기', () => {
   it('새 키는 서버 대기에만 있고, 확인하면 지금 세션 mfa = 1 · 다른 세션 삭제 · 복구 코드 8개(해시) · 알림 메일', async () => {
     const w = world();
     const sid = await w.session('s1', 0);
@@ -236,7 +236,7 @@ describe.skipIf(!hasSqlite)('회원: 2단계 인증 켜기', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('로그인: 2단계 인증을 켠 회원', () => {
+describe.skipIf(!hasDb)('로그인: 2단계 인증을 켠 회원', () => {
   it('이메일 단계의 응답은 2단계 인증 여부와 같다', async () => {
     const w = world();
     const sid = await w.session('s1', 0);
@@ -363,7 +363,7 @@ const plainNoticeTitle = '<h1>로그인했습니다</h1>';
 /** 같은 30초 안에 다시 로그인한다 (맞힌 인증코드 행은 지워지므로 재발송 간격에 걸리지 않는다). */
 const emailLoginAfter = (w: W, email: string) => emailLogin(w, email);
 
-describe.skipIf(!hasSqlite)('회원: 끄기·복구 코드 새로 만들기·시도 한도', () => {
+describe.skipIf(!hasDb)('회원: 끄기·복구 코드 새로 만들기·시도 한도', () => {
   it('끄려면 번호나 복구 코드가 필요하다 (세션만으로는 안 됨)', async () => {
     const w = world();
     const sid = await w.session('s1', 0);
@@ -431,7 +431,7 @@ describe.skipIf(!hasSqlite)('회원: 끄기·복구 코드 새로 만들기·시
   });
 });
 
-describe.skipIf(!hasSqlite)('관리자', () => {
+describe.skipIf(!hasDb)('관리자', () => {
   it('최초 등록(로그인)에서 복구 코드 8개를 한 번 보여 준다', async () => {
     const w = world();
     const atp = cookieOf((await emailLogin(w, EMAILS.adm2)).res, 'atp')!;
@@ -582,7 +582,7 @@ async function adminWithSecret(w: W) {
   return { secret, sid };
 }
 
-describe.skipIf(!hasSqlite)('정리 작업·탈퇴', () => {
+describe.skipIf(!hasDb)('정리 작업·탈퇴', () => {
   it('dropOldRows: 만료된 등록 대기, 쓴 복구 코드, 2단계 인증이 꺼진 계정의 복구 코드, 오래된 관리자 기록', async () => {
     const w = world();
     const sid = await w.session('s1', 0);
@@ -618,7 +618,7 @@ describe.skipIf(!hasSqlite)('정리 작업·탈퇴', () => {
   });
 });
 
-describe.skipIf(!hasSqlite)('동의 확인·점검 모드의 예외 주소', () => {
+describe.skipIf(!hasDb)('동의 확인·점검 모드의 예외 주소', () => {
   it('동의하지 않은 회원도 /my/account/2fa* 를 열 수 있고(lib/consent 의 /my/account 예외), /login/totp 는 점검 중에도 열린다', async () => {
     const { consentExempt } = await import('../src/lib/consent');
     const { maintenanceExempt } = await import('../src/lib/pause');

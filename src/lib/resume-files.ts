@@ -1,7 +1,7 @@
 // 이력서 첨부파일: 종류 검사 → 암호화 → R2 비공개 저장, 그리고 권한 확인 → 열람 기록 → 복호화 → 전송.
 //
 // 검증 서류(lib/files.ts)와 다른 점
-// - **Worker 에서 한 번 더 암호화한다.** 이력서 파일에는 주민번호·주소·사진이 들어 있을 수 있어, R2 버킷을 직접 열어도
+// - **서버에서 한 번 더 암호화한다** (T-19 전 Worker). 이력서 파일에는 주민번호·주소·사진이 들어 있을 수 있어, R2 버킷을 직접 열어도
 //   내용이 보이지 않게 ENC_KEY 로 AES-GCM 암호화한 바이트만 저장한다. ENC_KEY 를 잃으면 복구할 수 없다.
 // - R2 에는 파일 종류(contentType)·원래 파일명을 남기지 않는다. 그 정보는 암호화된 resumes.body 안에 있다 (lib/resume.ts).
 // - 받는 종류는 PDF·DOCX 뿐이다. HWP·DOC·이미지는 받지 않는다 (화면에서 PDF 로 저장해 올리라고 안내).
@@ -73,7 +73,7 @@ export async function checkResumeUpload(file: unknown): Promise<ResumeUploadChec
 
 export async function encryptFile(key: CryptoKey, plain: Uint8Array, r2Key: string): Promise<Uint8Array> {
   const iv = crypto.getRandomValues(new Uint8Array(IV_LEN));
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: enc.encode(r2Key) }, key, plain));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: enc.encode(r2Key) }, key, plain as Uint8Array<ArrayBuffer>));
   const out = new Uint8Array(MAGIC.length + IV_LEN + ct.length);
   out.set(MAGIC, 0);
   out.set(iv, MAGIC.length);
@@ -87,7 +87,7 @@ export async function decryptFile(key: CryptoKey, stored: Uint8Array, r2Key: str
     throw new Error('resume file: unknown format');
   }
   const iv = stored.subarray(MAGIC.length, MAGIC.length + IV_LEN);
-  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: enc.encode(r2Key) }, key, stored.subarray(MAGIC.length + IV_LEN));
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv as Uint8Array<ArrayBuffer>, additionalData: enc.encode(r2Key) }, key, stored.subarray(MAGIC.length + IV_LEN) as Uint8Array<ArrayBuffer>);
   return new Uint8Array(pt);
 }
 
