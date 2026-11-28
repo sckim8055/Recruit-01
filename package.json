@@ -7,6 +7,7 @@
     "start": "node --env-file=.env dist/server.mjs",
     "db:migrate": "node --env-file=.env scripts/db-migrate.mjs",
     "maint": "node scripts/build.mjs && node --env-file=.env dist/maint.mjs",
+    "seed:bulk": "node --env-file=.env dist/bulk-seed.mjs",
     "backup": "node --env-file=.env scripts/backup.mjs",
     "restore": "node scripts/restore.mjs",
     "import:cloudflare": "node --env-file=.env scripts/import-from-cloudflare.mjs",

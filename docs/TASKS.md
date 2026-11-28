@@ -340,6 +340,15 @@
       `fs.statfs` 의 Windows 디스크 여유, Windows 의 SIGTERM(서비스 관리 프로그램이 어떻게 끄는지), Cloudflare Tunnel 뒤의 Host·Origin·Secure 쿠키, 주소 전환(T-20), Resend 실제 발송, Claude/Gemini 실호출,
       http://127.0.0.1 에서 `APP_ENV=test` 의 Secure 쿠키 로그인.
       **바뀐 동작:** 4장 동시 요청이 D1 처럼 차례대로 처리됨(READ COMMITTED 였다면 깨졌을 한도 6곳), 공개 화면 캐시는 데이터센터별이 아니라 서버 하나, `/favicon.ico` 등 정적 파일도 앞단에서, 화면 문구 중 wrangler·Cloudflare 를 말하던 줄(시스템 점검·한도 설명), 정리 작업 하루 보고 메일의 마지막 줄.
+- [x] T-21 대량 테스트 데이터: `npm run seed:bulk [-- --jobs 500 --companies 60 --seekers 300 --applications 1200 | --remove | --dry-run]` (`src/bulk-seed-cli.ts` → `dist/bulk-seed.mjs`,
+      생성 `lib/bulk-seed.ts`, SQL `db/bulk-seed.ts`). 모두 지어낸 데이터(기업·구직자 이름에 "(가상)", 주소 `@bulk.demo.example` → `isDemoAddress` 라 메일 안 나감, 전화 010-0000-xxxx, 가짜 사업자번호 0009…),
+      결정적 난수(mulberry32 고정 시드)라 같은 조건이면 같은 행. **표시:** 모든 id 가 `b5eed00<종류>-0000-4000-8000-<번호>`(UUID 모양 — `/jobs/:id` 검사 통과), 파일 키 `rfiles/b5eed009-…`·`rfiles/b5eed00a-…`·`vdocs/company/b5eed002-…/…`,
+      넣은 기록 `site_settings` `bulk.seed` — 마이그레이션 없음. **규칙 그대로:** 검증은 `verifyBlocks`, 게재는 초안으로 넣은 뒤 `publishBlocks` 가 빈 것만 `db/jobs.publishJob`, 마감 `closeJob`, 차단 `blockJob`,
+      지원은 `applyBlocks` → `insertApplication`(국외 이전 동의 포함), 이후 상태는 `nextStatus` 로 계산해 `markViewed`·`recordMailEvent`·`withdrawApplication` 으로만(면접·불합격은 메일 없이 이벤트만), 열람 이벤트 = `canViewApplication` 이 허용한 담당자 + access_log,
+      이력서·지원서 `sealResume`, 첨부 `encryptFile`(키 AAD). 서류 파일은 앱처럼 평문 PDF(예시 문서). 같은 조건 재실행은 변경 없음, 조건이 다르거나 끊긴 흔적이면 대량만 지우고 다시. `--remove` 는 대량 행 + 그것을 가리키는 행
+      (이벤트·동의·열람 기록·세션·메일 기록(주소 해시)·사용량·대량 공고에 다른 회원이 낸 지원 — 개수 안내) + 파일을 한 트랜잭션 → 파일 순서로. `APP_ENV=production` 은 DB 연결 전에 거절. 출력은 개수뿐.
+      테스트 `test/bulk-seed.test.ts`(18). 실제 PostgreSQL 16 에서 기본값 4.2~4.8초, 지우기 0.3초, Chromium 으로 `/jobs` 1·15·마지막(21) 페이지·필터·상세·기업 지원자 목록(97건)·관리자 화면 확인, 지운 뒤 시연·운영자 행 개수 그대로.
+      남은 것: 대량 계정은 로그인할 수 없다(인증코드 메일이 가지 않는 주소 — 시연 로그인에 넣으려면 운영자 결정), 사용 종료 항목은 기본 데이터에 없어 그 경로는 항목이 있을 때만 쓰인다.
 ## 운영자 설정 (사람이 하는 일 — 순서와 방법은 docs/DEPLOY.md)
 - [ ] O-1 GitHub 저장소에 이 폴더 올리기 (`predeploy:prod` 는 main 브랜치·저장하지 않은 변경 없음을 확인한다)
 - [ ] O-2 (T-19) PC 준비: PostgreSQL 16 에 `recruit` 계정·DB, `.env`(예전 테스트 서버의 ENC_KEY·SESSION_PEPPER, Resend 키) — DEPLOY.md 2·3장

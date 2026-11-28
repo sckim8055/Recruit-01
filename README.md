@@ -30,10 +30,11 @@ npm start
 
 | 명령 | 하는 일 |
 |---|---|
-| `npm run build` | `dist/server.mjs`·`dist/maint.mjs` 만들기 (esbuild) |
+| `npm run build` | `dist/server.mjs`·`dist/maint.mjs`·`dist/bulk-seed.mjs` 만들기 (esbuild) |
 | `npm start` | `node --env-file=.env dist/server.mjs` |
 | `npm run db:migrate` | `migrations/pg/` 적용 (이미 한 것은 건너뜀) |
 | `npm run maint -- <단계>` | 정리 작업 단계 하나를 지금 (아래 "자동 정리 작업") |
+| `npm run seed:bulk [-- --dry-run \| --remove \| --jobs N …]` | 대량 테스트 데이터(공고 약 500건, 모두 가짜) 넣기·지우기 — 테스트 서버·개발 PC 전용, 운영에서는 거절 (DEPLOY.md 9-7). 먼저 `npm run build` |
 | `npm run backup` · `npm run restore -- <파일>` | 암호화 백업 (DB + 첨부파일) · 풀기 (DEPLOY.md 7장) |
 | `npm run import:cloudflare [-- --dry-run]` | 예전 Cloudflare 테스트 서버의 데이터 가져오기 (한 번, DEPLOY.md 6장) |
 | `npm run predeploy:prod -- --env-file <파일>` | (나중) 운영 서버 점검 |

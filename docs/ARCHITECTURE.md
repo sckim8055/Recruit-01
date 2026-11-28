@@ -29,6 +29,7 @@ src/
   server.ts          Node 진입점 (T-19): .env → 설정, DB 연결·파일 저장소·캐시, 본문 크기 제한 → public/ → 앱, 127.0.0.1 만, 예약 작업 실행기, 정상 종료
   server-env.ts      .env 읽기(readServerConfig, 순수)·런타임 만들기(createRuntime)
   maint-cli.ts       npm run maint -- <단계> (예약 작업 단계 하나를 지금, 같은 DB 잠금)
+  bulk-seed-cli.ts   npm run seed:bulk (대량 테스트 데이터 넣기·지우기, 테스트·개발 전용 — lib/bulk-seed.ts · db/bulk-seed.ts, T-21)
   index.tsx          앱. 미들웨어 순서: 보안 헤더 → 출처 검사 → 세션 → 언어
   env.ts             Env(DB·FILES·.env 문자열)·타입·기능 플래그
   render.tsx         공통 레이아웃에 넣어 응답
