@@ -3,8 +3,8 @@ import type { Locale } from '../env';
 import { fmtDate } from '../lib/company';
 import { t } from '../lib/i18n';
 import {
-  RESUME_CHINESE_LEVELS, RESUME_LIMITS, RESUME_MAX_PER_USER, resumeReadyToApply,
-  type ResumeBody, type ResumeField, type ResumeFieldError, type ResumeFileMeta, type ResumeInput,
+  RESUME_CHINESE_LEVELS, RESUME_LANGS, RESUME_LIMITS, RESUME_MAX_PER_USER, resumeLangOf, resumeReadyToApply,
+  type ResumeBody, type ResumeLang, type ResumeField, type ResumeFieldError, type ResumeFileMeta, type ResumeInput,
 } from '../lib/resume';
 import type { ResumeRow } from '../db/resumes';
 import { Flash } from './company';
@@ -12,6 +12,11 @@ import { Flash } from './company';
 /** 중국어 수준 이름: 공고와 같은 이름을 쓰되, 'none' 은 구직자 쪽 뜻("할 줄 모름")으로. */
 export const levelText = (locale: Locale, lv: string): string =>
   t(locale, lv === 'none' ? 'resume.level.none' : `job.chinese_level.${lv}`);
+
+/** 작성 언어 표시 (T-22): "한국어 이력서" / "中文简历". 기업 화면도 같은 이름을 쓴다. 표시만 한다 — 정렬·거르기 없음. */
+export const LangLabel = ({ locale, lang }: { locale: Locale; lang: ResumeLang }) => (
+  <span class="badge" lang={lang}>{t(locale, `resume.lang.label.${lang}`)}</span>
+);
 
 const fmtSize = (n: number): string => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`);
 
@@ -44,6 +49,7 @@ export const ResumeList = (p: { locale: Locale; items: ResumeListItem[]; canAdd:
                   <div>
                     <a href={`/my/resumes/${row.id}/edit`}>{row.title}</a>
                     {row.is_default === 1 && <> <span class="badge s-verified">{t(l, 'resume.default')}</span></>}
+                    {' '}<LangLabel locale={l} lang={resumeLangOf(row)} />
                   </div>
                   <div>{body.headline}</div>
                   <div class="facts-line muted">
@@ -98,12 +104,12 @@ export const ResumeList = (p: { locale: Locale; items: ResumeListItem[]; canAdd:
 
 // ── 작성·수정 폼
 
-const FIELDS_ORDER: ResumeField[] = ['title', 'name', 'chinese_level', 'years', 'headline', 'contact_email', 'phone', 'desired_role', 'experience_text'];
+const FIELDS_ORDER: ResumeField[] = ['title', 'lang', 'name', 'chinese_level', 'years', 'headline', 'contact_email', 'phone', 'desired_role', 'experience_text'];
 
 /** 항목 오류 문구: 길이 초과는 한도를 넣고, 형식 오류는 항목별 안내가 있다. */
 function errText(locale: Locale, e: ResumeFieldError): string {
   if (e.code === 'too_long') {
-    const n = RESUME_LIMITS[e.field === 'contact_email' ? 'email' : (e.field as Exclude<ResumeField, 'contact_email' | 'chinese_level'>)];
+    const n = RESUME_LIMITS[e.field === 'contact_email' ? 'email' : (e.field as Exclude<ResumeField, 'contact_email' | 'chinese_level' | 'lang'>)];
     return t(locale, 'resume.err.too_long').replace('{n}', String(n));
   }
   if (e.code === 'invalid') return t(locale, `resume.err.invalid.${e.field}`);
@@ -203,6 +209,13 @@ export const ResumeForm = (p: ResumeFormProps) => {
           <input name="title" required maxlength={RESUME_LIMITS.title} value={i.title} aria-invalid={hasErr('title') ? 'true' : undefined} />
           <span class="hint">{t(l, 'resume.hint.title')}</span>
         </label>
+        <fieldset aria-invalid={hasErr('lang') ? 'true' : undefined}>
+          <legend>{lab('lang', true)}</legend>
+          {RESUME_LANGS.map((x) => (
+            <label class="check"><input type="radio" name="lang" value={x} required checked={i.lang === x} /><span lang={x}>{t(l, `resume.lang.${x}`)}</span></label>
+          ))}
+          <span class="hint">{t(l, 'resume.hint.lang')}</span>
+        </fieldset>
         <ResumeFieldInputs locale={l} input={i} errors={p.errors} />
         <fieldset>
           <legend>{lab('attachment')}</legend>

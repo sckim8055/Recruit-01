@@ -18,6 +18,14 @@ function sqliteFinal(): Sq {
   return db;
 }
 
+/**
+ * SQLite 기록(0001~0013) 이후에 pg/ 새 번호 파일로 더한 컬럼 (표 → [컬럼, CHECK 수]). 비교에서는 빼고, 아래에서 따로 확인한다.
+ * 0002_resume_lang (T-22): resumes.lang, applications.resume_lang — 둘 다 NOT NULL DEFAULT 'ko' CHECK ('ko','zh').
+ */
+const PG_ONLY: Readonly<Record<string, ReadonlyArray<readonly [string, number]>>> = {
+  resumes: [['lang', 1]], applications: [['resume_lang', 1]],
+};
+
 describe.skipIf(!DatabaseSync)('PostgreSQL 스키마 = SQLite 0001~0013', () => {
   const sq = sqliteFinal();
   const { raw } = migratedDb();
@@ -34,7 +42,7 @@ describe.skipIf(!DatabaseSync)('PostgreSQL 스키마 = SQLite 0001~0013', () => 
       const pc = raw.prepare(
         `SELECT column_name, is_nullable, column_default, data_type FROM information_schema.columns
          WHERE table_schema = current_schema() AND table_name = ? ORDER BY ordinal_position`,
-      ).all(name);
+      ).all(name).filter((c) => !(PG_ONLY[name] ?? []).some(([col]) => col === c.column_name));
       expect(pc.map((c) => c.column_name)).toEqual(sc.map((c) => c.name));
       const pkCols = sc.filter((c) => Number(c.pk) > 0).sort((a, b) => Number(a.pk) - Number(b.pk)).map((c) => String(c.name));
       for (const c of sc) {
@@ -65,7 +73,7 @@ describe.skipIf(!DatabaseSync)('PostgreSQL 스키마 = SQLite 0001~0013', () => 
       const pchecks = Number(raw.prepare(
         "SELECT COUNT(*) AS n FROM pg_constraint WHERE conrelid = to_regclass(?) AND contype = 'c'",
       ).get(name)!.n);
-      expect(pchecks, `${name} CHECK`).toBe(checks);
+      expect(pchecks, `${name} CHECK`).toBe(checks + (PG_ONLY[name] ?? []).reduce((s, [, n]) => s + n, 0));
     });
   }
 
@@ -92,6 +100,24 @@ describe.skipIf(!DatabaseSync)('PostgreSQL 스키마 = SQLite 0001~0013', () => 
     expect(Number(r.n)).toBe(0);
     expect(raw.prepare("SELECT 'B' < 'a' AS x").get()!.x).toBe(true); // 바이트 순서 (대문자가 먼저)
   });
+});
+
+describe('pg 에만 있는 컬럼 (SQLite 기록 이후)', () => {
+  const { raw } = migratedDb();
+  for (const [table, cols] of Object.entries(PG_ONLY)) {
+    for (const [col] of cols) {
+      it(`${table}.${col}: NOT NULL, 기본값 'ko', CHECK ('ko','zh'), 마지막 컬럼`, () => {
+        const c = raw.prepare(
+          `SELECT is_nullable, column_default, data_type, collation_name, ordinal_position,
+                  (SELECT MAX(ordinal_position) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?) AS last
+           FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
+        ).get(table, table, col)!;
+        expect(c).toMatchObject({ is_nullable: 'NO', data_type: 'text', collation_name: 'C' });
+        expect(String(c.column_default)).toContain("'ko'");
+        expect(Number(c.ordinal_position)).toBe(Number(c.last));
+      });
+    }
+  }
 });
 
 describe('마이그레이션 목록', () => {

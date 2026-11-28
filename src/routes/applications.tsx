@@ -24,7 +24,7 @@ import { sendMail } from '../lib/email';
 import { t } from '../lib/i18n';
 import { isJobId, isPubliclyVisible } from '../lib/public-jobs';
 import {
-  inputFromResume, openResume, readResumeForm, resumeReadyToApply, sealResume, validateResume,
+  inputFromResume, openResume, readResumeForm, resumeLangOf, resumeReadyToApply, sealResume, validateResume,
   type ResumeBody, type ResumeFieldError, type ResumeInput,
 } from '../lib/resume';
 import { copyResumeFile, deleteResumeFile } from '../lib/resume-files';
@@ -141,7 +141,7 @@ async function resumeChoices(c: Context<AppEnv>, user: SessionUser): Promise<Res
     if (!body) continue;
     // 파일 정보가 있어도 파일 키가 없으면 첨부가 없는 것으로 본다 (지원할 때 복사할 수 없다).
     const usable = row.file_r2_key ? body : { ...body, file: null };
-    out.push({ id: row.id, title: row.title, headline: body.headline, isDefault: row.is_default === 1, ready: resumeReadyToApply(usable) });
+    out.push({ id: row.id, title: row.title, lang: resumeLangOf(row), headline: body.headline, isDefault: row.is_default === 1, ready: resumeReadyToApply(usable) });
   }
   return out;
 }
@@ -179,7 +179,7 @@ apply.get('/:id/apply', async (c) => {
   const [counts, retention] = await Promise.all([memberCounts(c.env.DB, job.companyId), loadRetention(c.env.DB)]);
   const need = consentNeed(counts);
   return stepTwo(c, {
-    job, row: own.row, body: own.body, input: inputFromResume(own.row.title, own.body), errors: [],
+    job, row: own.row, body: own.body, input: inputFromResume(own.row.title, own.body, resumeLangOf(own.row)), errors: [],
     includeFile: true, need, consentGiven: false, retention,
   });
 });
@@ -205,7 +205,9 @@ apply.post('/:id/apply', async (c) => {
   const { row, body } = own;
 
   // (b) 이번 지원에만 쓸 항목: 이력서 폼과 같은 검사. 이름표(title)는 화면에 없으므로 이력서의 것을 넣어 검사만 통과시킨다 (저장하지 않는다).
-  const input = readResumeForm({ ...f, title: row.title });
+  // 작성 언어도 이력서의 것(resumes.lang)을 쓴다 — 지원 화면에는 그 칸이 없다 (T-22).
+  const lang = resumeLangOf(row);
+  const input = readResumeForm({ ...f, title: row.title, lang });
   const v = validateResume(input);
   const hasFile = !!(row.file_r2_key && body.file);
   const include = hasFile && f.include_file === '1';
@@ -226,7 +228,7 @@ apply.post('/:id/apply', async (c) => {
     canApply: canApply(actor),
     jobVisible: job.visible,
     alreadyApplied: await hasApplied(c.env.DB, job.id, user.id),
-    resumeReady: resumeReadyToApply(buildSnapshot(body, v.fields, { include, copied })),
+    resumeReady: resumeReadyToApply(buildSnapshot(body, v.fields, { include, copied }, lang)),
     consentNeed: need,
     consentGiven: given,
   });
@@ -251,7 +253,7 @@ apply.post('/:id/apply', async (c) => {
   const fileLost = include && !copied;
 
   // (e) 복사본과 최종 판단. 첨부가 빠져서 지원할 수 없게 되면 내지 않고 알린다.
-  const snapshot = buildSnapshot(body, v.fields, { include, copied });
+  const snapshot = buildSnapshot(body, v.fields, { include, copied }, lang);
   const blocks = await blocksFor(copied);
   if (blocks.length) {
     await cleanup(c, fileKey);
@@ -264,7 +266,7 @@ apply.post('/:id/apply', async (c) => {
   let inserted = false;
   try {
     inserted = await insertApplication(c.env.DB, {
-      id, jobId: job.id, seekerId: user.id, resumeId: row.id, snapshot: await sealResume(await key(c), snapshot), fileKey,
+      id, jobId: job.id, seekerId: user.id, resumeId: row.id, resumeLang: lang, snapshot: await sealResume(await key(c), snapshot), fileKey,
       consentAt: consentAt(need, given, ts), consentVersion: crossBorderVersion(keepDays), ts, keepDays,
     }, flagsOf(c.env));
   } catch (e) {

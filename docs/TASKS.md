@@ -349,6 +349,15 @@
       (이벤트·동의·열람 기록·세션·메일 기록(주소 해시)·사용량·대량 공고에 다른 회원이 낸 지원 — 개수 안내) + 파일을 한 트랜잭션 → 파일 순서로. `APP_ENV=production` 은 DB 연결 전에 거절. 출력은 개수뿐.
       테스트 `test/bulk-seed.test.ts`(18). 실제 PostgreSQL 16 에서 기본값 4.2~4.8초, 지우기 0.3초, Chromium 으로 `/jobs` 1·15·마지막(21) 페이지·필터·상세·기업 지원자 목록(97건)·관리자 화면 확인, 지운 뒤 시연·운영자 행 개수 그대로.
       남은 것: 대량 계정은 로그인할 수 없다(인증코드 메일이 가지 않는 주소 — 시연 로그인에 넣으려면 운영자 결정), 사용 종료 항목은 기본 데이터에 없어 그 경로는 항목이 있을 때만 쓰인다.
+- [x] T-22 시나리오형 테스트 데이터 + 이력서 작성 언어 (ARCHITECTURE 4장·19절, DEPLOY 9-7).
+      **작성 언어:** `migrations/pg/0002_resume_lang.sql` — `resumes.lang`, `applications.resume_lang` (둘 다 TEXT NOT NULL DEFAULT 'ko' CHECK ('ko','zh'), 평문 — 개인정보 아님).
+      이력서 폼에 필수 "작성 언어: 한국어 / 中文"(`lib/resume.validateResume` 의 `lang`), 내 이력서 목록·지원 1단계 목록에 "한국어 이력서 / 중국어 이력서" 표시, 수정·복사는 언어 유지.
+      지원 복사본 JSON 에 `lang`(`buildSnapshot` 4번째 인자, 고른 이력서의 값), 예전 복사본은 'ko'(`snapshotLang`). 기업 지원자 목록은 `resume_lang` 으로 표시만(지원서를 열지 않음, 정렬·거르기 없음),
+      지원서 화면·관리자 열람·구직자 지원서 화면은 `SnapshotFields` 의 "작성 언어" 줄. 번역 없음(T-14 그대로), 권한·암호화 바뀐 것 없음. 시연 데이터는 모두 'ko'.
+      **데이터:** `lib/bulk-content.ts`(새 파일, 글 재료) — 기업 60곳·13개 업계·진출 단계·진출 이유, 직무 묶음 32개(IT 14), 중국어 원문(본사 인사팀 양식)·한국어 현지화본, 이력서 한국어·중국어.
+      공고의 약 60% 가 IT(운영자 추가 요청), 중국어 이력서 약 30%, 두 언어 모두 약 15%. 방법(id·규칙 함수·`--remove`·결정적 난수·운영 거절)은 T-21 그대로, `BULK_SEED_VERSION` 2.
+      테스트: `test/resume-lang.test.ts`(새), `test/bulk-seed.test.ts` 에 T-22 블록(7) + 기존 시험에 복사본 lang·IT 비율 확인, `test/pg-schema.test.ts`(SQLite 이후 컬럼 표 `PG_ONLY` + 확인).
+      내용 변경으로 고친 기존 테스트: 이력서 폼을 보내는 시험(`lang` 추가)·`buildSnapshot`/`insertApplication`/`insertResume`/`updateResume` 인자·지원자 목록 행의 키.
 ## 운영자 설정 (사람이 하는 일 — 순서와 방법은 docs/DEPLOY.md)
 - [ ] O-1 GitHub 저장소에 이 폴더 올리기 (`predeploy:prod` 는 main 브랜치·저장하지 않은 변경 없음을 확인한다)
 - [ ] O-2 (T-19) PC 준비: PostgreSQL 16 에 `recruit` 계정·DB, `.env`(예전 테스트 서버의 ENC_KEY·SESSION_PEPPER, Resend 키) — DEPLOY.md 2·3장

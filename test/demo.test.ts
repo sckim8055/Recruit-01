@@ -161,7 +161,7 @@ describe('시연 데이터 원본', () => {
   it('이력서: 작성 폼 검사를 통과하고, 전화번호가 없고, 연락처는 시연 주소다', () => {
     for (const r of DEMO_RESUMES) {
       const v = validateResume({
-        title: r.title, name: r.body.name, chinese_level: r.body.chinese_level, years: String(r.body.years), headline: r.body.headline,
+        title: r.title, lang: 'ko', name: r.body.name, chinese_level: r.body.chinese_level, years: String(r.body.years), headline: r.body.headline,
         contact_email: r.body.contact_email, phone: '', desired_role: r.body.desired_role ?? '', experience_text: r.body.experience_text ?? '',
       });
       expect(v.ok, r.title).toBe(true);

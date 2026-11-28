@@ -13,13 +13,15 @@ export interface ApplicantListRow {
   status_changed_at: number;
   cross_border_consent_at: number | null;
   has_file: number;
+  /** 고른 이력서의 작성 언어 'ko' | 'zh' (T-22, 평문 컬럼 — 지원서를 열지 않고 표시만). */
+  resume_lang: string;
 }
 
 /** 한 공고의 지원 목록 (지원한 순서). 취소된 지원도 줄은 나오지만 내용은 이미 지워져 있고 열 수 없다. */
 export async function listJobApplications(db: Db, jobId: string): Promise<ApplicantListRow[]> {
   const r = await db.prepare(
     `SELECT id, status, created_at, status_changed_at, cross_border_consent_at,
-            CASE WHEN file_r2_key IS NOT NULL THEN 1 ELSE 0 END AS has_file
+            CASE WHEN file_r2_key IS NOT NULL THEN 1 ELSE 0 END AS has_file, resume_lang
      FROM applications WHERE job_id = ? ORDER BY created_at, id LIMIT 500`,
   ).bind(jobId).all<ApplicantListRow>();
   return r.results;

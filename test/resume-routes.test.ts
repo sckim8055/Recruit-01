@@ -85,7 +85,7 @@ function world() {
 type World = ReturnType<typeof world>;
 
 const fields = (p: Record<string, string> = {}) => ({
-  title: '영업직용', name: NAME, chinese_level: 'business', years: '5', headline: '중국 본사와 일해 본 B2B 영업',
+  title: '영업직용', lang: 'ko', name: NAME, chinese_level: 'business', years: '5', headline: '중국 본사와 일해 본 B2B 영업',
   contact_email: EMAIL, phone: '010-0000-0000', desired_role: '영업', experience_text: '', ...p,
 });
 function form(p: Record<string, string> = {}, file?: { bytes: Uint8Array; name: string; type?: string }) {

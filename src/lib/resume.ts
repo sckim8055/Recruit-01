@@ -12,6 +12,9 @@ export const RESUME_MAX_PER_USER = 5;
 export const RESUME_LIMITS = { title: 40, name: 40, headline: 100, phone: 30, desired_role: 60, experience_text: 4000, email: 254, years: 60 } as const;
 export const RESUME_CHINESE_LEVELS = ['none', 'basic', 'business', 'native'] as const;
 export type ResumeChineseLevel = (typeof RESUME_CHINESE_LEVELS)[number];
+/** 이력서 작성 언어 (T-22). 구직자가 고른 값을 표시만 한다 — 번역·정렬·거르기에 쓰지 않는다. 개인정보가 아니라 resumes.lang 에 평문으로 둔다. */
+export const RESUME_LANGS = ['ko', 'zh'] as const;
+export type ResumeLang = (typeof RESUME_LANGS)[number];
 
 export interface ResumeFileMeta {
   name: string;                 // 원래 파일명 (표시·내려받기용). 경로·제어 문자는 뺀다
@@ -31,19 +34,24 @@ export interface ResumeBody {
   desired_role: string | null;
   experience_text: string | null;
   file: ResumeFileMeta | null;
+  /**
+   * 작성 언어 — 지원서 복사본(applications.resume_snapshot)에만 넣는다 (lib/application.buildSnapshot).
+   * 이력서 원본의 작성 언어는 resumes.lang 컬럼에 있다. 값이 없는 예전 복사본은 'ko' 로 읽는다 (snapshotLang).
+   */
+  lang?: ResumeLang;
 }
 
-export type ResumeField = 'title' | 'name' | 'chinese_level' | 'years' | 'headline' | 'contact_email' | 'phone' | 'desired_role' | 'experience_text';
+export type ResumeField = 'title' | 'lang' | 'name' | 'chinese_level' | 'years' | 'headline' | 'contact_email' | 'phone' | 'desired_role' | 'experience_text';
 export interface ResumeFieldError { field: ResumeField; code: 'required' | 'too_long' | 'invalid' }
 
 /** 폼에서 온 값 그대로 (다시 그릴 때 쓴다). */
 export interface ResumeInput {
-  title: string; name: string; chinese_level: string; years: string; headline: string;
+  title: string; lang: string; name: string; chinese_level: string; years: string; headline: string;
   contact_email: string; phone: string; desired_role: string; experience_text: string;
 }
 
 export const EMPTY_RESUME_INPUT: ResumeInput = {
-  title: '', name: '', chinese_level: '', years: '', headline: '', contact_email: '', phone: '', desired_role: '', experience_text: '',
+  title: '', lang: '', name: '', chinese_level: '', years: '', headline: '', contact_email: '', phone: '', desired_role: '', experience_text: '',
 };
 
 const str = (f: Record<string, unknown>, k: string): string => (typeof f[k] === 'string' ? (f[k] as string) : '');
@@ -58,24 +66,24 @@ const PHONE_RE = /^[0-9+\-() ]+$/;
 
 export function readResumeForm(f: Record<string, unknown>): ResumeInput {
   return {
-    title: oneLine(str(f, 'title')), name: oneLine(str(f, 'name')), chinese_level: str(f, 'chinese_level').trim(),
+    title: oneLine(str(f, 'title')), lang: str(f, 'lang').trim(), name: oneLine(str(f, 'name')), chinese_level: str(f, 'chinese_level').trim(),
     years: str(f, 'years').trim(), headline: oneLine(str(f, 'headline')), contact_email: str(f, 'contact_email').trim().toLowerCase(),
     phone: oneLine(str(f, 'phone')), desired_role: oneLine(str(f, 'desired_role')), experience_text: multiLine(str(f, 'experience_text')),
   };
 }
 
 export type ResumeValidation =
-  | { ok: true; title: string; fields: Omit<ResumeBody, 'v' | 'file'> }
+  | { ok: true; title: string; lang: ResumeLang; fields: Omit<ResumeBody, 'v' | 'file' | 'lang'> }
   | { ok: false; errors: ResumeFieldError[] };
 
 /**
- * 폼 검사. 필수는 다섯 개(이름·중국어 수준·경력 연차·한 줄 소개·연락 이메일)와 이력서 이름표(title)뿐이다.
+ * 폼 검사. 필수는 다섯 개(이름·중국어 수준·경력 연차·한 줄 소개·연락 이메일)와 이력서 이름표(title)·작성 언어(lang)뿐이다.
  * 첨부파일은 여기서 다루지 않는다 (lib/resume-files.checkResumeUpload).
  */
 export function validateResume(i: ResumeInput): ResumeValidation {
   const errors: ResumeFieldError[] = [];
   const err = (field: ResumeField, code: ResumeFieldError['code']) => { errors.push({ field, code }); };
-  const text = (field: Exclude<ResumeField, 'chinese_level' | 'years'>, required: boolean): string | null => {
+  const text = (field: Exclude<ResumeField, 'chinese_level' | 'years' | 'lang'>, required: boolean): string | null => {
     const v = i[field];
     if (!v) { if (required) err(field, 'required'); return null; }
     if (v.length > RESUME_LIMITS[field === 'contact_email' ? 'email' : field]) { err(field, 'too_long'); return null; }
@@ -92,6 +100,11 @@ export function validateResume(i: ResumeInput): ResumeValidation {
   const desired_role = text('desired_role', false);
   const experience_text = text('experience_text', false);
 
+  let lang: ResumeLang | null = null;
+  if (!i.lang) err('lang', 'required');
+  else if ((RESUME_LANGS as readonly string[]).includes(i.lang)) lang = i.lang as ResumeLang;
+  else err('lang', 'invalid');
+
   let chinese_level: ResumeChineseLevel | null = null;
   if (!i.chinese_level) err('chinese_level', 'required');
   else if ((RESUME_CHINESE_LEVELS as readonly string[]).includes(i.chinese_level)) chinese_level = i.chinese_level as ResumeChineseLevel;
@@ -102,16 +115,16 @@ export function validateResume(i: ResumeInput): ResumeValidation {
   else if (/^\d{1,2}$/.test(i.years) && Number(i.years) <= RESUME_LIMITS.years) years = Number(i.years);
   else err('years', 'invalid');
 
-  if (errors.length || !title || !name || !headline || !contact_email || chinese_level === null || years === null) {
+  if (errors.length || !title || !lang || !name || !headline || !contact_email || chinese_level === null || years === null) {
     return { ok: false, errors };
   }
-  return { ok: true, title, fields: { name, chinese_level, years, headline, contact_email, phone, desired_role, experience_text } };
+  return { ok: true, title, lang, fields: { name, chinese_level, years, headline, contact_email, phone, desired_role, experience_text } };
 }
 
-/** 저장된 이력서를 폼 값으로 되돌린다 (편집 화면). */
-export function inputFromResume(title: string, b: ResumeBody): ResumeInput {
+/** 저장된 이력서를 폼 값으로 되돌린다 (편집 화면). lang 은 resumes.lang (없으면 내용의 lang, 그것도 없으면 'ko'). */
+export function inputFromResume(title: string, b: ResumeBody, lang?: ResumeLang): ResumeInput {
   return {
-    title, name: b.name, chinese_level: b.chinese_level, years: String(b.years), headline: b.headline, contact_email: b.contact_email,
+    title, lang: lang ?? snapshotLang(b), name: b.name, chinese_level: b.chinese_level, years: String(b.years), headline: b.headline, contact_email: b.contact_email,
     phone: b.phone ?? '', desired_role: b.desired_role ?? '', experience_text: b.experience_text ?? '',
   };
 }
@@ -137,6 +150,7 @@ export async function openResume(key: CryptoKey, stored: string): Promise<Resume
     || !isStr(o.chinese_level) || !(RESUME_CHINESE_LEVELS as readonly string[]).includes(o.chinese_level)) {
     throw new Error('resume: bad shape');
   }
+  if (o.lang !== undefined && !(RESUME_LANGS as readonly string[]).includes(o.lang as string)) throw new Error('resume: bad shape');
   let file: ResumeFileMeta | null = null;
   if (typeof o.file === 'object' && o.file !== null) {
     const f = o.file as Record<string, unknown>;
@@ -147,8 +161,15 @@ export async function openResume(key: CryptoKey, stored: string): Promise<Resume
     v: 1, name: o.name, chinese_level: o.chinese_level as ResumeChineseLevel, years: o.years, headline: o.headline,
     contact_email: o.contact_email, phone: strOrNull(o.phone), desired_role: strOrNull(o.desired_role),
     experience_text: strOrNull(o.experience_text), file,
+    ...(o.lang !== undefined ? { lang: o.lang as ResumeLang } : {}),
   };
 }
+
+/** resumes.lang · applications.resume_lang 값 → 작성 언어 (CHECK 가 지키지만, 모르는 값은 'ko'). */
+export const resumeLangOf = (row: { lang?: string | null }): ResumeLang => (row.lang === 'zh' ? 'zh' : 'ko');
+
+/** 지원서 복사본의 작성 언어. lang 이 없는 예전 복사본(T-22 전)은 'ko'. */
+export const snapshotLang = (b: Pick<ResumeBody, 'lang'>): ResumeLang => b.lang ?? 'ko';
 
 // ── 판단
 

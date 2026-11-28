@@ -14,15 +14,20 @@ vi.mock('../src/lib/email', async (orig) => {
 import app from '../src/index';
 import { flagsOf } from '../src/env';
 import {
-  BULK_MAIL_DOMAIN, BULK_STAMP_KEY, DEFAULT_BULK_PARAMS, bulkId, isBulkAddress, isBulkFileKey, isBulkId, parseBulkArgs, runBulkCommand, type BulkArgs,
+  BULK_MAIL_DOMAIN, BULK_STAMP_KEY, DEFAULT_BULK_PARAMS, buildBulkPlan, bulkId, isBulkAddress, isBulkFileKey, isBulkId, parseBulkArgs, runBulkCommand, type BulkArgs,
 } from '../src/lib/bulk-seed';
+import { COMPANIES, IT_FAMILIES, REAL_BRAND_DENYLIST } from '../src/lib/bulk-content';
+import { digitDiff } from '../src/lib/jobs';
+import { buildOptionSet } from '../src/lib/options';
+import { loadRetention } from '../src/lib/retention-setting';
+import { listOptions } from '../src/db/options';
 import { b64url, importEncKey } from '../src/lib/crypto';
 import { isDemoAddress } from '../src/lib/demo';
 import { seedDemo } from '../src/lib/demo-seed';
 import { publishInputOf } from '../src/lib/jobs';
-import { openResume, validateResume, inputFromResume } from '../src/lib/resume';
+import { openResume, snapshotLang, validateResume, inputFromResume, type ResumeBody } from '../src/lib/resume';
 import { decryptFile } from '../src/lib/resume-files';
-import { nextStatus, parseOperatorDomains, publishBlocks, type AppEvent, type AppStatus } from '../src/lib/rules';
+import { findBannedPhrases, nextStatus, parseOperatorDomains, publishBlocks, techLeakFlag, type AppEvent, type AppStatus } from '../src/lib/rules';
 import { hasDb, migratedDb } from './pg-test-db';
 
 const ENC_KEY = b64url(new Uint8Array(32).fill(5)).replace(/-/g, '+').replace(/_/g, '/');
@@ -290,9 +295,10 @@ describe.skipIf(!hasDb)('만들기 (작은 개수)', () => {
         await expect(decryptFile(await importEncKey(b64url(new Uint8Array(32).fill(6)).replace(/-/g, '+').replace(/_/g, '/')), stored, String(r.file_r2_key))).rejects.toThrow();
       }
     }
-    for (const a of w.all("SELECT resume_snapshot, file_r2_key FROM applications WHERE status != 'withdrawn'")) {
+    for (const a of w.all("SELECT resume_snapshot, file_r2_key, resume_lang FROM applications WHERE status != 'withdrawn'")) {
       expect(String(a.resume_snapshot).startsWith('v1.')).toBe(true);
       const b = await openResume(key, String(a.resume_snapshot));
+      expect(snapshotLang(b)).toBe(a.resume_lang); // T-22: 복사본의 작성 언어 = 지원 행의 표시용 컬럼
       expect(!!b.file).toBe(!!a.file_r2_key);
       if (a.file_r2_key) expect(new TextDecoder().decode(await decryptFile(key, w.store.get(String(a.file_r2_key))!, String(a.file_r2_key))).slice(0, 5)).toBe('%PDF-');
     }
@@ -376,6 +382,8 @@ describe.skipIf(!hasDb)('공고 500건의 공개 목록', () => {
     const visible = w.n("SELECT COUNT(*) AS n FROM jobs j JOIN companies c ON c.id = j.company_id WHERE j.status = 'published' AND c.verify_status = 'verified' AND (j.closes_at IS NULL OR j.closes_at > ?)", NOW);
     expect(w.n('SELECT COUNT(*) AS n FROM jobs')).toBe(500);
     expect(visible).toBeGreaterThan(300);
+    // T-22 운영자 요청: 공고의 절반 넘게 IT 직무 (role_category = 'it')
+    expect(w.n("SELECT COUNT(*) AS n FROM jobs WHERE role_category = 'it'")).toBeGreaterThan(250);
     const lastPage = Math.ceil(visible / 20);
     const rowsOf = (html: string) => (html.match(/href="\/jobs\/b5eed003-[0-9a-f-]{27}"/g) ?? []).length;
 
@@ -407,4 +415,135 @@ describe.skipIf(!hasDb)('공고 500건의 공개 목록', () => {
     expect(seedMs).toBeLessThan(120_000);
     expect(mailSpy.calls).toBe(0);
   }, 180_000);
+});
+
+// ── T-22 시나리오형 내용: 기본 개수로 계획만 만들어(DB 에 넣지 않음) 글과 비율을 본다.
+
+/** 공고에 쓰면 안 되는 차별 요건 (나이·성별·혼인·용모·출신지 — 채용절차법·남녀고용평등법·고령자고용법). 본보기로 써도 안 된다. */
+const DISCRIMINATORY: readonly RegExp[] = [
+  /나이/, /연령/, /\d+\s*세\s*(이하|미만|이상|까지)/, /만\s*\d+\s*세/, /남성/, /여성/, /남자/, /여자/, /성별/, /용모/, /외모/, /미혼/, /기혼/, /결혼/,
+  /출신\s*지역/, /고향/, /군필/, /병역/, /키\s*\d/, /신체/,
+  /年龄/, /岁/, /男/, /女/, /性别/, /婚/, /形象/, /五官/, /身高/, /籍贯/, /户口/, /相貌/, /长相/,
+];
+const EMOJI = /\p{Extended_Pictographic}/u;
+const HANGUL = /[가-힣]/;
+const IT_DESIRED = new Set(IT_FAMILIES.flatMap((f) => [...f.resume.desired]));
+
+describe.skipIf(!hasDb)('T-22 시나리오형 내용 (기본 개수의 계획)', async () => {
+  const w = world();
+  const key = await importEncKey(ENC_KEY);
+  const plan = await buildBulkPlan({ ...DEFAULT_BULK_PARAMS }, {
+    now: NOW, encKey: key, flags: flagsOf(w.env), appEnv: 'test', registrationNo: '', operatorDomains: parseOperatorDomains(String(w.env.OPERATOR_DOMAINS)),
+    retention: await loadRetention(w.env.DB), options: buildOptionSet(await listOptions(w.env.DB)),
+  });
+  const bodies = new Map<string, ResumeBody>();
+  for (const r of plan.resumes) bodies.set(r.id, await openResume(key, r.body));
+  const jobText = plan.jobs.map((j) => [j.row.title_zh, j.row.source_zh, j.row.title_ko ?? '', j.row.body_ko ?? ''].join('\n'));
+  const companyText = plan.base.companies.map((c) => [c.name_ko, c.name_zh, c.hq_name, c.profile_ko].join('\n'));
+  const resumeText = plan.resumes.map((r) => { const b = bodies.get(r.id)!; return [r.title, b.headline, b.desired_role ?? '', b.experience_text ?? '', b.file?.name ?? ''].join('\n'); });
+  const allText = [...jobText, ...companyText, ...resumeText];
+
+  it('IT 직무가 공고의 절반을 넘고(운영자 요청), IT 공고는 여러 업계에 퍼져 있다', () => {
+    const it = plan.jobs.filter((j) => j.row.role_category === 'it');
+    expect(it.length / plan.jobs.length).toBeGreaterThan(0.5);
+    expect(it.length / plan.jobs.length).toBeLessThan(0.75);
+    expect(new Set(it.map((j) => j.row.industry)).size).toBeGreaterThanOrEqual(6);
+    // 주니어·시니어·리드가 섞여 있다
+    for (const lv of ['初级', '高级', '团队负责人']) expect(it.some((j) => j.row.title_zh.includes(lv)), lv).toBe(true);
+    expect(new Set(plan.jobs.map((j) => j.row.role_category)).size).toBeGreaterThanOrEqual(10);
+  });
+
+  it('구직자의 절반 이상이 IT 경력이고, IT 공고 지원자도 대부분 IT 경력자다', () => {
+    const firstOf = new Map<string, ResumeBody>();
+    for (const r of plan.resumes) if (r.is_default === 1) firstOf.set(r.user_id, bodies.get(r.id)!);
+    const itSeekers = [...firstOf.values()].filter((b) => IT_DESIRED.has(b.desired_role ?? '')).length;
+    expect(itSeekers / firstOf.size).toBeGreaterThanOrEqual(0.5);
+    const itJobs = new Set(plan.jobs.filter((j) => j.row.role_category === 'it').map((j) => j.row.id));
+    const toIt = plan.applications.filter((a) => itJobs.has(a.jobId));
+    expect(toIt.filter((a) => IT_DESIRED.has(bodies.get(a.resumeId)!.desired_role ?? '')).length / toIt.length).toBeGreaterThan(0.6);
+  });
+
+  it('중국어 이력서가 약 30%, 두 언어 이력서를 모두 가진 구직자가 있다 (한국어가 대표, 중국어는 "중국어 이력서")', () => {
+    const zh = plan.resumes.filter((r) => r.lang === 'zh');
+    expect(zh.length / plan.resumes.length).toBeGreaterThan(0.24);
+    expect(zh.length / plan.resumes.length).toBeLessThan(0.36);
+    const byUser = new Map<string, typeof plan.resumes>();
+    for (const r of plan.resumes) byUser.set(r.user_id, [...(byUser.get(r.user_id) ?? []), r]);
+    const both = [...byUser.values()].filter((rs) => rs.length === 2);
+    expect(both.length / DEFAULT_BULK_PARAMS.seekers).toBeGreaterThan(0.1);
+    expect(byUser.size).toBeGreaterThan(220);
+    for (const rs of both) {
+      expect(rs.map((r) => `${r.lang}:${r.is_default}`)).toEqual(['ko:1', 'zh:0']);
+      expect(rs[1]!.title).toBe('중국어 이력서');
+      expect(bodies.get(rs[0]!.id)!.name).toBe(bodies.get(rs[1]!.id)!.name);
+    }
+    for (const rs of byUser.values()) expect(rs.filter((r) => r.is_default === 1).length).toBe(1);
+    // 중국어 이력서는 중국어로, 한국어 이력서는 한국어로 쓰여 있다
+    for (const r of zh) {
+      const b = bodies.get(r.id)!;
+      expect(HANGUL.test(`${b.headline}${b.desired_role}${b.experience_text ?? ''}`.replace(b.name, '')), r.id).toBe(false);
+      expect(['business', 'native']).toContain(b.chinese_level);
+    }
+    for (const r of plan.resumes.filter((x) => x.lang === 'ko')) expect(HANGUL.test(bodies.get(r.id)!.headline)).toBe(true);
+  });
+
+  it('지원: 두 언어 이력서가 있으면 중국어 수준이 높은 공고에 중국어 이력서를 더 자주 낸다, 지원 언어 = 고른 이력서의 언어', () => {
+    const owners = new Map<string, number>();
+    for (const r of plan.resumes) owners.set(r.user_id, (owners.get(r.user_id) ?? 0) + 1);
+    const cnOf = new Map(plan.jobs.map((j) => [j.row.id, j.row.chinese_level]));
+    const rate = (levels: string[]) => {
+      const xs = plan.applications.filter((a) => owners.get(a.seekerId) === 2 && levels.includes(cnOf.get(a.jobId)!));
+      return xs.filter((a) => a.resumeLang === 'zh').length / Math.max(1, xs.length);
+    };
+    expect(rate(['business', 'native'])).toBeGreaterThan(rate(['none', 'basic']) + 0.2);
+    const langOf = new Map(plan.resumes.map((r) => [r.id, r.lang]));
+    for (const a of plan.applications) expect(a.resumeLang).toBe(langOf.get(a.resumeId));
+    expect(plan.applications.filter((a) => a.resumeLang === 'zh').length).toBeGreaterThan(100);
+  });
+
+  it('기업: 60곳 모두 가상 표시로 끝나고, 실제 브랜드 이름이 들어 있지 않으며, 업계·진출 단계가 고루 있다', () => {
+    expect(plan.base.companies.length).toBe(60);
+    expect(new Set(plan.base.companies.map((c) => c.name_zh)).size).toBe(60);
+    for (const c of plan.base.companies) {
+      expect(c.name_ko.endsWith('(가상)'), c.name_ko).toBe(true);
+      expect(c.name_zh.endsWith('（虚拟）'), c.name_zh).toBe(true);
+      expect(c.hq_name.endsWith('（虚拟）')).toBe(true);
+      for (const b of REAL_BRAND_DENYLIST) {
+        for (const n of [c.name_ko, c.name_zh, c.hq_name]) expect(n.toLowerCase().includes(b.toLowerCase()), `${n} ~ ${b}`).toBe(false);
+      }
+      expect(c.profile_ko).toContain('【公司简介】');
+    }
+    expect(new Set(COMPANIES.map((c) => c.sector)).size).toBe(13);
+    expect(new Set(plan.base.companies.map((c) => c.entry_stage))).toEqual(new Set(['preparing', 'just_established', 'operating']));
+    expect(plan.base.companies.filter((c) => c.entity_type === 'cn_hq').every((c) => c.entry_stage === 'preparing')).toBe(true);
+  });
+
+  it('모든 글에 금지 표현·차별 요건·이모지가 없다', () => {
+    for (const t of allText) {
+      expect(findBannedPhrases(t), t.slice(0, 40)).toEqual([]);
+      for (const re of DISCRIMINATORY) expect(re.test(t), `${re} — ${t.slice(0, 60)}`).toBe(false);
+      expect(EMOJI.test(t), t.slice(0, 40)).toBe(false);
+    }
+  });
+
+  it('공고 글: 중국어 원문은 중국어, 숫자는 한국어와 같고, 연봉은 본문에 없고, 기술유출 필터에는 예시 공고만 걸린다', () => {
+    for (const j of plan.jobs) {
+      expect(HANGUL.test(`${j.row.title_zh}\n${j.row.source_zh}`), j.row.title_zh).toBe(false);
+      expect(j.row.source_zh).toContain('【岗位职责】');
+      expect(j.row.source_zh).toContain('【任职要求】');
+      if (j.row.body_ko) {
+        expect(j.row.body_ko).toContain('[담당 업무]');
+        expect(digitDiff(`${j.row.title_zh}\n${j.row.source_zh}`, `${j.row.title_ko}\n${j.row.body_ko}`), j.row.title_zh).toEqual({ missing: [], extra: [] });
+      }
+      for (const t of [j.row.source_zh, j.row.body_ko ?? '']) expect(/\d\s*(万|元|만\s*원|천\s*원)|年薪|月薪|面议|연봉|월급|급여 협의/.test(t), j.row.title_zh).toBe(false);
+      const flagged = techLeakFlag(jobText[plan.jobs.indexOf(j)]!) !== null;
+      expect(flagged, j.row.title_zh).toBe(j.want === 'tech');
+    }
+    expect(plan.jobs.some((j) => j.want === 'tech')).toBe(true); // 관리자 검토 대기 예시가 남아 있다
+    // 짧은 공고와 자세한 공고가 섞여 있다
+    const sizes = plan.jobs.map((j) => j.row.source_zh.length);
+    expect(Math.max(...sizes)).toBeGreaterThan(Math.min(...sizes) * 2.5);
+    expect(plan.jobs.some((j) => j.row.source_zh.includes('五险一金'))).toBe(true);
+    expect(plan.jobs.filter((j) => j.row.body_ko?.includes('五险一金')).every((j) => j.row.body_ko!.includes('五险一金(중국의 사회보험·주택공적금)'))).toBe(true);
+  });
 });

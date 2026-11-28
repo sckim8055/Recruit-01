@@ -88,7 +88,7 @@ type World = ReturnType<typeof world>;
 /** 구직자 화면으로 이력서를 만들고 J1 에 지원한다. 지원 id 를 돌려준다. */
 async function applyAs(w: World, who: 's1' | 's2', o: { name: string; email: string; consent: boolean; withFile: boolean }) {
   const fd = new FormData();
-  const fields = { title: '영업직용', name: o.name, chinese_level: 'business', years: '5', headline: HEADLINE, contact_email: o.email, phone: PHONE, desired_role: '영업', experience_text: '' };
+  const fields = { title: '영업직용', lang: 'ko', name: o.name, chinese_level: 'business', years: '5', headline: HEADLINE, contact_email: o.email, phone: PHONE, desired_role: '영업', experience_text: '' };
   for (const [k, v] of Object.entries(fields)) fd.set(k, v);
   fd.set('attachment', o.withFile ? new File([pdf], `${o.name}.pdf`, { type: 'application/pdf' }) : new File([], '', { type: 'application/octet-stream' }));
   if (!o.withFile) fd.set('experience_text', '경력 요약 가짜');

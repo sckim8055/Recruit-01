@@ -3,14 +3,16 @@
 // 원칙 (CLAUDE.md 규칙 1·3·4, docs/ARCHITECTURE.md 12장)
 // - 목록에는 개인정보가 없다 (번호·지원일·상태·첨부 여부뿐). 이름·연락처는 지원서를 열어야 보이고, 열면 기록이 남는다.
 // - 정렬·점수·추천 표시·메모·내보내기·전달·상태 변경 버튼은 없다. 운영자는 지원자를 검토·추천·전달하지 않는다.
+//   이력서 작성 언어(T-22)는 표시만 한다 — 언어로 정렬·거르기하는 칸·주소 인자는 두지 않는다 (목록 순서는 지원한 순서 그대로).
 // - 지원서 내용은 lib/applicants.openApplication 이 돌려준 body 만 그린다 (SnapshotFields = 구직자 본인 화면과 같은 조각).
 import type { Locale } from '../env';
 import { ADMIN_REASON_MAX } from '../lib/applicants';
 import { fmtDate, fmtDateTime } from '../lib/company';
 import { t } from '../lib/i18n';
-import type { ResumeBody } from '../lib/resume';
+import { resumeLangOf, type ResumeBody } from '../lib/resume';
 import type { AccessLogRow, ApplicantListRow, ApplicationWithJob } from '../db/applicants';
 import { SnapshotFields } from './applications';
+import { LangLabel } from './resumes';
 import { Flash } from './company';
 import { ApplicationMailSection, isMailOpen, tf } from './applicant-mail';
 import { REJECT_BATCH_MAX } from '../lib/applicant-mail';
@@ -64,7 +66,7 @@ export const ApplicantList = (p: ApplicantListProps) => {
           <div class="table-wrap"><table>
             <thead><tr>
               <th>{t(l, 'aplm.list.select')}</th>
-              <th>{t(l, 'apl.no')}</th><th>{t(l, 'app.applied_at')}</th><th>{t(l, 'app.status')}</th><th>{t(l, 'resume.f.attachment')}</th><th></th>
+              <th>{t(l, 'apl.no')}</th><th>{t(l, 'app.applied_at')}</th><th>{t(l, 'app.status')}</th><th>{t(l, 'resume.f.lang')}</th><th>{t(l, 'resume.f.attachment')}</th><th></th>
             </tr></thead>
             <tbody>
               {p.rows.map((r, i) => {
@@ -80,6 +82,7 @@ export const ApplicantList = (p: ApplicantListProps) => {
                       <StatusBadge locale={l} status={r.status} />
                       {ivCount > 0 && <span class="hint">{tf(l, 'aplm.list.iv_count', { n: ivCount })}</span>}
                     </td>
+                    <td>{withdrawn ? '' : <LangLabel locale={l} lang={resumeLangOf({ lang: r.resume_lang })} />}</td>
                     <td>{withdrawn ? '' : t(l, r.has_file === 1 ? 'common.yes' : 'apl.no_file')}</td>
                     <td>
                       {withdrawn ? <span class="muted">{t(l, 'apl.withdrawn_row')}</span>

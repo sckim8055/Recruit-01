@@ -20,7 +20,7 @@ const key = (fill = 7) => importEncKey(keyB64(fill));
 const te = new TextEncoder();
 
 const good: ResumeInput = {
-  ...EMPTY_RESUME_INPUT, title: '영업직용', name: '홍길동', chinese_level: 'business', years: '5',
+  ...EMPTY_RESUME_INPUT, title: '영업직용', lang: 'ko', name: '홍길동', chinese_level: 'business', years: '5',
   headline: '중국 본사와 일해 본 B2B 영업 5년', contact_email: 'hong@example.test',
 };
 const body: ResumeBody = {
@@ -61,7 +61,7 @@ describe('이력서 항목 검사', () => {
     const r = validateResume(EMPTY_RESUME_INPUT);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.errors.map((e) => `${e.field}:${e.code}`).sort()).toEqual(
-      ['chinese_level:required', 'contact_email:required', 'headline:required', 'name:required', 'title:required', 'years:required'],
+      ['chinese_level:required', 'contact_email:required', 'headline:required', 'lang:required', 'name:required', 'title:required', 'years:required'],
     );
   });
   it('형식·길이', () => {
@@ -89,7 +89,7 @@ describe('이력서 항목 검사', () => {
   });
   it('저장된 내용을 폼 값으로 되돌린다', () => {
     expect(inputFromResume('t', body)).toEqual({
-      title: 't', name: '홍길동', chinese_level: 'business', years: '5', headline: '한 줄', contact_email: 'hong@example.test',
+      title: 't', lang: 'ko', name: '홍길동', chinese_level: 'business', years: '5', headline: '한 줄', contact_email: 'hong@example.test',
       phone: '010-0000-0000', desired_role: '영업', experience_text: '경력 요약',
     });
   });
@@ -275,7 +275,7 @@ describe.skipIf(!hasDb)('이력서 DB 문장', () => {
     return { raw, d1 };
   };
   const add = (d1: Db, id: string, userId = 'u1', ts = 100) =>
-    insertResume(d1, { id, userId, title: id, body: 'v1.x.y', fileKey: null, ts }, RESUME_MAX_PER_USER);
+    insertResume(d1, { id, userId, title: id, lang: 'ko', body: 'v1.x.y', fileKey: null, ts }, RESUME_MAX_PER_USER);
   const defaults = async (d1: Db, userId = 'u1') => (await listResumes(d1, userId)).filter((r) => r.is_default === 1).map((r) => r.id);
 
   it('첫 이력서가 대표가 되고, 다섯 개까지만 저장된다', async () => {
@@ -292,7 +292,7 @@ describe.skipIf(!hasDb)('이력서 DB 문장', () => {
     const { d1 } = setup();
     await add(d1, 'r1'); await add(d1, 'x1', 'u2');
     expect(await getResume(d1, 'r1', 'u2')).toBeNull();
-    expect(await updateResume(d1, { id: 'r1', userId: 'u2', title: 'hack', body: 'b', fileKey: null, ts: 200, expectedUpdatedAt: 100 })).toBe(false);
+    expect(await updateResume(d1, { id: 'r1', userId: 'u2', title: 'hack', lang: 'ko', body: 'b', fileKey: null, ts: 200, expectedUpdatedAt: 100 })).toBe(false);
     expect(await setDefaultResume(d1, 'r1', 'u2')).toBe(false);
     expect(await defaults(d1, 'u2')).toEqual(['x1']); // 실패한 지정이 기존 대표를 내리지 않는다
     expect(await deleteResume(d1, 'r1', 'u2')).toBe(false);
@@ -301,9 +301,9 @@ describe.skipIf(!hasDb)('이력서 DB 문장', () => {
   it('수정은 화면을 연 뒤 바뀌지 않았을 때만', async () => {
     const { d1 } = setup();
     await add(d1, 'r1');
-    expect(await updateResume(d1, { id: 'r1', userId: 'u1', title: 't2', body: 'b2', fileKey: 'rfiles/k', ts: 200, expectedUpdatedAt: 100 })).toBe(true);
-    expect(await updateResume(d1, { id: 'r1', userId: 'u1', title: 't3', body: 'b3', fileKey: null, ts: 300, expectedUpdatedAt: 100 })).toBe(false);
-    expect(await getResume(d1, 'r1', 'u1')).toMatchObject({ title: 't2', body: 'b2', file_r2_key: 'rfiles/k', updated_at: 200, is_default: 1 });
+    expect(await updateResume(d1, { id: 'r1', userId: 'u1', title: 't2', lang: 'zh', body: 'b2', fileKey: 'rfiles/k', ts: 200, expectedUpdatedAt: 100 })).toBe(true);
+    expect(await updateResume(d1, { id: 'r1', userId: 'u1', title: 't3', lang: 'ko', body: 'b3', fileKey: null, ts: 300, expectedUpdatedAt: 100 })).toBe(false);
+    expect(await getResume(d1, 'r1', 'u1')).toMatchObject({ title: 't2', lang: 'zh', body: 'b2', file_r2_key: 'rfiles/k', updated_at: 200, is_default: 1 });
   });
   it('대표 지정: 하나만 대표로 남는다', async () => {
     const { d1 } = setup();

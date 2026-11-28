@@ -12,7 +12,7 @@ import { canEditResume } from '../lib/authz';
 import { importEncKey } from '../lib/crypto';
 import { t } from '../lib/i18n';
 import {
-  EMPTY_RESUME_INPUT, RESUME_MAX_PER_USER, copyTitle, inputFromResume, openResume, readResumeForm, sealResume, validateResume,
+  EMPTY_RESUME_INPUT, RESUME_MAX_PER_USER, copyTitle, inputFromResume, openResume, readResumeForm, resumeLangOf as langOf, sealResume, validateResume,
   type ResumeBody, type ResumeFieldError, type ResumeFileMeta, type ResumeInput,
 } from '../lib/resume';
 import { RESUME_FILE_MAX_BYTES, checkResumeUpload, copyResumeFile, deleteResumeFile, putResumeFile, serveResumeFile } from '../lib/resume-files';
@@ -145,7 +145,7 @@ resumes.post('/new', async (c) => {
   let inserted = false;
   try {
     const sealed = await sealResume(await key(c), { v: 1, ...v.fields, file: file.kind === 'new' ? file.meta : null });
-    inserted = await insertResume(c.env.DB, { id: crypto.randomUUID(), userId: user.id, title: v.title, body: sealed, fileKey: newKey, ts: now() }, RESUME_MAX_PER_USER);
+    inserted = await insertResume(c.env.DB, { id: crypto.randomUUID(), userId: user.id, title: v.title, lang: v.lang, body: sealed, fileKey: newKey, ts: now() }, RESUME_MAX_PER_USER);
   } catch (e) {
     await cleanup(c, newKey);
     throw e;
@@ -176,7 +176,7 @@ resumes.get('/:id/edit', async (c) => {
   const x = await loadOwn(c);
   if (!x) return renderError(c, 404);
   return formPage(c, {
-    input: inputFromResume(x.row.title, x.body), errors: [], current: x.body.file, resumeId: x.row.id, updatedAt: x.row.updated_at,
+    input: inputFromResume(x.row.title, x.body, langOf(x.row)), errors: [], current: x.body.file, resumeId: x.row.id, updatedAt: x.row.updated_at,
   });
 });
 
@@ -209,7 +209,7 @@ resumes.post('/:id/edit', async (c) => {
   let saved = false;
   try {
     const sealed = await sealResume(await key(c), { v: 1, ...v.fields, file: fileMeta });
-    saved = await updateResume(c.env.DB, { id: row.id, userId: user.id, title: v.title, body: sealed, fileKey, ts, expectedUpdatedAt: expected });
+    saved = await updateResume(c.env.DB, { id: row.id, userId: user.id, title: v.title, lang: v.lang, body: sealed, fileKey, ts, expectedUpdatedAt: expected });
   } catch (e) {
     // DB 쓰기 실패: 행은 여전히 예전 파일을 가리킨다 → 새 파일만 지우고, 예전 파일은 건드리지 않는다.
     await cleanup(c, newKey);
@@ -254,7 +254,7 @@ resumes.post('/:id/copy', async (c) => {
   try {
     const sealed = await sealResume(await key(c), { ...body, file: newKey ? body.file : null });
     inserted = await insertResume(c.env.DB, {
-      id: crypto.randomUUID(), userId: user.id, title: copyTitle(row.title, t(c.var.locale, 'resume.copy_suffix')), body: sealed, fileKey: newKey, ts: now(),
+      id: crypto.randomUUID(), userId: user.id, title: copyTitle(row.title, t(c.var.locale, 'resume.copy_suffix')), lang: langOf(row), body: sealed, fileKey: newKey, ts: now(),
     }, RESUME_MAX_PER_USER);
   } catch (e) {
     await cleanup(c, newKey);

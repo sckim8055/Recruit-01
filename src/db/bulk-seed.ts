@@ -31,7 +31,7 @@ export interface BulkJobRow {
   salary_min: number | null; salary_max: number | null; salary_basis: string | null; work_hours: string | null; report_line: string; chinese_level: string;
   contact_email: string; review_flag: string | null; closes_at: number | null; created_at: number; updated_at: number;
 }
-export interface BulkResumeRow { id: string; user_id: string; title: string; is_default: 0 | 1; body: string; file_r2_key: string | null; created_at: number; updated_at: number }
+export interface BulkResumeRow { id: string; user_id: string; title: string; lang: 'ko' | 'zh'; is_default: 0 | 1; body: string; file_r2_key: string | null; created_at: number; updated_at: number }
 export interface BulkAccessRow { id: string; actor_id: string; actor_role: 'company'; target_id: string; at: number }
 
 export interface BulkBaseRows {
@@ -92,8 +92,8 @@ export async function insertBulkJobs(db: Db, jobs: BulkJobRow[]): Promise<void> 
 /** 이력서 (body 는 sealResume 암호문, 첨부 키는 호출부가 파일을 먼저 저장한 뒤 넘긴다). */
 export async function insertBulkResumes(db: Db, resumes: BulkResumeRow[]): Promise<void> {
   await inChunks(db, resumes.map((r) => db.prepare(
-    'INSERT INTO resumes (id, user_id, title, is_default, body, file_r2_key, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)',
-  ).bind(r.id, r.user_id, r.title, r.is_default, r.body, r.file_r2_key, r.created_at, r.updated_at)));
+    'INSERT INTO resumes (id, user_id, title, lang, is_default, body, file_r2_key, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
+  ).bind(r.id, r.user_id, r.title, r.lang, r.is_default, r.body, r.file_r2_key, r.created_at, r.updated_at)));
 }
 
 /** 기업 담당자가 지원서를 연 기록 (lib/applicants.openApplication 이 남기는 것과 같은 모양: 역할 company, 사유 없음). */

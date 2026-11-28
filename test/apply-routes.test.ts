@@ -105,7 +105,7 @@ function world() {
 type World = ReturnType<typeof world>;
 
 const resumeFields = (p: Record<string, string> = {}) => ({
-  title: '영업직용', name: NAME, chinese_level: 'business', years: '5', headline: HEADLINE,
+  title: '영업직용', lang: 'ko', name: NAME, chinese_level: 'business', years: '5', headline: HEADLINE,
   contact_email: EMAIL, phone: PHONE, desired_role: '영업', experience_text: '', ...p,
 });
 

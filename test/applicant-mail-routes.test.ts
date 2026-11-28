@@ -103,7 +103,7 @@ type World = ReturnType<typeof world>;
 async function applyAs(w: World, who: 's1' | 's2' | 's3', o: { consent?: boolean; job?: string } = {}) {
   const s = SEEKERS[who];
   const fd = new FormData();
-  const fields = { title: '영업직용', name: s.name, chinese_level: 'business', years: '5', headline: HEADLINE, contact_email: s.email, phone: PHONE, desired_role: '영업', experience_text: '경력 요약 가짜' };
+  const fields = { title: '영업직용', lang: 'ko', name: s.name, chinese_level: 'business', years: '5', headline: HEADLINE, contact_email: s.email, phone: PHONE, desired_role: '영업', experience_text: '경력 요약 가짜' };
   for (const [k, v] of Object.entries(fields)) fd.set(k, v);
   fd.set('attachment', new File([], '', { type: 'application/octet-stream' }));
   expect((await w.post('/my/resumes/new', fd, who)).status).toBe(302);

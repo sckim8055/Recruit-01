@@ -31,7 +31,11 @@ import { flagText, kstDate, parseKstDate, publishInputOf } from './jobs';
 import { buildOptionSet, type OptionKind, type OptionSet } from './options';
 import { isPubliclyVisible } from './public-jobs';
 import { encryptFile } from './resume-files';
-import { resumeReadyToApply, sealResume, type ResumeBody, type ResumeChineseLevel } from './resume';
+import { resumeReadyToApply, sealResume, type ResumeBody, type ResumeLang } from './resume';
+import {
+  CHINA_STUDY, CHINA_WORK, CITY, CN_LINE, COMPANIES, EDU, HSK, IT_FAMILIES, LEVEL_YEARS, NEWGRAD_REQ, OTHER_FAMILIES, PERKS, PERK_CN_STYLE, PERK_IT, REPORT_HQ, REPORT_HQ_IT,
+  REPORT_KR, SECTOR, SELF, SELF_BILINGUAL, STAGE_LINE, STARTUP_REQ, TRAVEL, type CnLevel, type CompanySpec, type Family, type Level, type P,
+} from './bulk-content';
 import { DAY, type RetentionSettings } from './retention';
 import { loadRetention } from './retention-setting';
 import { isValidBizNo, nextStatus, parseOperatorDomains, publishBlocks, techLeakFlag, verifyBlocks, type AppStatus } from './rules';
@@ -73,7 +77,7 @@ export const isBulkFileKey = (key: string): boolean => {
 /** site_settings 키. 값: {"v", "params", "at"}. 다 넣은 뒤에만 쓴다 (없는데 대량 행이 있으면 = 중간에 끊긴 것). */
 export const BULK_STAMP_KEY = 'bulk.seed';
 /** 만드는 내용이나 방법을 바꾸면 올린다 — 다음 실행 때 지우고 다시 만든다. */
-export const BULK_SEED_VERSION = 1;
+export const BULK_SEED_VERSION = 2; // 2 = T-22 시나리오형 내용 + 이력서 작성 언어
 
 // ── 명령 인자
 
@@ -149,159 +153,32 @@ const pad = (n: number, w: number) => String(n).padStart(w, '0');
 const lines = (...s: string[]) => s.join('\n');
 
 // ── 지어낸 이름·글의 재료 (실제 기업·사람이 아니다 — 모든 기업·구직자 이름에 "(가상)" 이 붙는다)
+// T-22: 기업·직무·이력서 글은 lib/bulk-content.ts 의 표 (한국에 진출한 중국 기업이 한국 직원을 뽑는 장면). 여기는 이름 재료와 조합 방법만.
 
-/** 상호의 앞 글자: [중국어, 한국어 표기]. 조합은 실제 상호가 아니며, 이름 끝에 "(가상)·（虚拟）" 을 붙인다. */
-const BRAND_A: ReadonlyArray<readonly [string, string]> = [
-  ['瑞', '루이'], ['澜', '란'], ['拓', '퉈'], ['恒', '헝'], ['泓', '훙'], ['曜', '야오'], ['澄', '청'], ['朗', '랑'],
-  ['沐', '무'], ['骁', '샤오'], ['霁', '지'], ['皓', '하오'], ['祺', '치'], ['煦', '쉬'], ['榕', '룽'], ['翊', '이'],
-];
-const BRAND_B: ReadonlyArray<readonly [string, string]> = [
-  ['途', '투'], ['帆', '판'], ['岳', '웨'], ['川', '촨'], ['宸', '천'], ['屿', '위'], ['舟', '저우'], ['汀', '팅'], ['杉', '산'], ['屏', '핑'],
-];
-/** 업계 code → 상호 뒷부분 [중국어, 한국어]. 기술유출 필터 단어(电池 등)는 쓰지 않는다. 표에 없는 code(관리자가 추가한 항목)는 实业. */
-const INDUSTRY_WORD: Readonly<Record<string, readonly [string, string]>> = {
-  electronics: ['电子', '전자'], battery: ['能源', '에너지'], auto: ['汽车', '모터스'], machinery: ['机械', '기계'], chemicals: ['化工', '케미칼'],
-  ecommerce: ['电商', '이커머스'], retail: ['零售', '리테일'], logistics: ['物流', '물류'], trade: ['贸易', '무역'], finance: ['金融', '파이낸스'],
-  it_software: ['科技', '테크'], gaming: ['游戏', '게임즈'], consumer: ['日化', '생활'], food: ['食品', '식품'], travel: ['旅行', '트래블'], other: ['实业', '실업'],
-};
 const SURNAMES = ['김', '이', '박', '최', '정', '강', '조', '윤', '장', '임', '한', '오', '서', '신', '권'];
 const GIVEN_A = ['서', '민', '지', '현', '도', '하', '예', '시', '유', '채', '수', '은', '태', '준', '우'];
 const GIVEN_B = ['윤', '준', '아', '연', '원', '호', '린', '빈', '율', '희', '진', '솔'];
 
-/** 직무 묶음 (role_category code 마다 제목·업무·요건의 중국어 원문과 한국어). 숫자는 양쪽에 같게 적는다 (digitDiff 경고가 나지 않게). */
-interface Family {
-  role: string;
-  titles: ReadonlyArray<readonly [string, string]>;
-  duties: ReadonlyArray<readonly [string, string]>;
-  reqs: ReadonlyArray<readonly [string, string]>;
-  /** 이력서용 (한국어만) */
-  resume: { title: string; desired: string; headline: string; exp: readonly string[] };
-}
-const FAMILIES: readonly Family[] = [
-  {
-    role: 'sales',
-    titles: [['韩国市场销售经理', '한국 시장 영업 매니저'], ['大客户销售专员', '대형 고객 영업 담당'], ['渠道销售主管', '채널 영업 리더']],
-    duties: [['开拓韩国本地客户，完成季度签约目标', '국내 고객을 발굴하고 분기 계약 목표를 달성합니다'], ['向客户介绍产品并整理客户需求', '고객에게 제품을 소개하고 요구 사항을 정리합니다'],
-      ['管理销售漏斗与客户档案', '영업 파이프라인과 고객 기록을 관리합니다'], ['配合总部制定韩国市场价格政策', '본사와 함께 한국 시장 가격 정책을 만듭니다']],
-    reqs: [['3年以上B2B销售经验', 'B2B 영업 경력 3년 이상'], ['有经销商管理经验者优先', '대리점 관리 경험이 있으면 우대'], ['具备良好的沟通能力', '원활한 소통 능력']],
-    resume: { title: '영업직 지원용', desired: '영업 매니저', headline: 'B2B 영업 경력, 신규 고객 발굴과 계약 관리', exp: ['유통 거래처 신규 발굴과 계약 진행', '분기 영업 목표 관리와 보고', '해외 거래처와 견적·계약 협의'] },
-  },
-  {
-    role: 'finance',
-    titles: [['财务会计专员', '재무·회계 담당'], ['税务会计主管', '세무 회계 리더'], ['成本会计', '원가 회계 담당']],
-    duties: [['负责月度结账与凭证整理', '월 결산과 증빙 정리를 맡습니다'], ['配合税务申报与外部审计', '세무 신고와 외부 감사 대응을 지원합니다'],
-      ['按总部格式编制管理报表', '본사 양식에 맞춰 관리 보고서를 만듭니다'], ['管理应收应付账款', '매출·매입 채권 채무를 관리합니다']],
-    reqs: [['3年以上会计经验', '회계 경력 3년 이상'], ['了解韩国税务与4项社会保险', '한국 세무와 4대 보험에 대한 이해'], ['熟练使用电子表格', '스프레드시트 활용 능숙']],
-    resume: { title: '회계직 지원용', desired: '재무·회계', headline: '법인 결산과 세무 신고 실무 경험', exp: ['월 결산과 부가세 신고 실무', '본사 보고용 관리 회계 보고서 작성', '외부 감사 자료 준비'] },
-  },
-  {
-    role: 'translation',
-    titles: [['中韩翻译专员', '중한 통번역 담당'], ['商务口译', '비즈니스 통역사'], ['技术文档翻译', '기술 문서 번역 담당']],
-    duties: [['合同及内部资料的中韩互译', '계약서와 내부 자료의 중한 번역'], ['总部与韩国合作方会议的口译', '본사와 한국 협력사 회의 통역'],
-      ['整理并维护公司术语表', '회사 용어집을 정리하고 관리합니다'], ['审校外部翻译稿件', '외부 번역 원고를 검수합니다']],
-    reqs: [['中文与韩文均可流利使用', '중국어와 한국어 모두 유창'], ['2年以上翻译或口译经验', '번역 또는 통역 경력 2년 이상'], ['有行业文件翻译经验者优先', '업계 문서 번역 경험 우대']],
-    resume: { title: '통번역 지원용', desired: '통번역', headline: '중한 통번역 경력, 계약서·회의 통역 경험', exp: ['계약서·사내 문서 중한 번역', '본사 회의 순차 통역', '용어집 정리와 번역 검수'] },
-  },
-  {
-    role: 'it',
-    titles: [['后端开发人员', '백엔드 개발자'], ['前端开发人员', '프론트엔드 개발자'], ['IT运维专员', 'IT 운영 담당']],
-    duties: [['开发并维护业务系统接口', '업무 시스템 API 를 개발하고 유지보수합니다'], ['配合韩国本地支付与电子发票对接', '국내 결제와 전자세금계산서 연동을 맡습니다'],
-      ['管理办公网络与员工电脑', '사무실 네트워크와 직원 PC 를 관리합니다'], ['编写技术文档并参与代码评审', '기술 문서를 쓰고 코드 리뷰에 참여합니다']],
-    reqs: [['3年以上开发或运维经验', '개발 또는 운영 경력 3년 이상'], ['熟悉关系型数据库', '관계형 데이터베이스에 익숙한 분'], ['技术文档以英文为主', '기술 문서는 주로 영어입니다']],
-    resume: { title: '개발직 지원용', desired: 'IT·개발', headline: '웹 서비스 개발과 운영 경력', exp: ['주문·결제 API 개발과 운영', '사내 시스템 유지보수', '코드 리뷰와 기술 문서 작성'] },
-  },
-  {
-    role: 'engineering',
-    titles: [['品质管理专员', '품질관리 담당'], ['供应商质量主管', '협력사 품질 리더'], ['质量体系专员', '품질 시스템 담당']],
-    duties: [['负责来料检验与出货检验', '수입 검사와 출하 검사를 맡습니다'], ['处理客户质量投诉并跟进改善', '고객 품질 불만을 처리하고 개선을 챙깁니다'],
-      ['维护质量管理体系文件', '품질 경영 시스템 문서를 관리합니다'], ['定期走访韩国协力厂商', '국내 협력사를 정기적으로 방문합니다']],
-    reqs: [['3年以上质量管理经验', '품질관리 경력 3년 이상'], ['熟悉质量体系认证流程', '품질 인증 절차에 익숙한 분'], ['可配合出差', '출장 가능']],
-    resume: { title: '품질관리 지원용', desired: '품질관리', headline: '제조 품질관리와 협력사 관리 경력', exp: ['수입·출하 검사 기준 운영', '고객 품질 불만 대응과 개선 보고', '협력사 품질 점검'] },
-  },
-  {
-    role: 'logistics',
-    titles: [['物流协调员', '물류 코디네이터'], ['仓储主管', '창고 운영 리더'], ['报关专员', '통관 담당']],
-    duties: [['跟进中韩海运与空运货物', '한중 해상·항공 화물을 챙깁니다'], ['与客户和承运商沟通货物状态', '고객·운송사와 화물 상태를 소통합니다'],
-      ['管理仓库出入库与库存盘点', '창고 입출고와 재고 실사를 관리합니다'], ['准备报关资料', '통관 서류를 준비합니다']],
-    reqs: [['2年以上物流或货代经验', '물류 또는 포워딩 경력 2년 이상'], ['熟悉进出口流程', '수출입 절차에 익숙한 분'], ['有仓储管理经验者优先', '창고 관리 경험 우대']],
-    resume: { title: '물류직 지원용', desired: '물류', headline: '포워딩과 통관 실무 경력', exp: ['해상·항공 화물 선적 관리', '통관 서류 준비와 관세사 협업', '창고 재고 관리'] },
-  },
-  {
-    role: 'hr',
-    titles: [['人事专员', '인사 담당'], ['招聘主管', '채용 리더'], ['薪酬福利专员', '급여·복리후생 담당']],
-    duties: [['负责招聘、入职与劳动合同管理', '채용, 입사, 근로계약 관리를 맡습니다'], ['制定并维护就业规则与考勤制度', '취업규칙과 근태 제도를 만들고 관리합니다'],
-      ['核算月度薪资与社会保险', '월 급여와 4대 보험을 계산합니다'], ['组织新员工培训', '신입 직원 교육을 준비합니다']],
-    reqs: [['3年以上人事经验', '인사 경력 3년 이상'], ['熟悉韩国劳动法', '한국 노동법에 익숙한 분'], ['做事细致', '꼼꼼한 업무 처리']],
-    resume: { title: '인사직 지원용', desired: '인사', headline: '채용·급여·노무 실무 경력', exp: ['채용 공고 운영과 면접 일정 관리', '월 급여와 4대 보험 처리', '취업규칙 개정 실무'] },
-  },
-  {
-    role: 'marketing',
-    titles: [['品牌营销经理', '브랜드 마케팅 매니저'], ['线上营销专员', '온라인 마케팅 담당'], ['内容营销主管', '콘텐츠 마케팅 리더']],
-    duties: [['策划韩国市场品牌活动', '한국 시장 브랜드 행사를 기획합니다'], ['运营官方社交媒体账号', '공식 SNS 계정을 운영합니다'],
-      ['分析广告投放效果', '광고 집행 성과를 분석합니다'], ['撰写产品介绍与案例文章', '제품 소개와 사례 글을 씁니다']],
-    reqs: [['3年以上营销经验', '마케팅 경력 3년 이상'], ['熟悉韩国主要线上渠道', '국내 주요 온라인 채널에 익숙한 분'], ['有数据分析能力', '데이터 분석 능력']],
-    resume: { title: '마케팅 지원용', desired: '마케팅', headline: '브랜드 캠페인과 온라인 광고 운영 경력', exp: ['SNS 채널 운영과 콘텐츠 기획', '온라인 광고 성과 분석', '브랜드 행사 기획'] },
-  },
-  {
-    role: 'operations',
-    titles: [['生产计划专员', '생산계획 담당'], ['生产管理主管', '생산관리 리더'], ['运营管理专员', '운영 관리 담당']],
-    duties: [['制定月度生产计划并跟进进度', '월 생산 계획을 세우고 진행을 챙깁니다'], ['协调采购、仓储与生产部门', '구매·창고·생산 부서를 조율합니다'],
-      ['统计产量与交期数据', '생산량과 납기 자료를 집계합니다'], ['向总部报告运营情况', '본사에 운영 현황을 보고합니다']],
-    reqs: [['3年以上生产管理或运营经验', '생산관리 또는 운영 경력 3년 이상'], ['熟悉制造业流程', '제조업 업무 흐름에 익숙한 분'], ['能熟练使用办公软件', '사무 프로그램 활용 능숙']],
-    resume: { title: '생산관리 지원용', desired: '생산관리', headline: '생산계획과 납기 관리 경력', exp: ['월 생산 계획 수립과 진척 관리', '구매·창고 부서 일정 조율', '생산 실적 보고'] },
-  },
-  {
-    role: 'legal',
-    titles: [['法务专员', '법무 담당'], ['合规主管', '컴플라이언스 리더'], ['合同管理专员', '계약 관리 담당']],
-    duties: [['审核各类商务合同', '각종 거래 계약서를 검토합니다'], ['跟进韩国法人的合规事项', '한국 법인의 준법 사항을 챙깁니다'],
-      ['与外部律师事务所沟通', '외부 법률 사무소와 소통합니다'], ['管理公司印章与合同档案', '회사 인감과 계약 문서를 관리합니다']],
-    reqs: [['3年以上法务经验', '법무 경력 3년 이상'], ['熟悉韩国商法与劳动法', '한국 상법과 노동법에 익숙한 분'], ['有外资企业经验者优先', '외국계 기업 경험 우대']],
-    resume: { title: '법무직 지원용', desired: '법무', headline: '계약 검토와 준법 업무 경력', exp: ['거래 계약서 검토와 수정', '사내 규정 정비', '외부 법률 사무소 협업'] },
-  },
-  {
-    role: 'customer',
-    titles: [['客户服务专员', '고객 응대 담당'], ['客服组长', '고객 응대 리더']],
-    duties: [['处理客户咨询与退换货', '고객 문의와 교환·환불을 처리합니다'], ['整理常见问题并改进答复模板', '자주 묻는 질문을 정리하고 답변 양식을 고칩니다'],
-      ['统计客户反馈并向产品团队报告', '고객 의견을 집계해 제품팀에 보고합니다']],
-    reqs: [['1年以上客服经验', '고객 응대 경력 1년 이상'], ['态度亲切', '친절한 응대'], ['可轮班工作', '교대 근무 가능']],
-    resume: { title: '고객 응대 지원용', desired: '고객 응대', headline: '고객 문의 응대와 상담 품질 관리 경력', exp: ['전화·채팅 문의 응대', '교환·환불 처리', '답변 양식 개선'] },
-  },
-  {
-    role: 'purchasing',
-    titles: [['采购专员', '구매 담당'], ['采购主管', '구매 리더']],
-    duties: [['寻找并评估韩国本地供应商', '국내 공급업체를 찾고 평가합니다'], ['负责询价、比价与下单', '견적 요청, 가격 비교, 발주를 맡습니다'], ['跟进交货与付款', '납품과 대금 지급을 챙깁니다']],
-    reqs: [['2年以上采购经验', '구매 경력 2년 이상'], ['有谈判能力', '협상 능력'], ['熟悉进口流程者优先', '수입 절차를 알면 우대']],
-    resume: { title: '구매직 지원용', desired: '구매', headline: '원부자재 구매와 협력사 관리 경력', exp: ['공급업체 발굴과 단가 협상', '발주와 납기 관리', '구매 실적 보고'] },
-  },
-  {
-    role: 'admin',
-    titles: [['行政专员', '총무·사무 담당'], ['总务主管', '총무 리더']],
-    duties: [['办公室日常行政与来访接待', '사무실 일상 총무와 방문객 응대'], ['管理办公用品采购', '사무용품 구매를 관리합니다'], ['协助总部人员来韩出差安排', '본사 직원의 한국 출장 준비를 돕습니다']],
-    reqs: [['1年以上行政经验', '총무 경력 1년 이상'], ['做事细致', '꼼꼼한 업무 처리'], ['可进行基础电脑操作', '기본 컴퓨터 활용 가능']],
-    resume: { title: '사무직 지원용', desired: '총무·사무', headline: '사무실 총무와 출장 지원 경력', exp: ['사무실 시설·비품 관리', '방문객 응대와 회의 준비', '출장 일정 지원'] },
-  },
-];
-
-/** 공통 근무 조건 문장 [중국어, 한국어]. */
-const PERKS: ReadonlyArray<readonly [string, string]> = [
-  ['试用期3个月，试用期薪资相同', '수습 3개월, 수습 기간 급여 동일'], ['每周可远程办公1天', '주 1일 재택근무 가능'], ['弹性上下班', '시차 출퇴근'],
-  ['提供午餐补贴', '점심 식대 지원'], ['入职第1年起年假15天', '입사 첫해부터 연차 15일'], ['每年提供体检', '매년 건강검진 지원'],
-];
-const CN_LINE: Readonly<Record<string, readonly [string, string]>> = {
-  none: ['不要求中文', '중국어는 필요하지 않습니다'], basic: ['可进行基础中文沟通', '기초 중국어 소통 가능'],
-  business: ['能用中文进行商务沟通', '중국어로 업무 소통 가능'], native: ['中文达到母语或接近母语水平', '중국어 원어민 또는 그에 가까운 수준'],
-};
-const REPORT_LINE: Readonly<Record<string, readonly [string, string]>> = {
-  kr_head: ['向韩国负责人汇报', '한국 책임자에게 보고합니다'], cn_hq: ['直接向中国总部汇报', '중국 본사에 직접 보고합니다'],
-};
-const STAGE_KO: Readonly<Record<string, string>> = {
-  preparing: '한국 법인 설립을 준비하고 있습니다.', just_established: '최근 한국 법인을 세우고 조직을 만들고 있습니다.', operating: '한국에서 사업을 운영하고 있습니다.',
-};
 /** 기술유출 필터(rules.techLeakFlag)에 일부러 걸리는 예시. 자동 게재되지 않고 관리자 검토 대기로 남는다. */
-const TECH_LEAK: Readonly<{ title: readonly [string, string]; duty: readonly [string, string] }> = {
+const TECH_LEAK: Readonly<{ title: P; duty: P }> = {
   title: ['电池工艺工程师（研发）', '배터리 공정 엔지니어 (연구개발)'],
   duty: ['负责电池工艺研发与验证', '배터리 공정 연구개발과 검증을 맡습니다'],
 };
+
+/** IT 직무 비율 (운영자 요청: 공고의 절반 이상이 IT — role_category 'it'). 업계·단계에 맞는 IT 묶음이 없는 기업은 다른 직무로 간다. */
+export const BULK_IT_SHARE = 0.6;
+/** 구직자 중 IT 경력자 비율. */
+export const BULK_IT_SEEKER_SHARE = 0.55;
+
+const fill = (s: string, v: { y?: number; city?: string }): string =>
+  s.replaceAll('{y}', String(v.y ?? '')).replaceAll('{city}', v.city ?? '');
+/** 중국어 목록: "1、…；" 마지막은 "。". 한국어: "1. …". 번호 개수는 양쪽이 같다 (digitDiff). */
+const numZh = (xs: readonly string[]) => xs.map((x, i) => `${i + 1}、${x}${i === xs.length - 1 ? '。' : '；'}`);
+const numKo = (xs: readonly string[]) => xs.map((x, i) => `${i + 1}. ${x}`);
+/** 리드 표시: 괄호가 있으면 괄호 안에 더한다 ("…（韩国站，团队负责人）" / "… (한국 서비스, 리드)"). */
+const leadZh = (t: string) => (t.endsWith('）') ? `${t.slice(0, -1)}，团队负责人）` : `${t}（团队负责人）`);
+const leadKo = (t: string) => (t.endsWith(')') ? `${t.slice(0, -1)}, 리드)` : `${t} (리드)`);
+const SENIOR_TITLE = /经理|主管|负责人|顾问|总经理/;
 
 // ── 계획 (DB 접근 없음, 결정적)
 
@@ -333,7 +210,7 @@ export interface PlannedJob {
 export interface PlannedEvent { event: 'viewed' | 'interview_mail' | 'reject_mail' | 'withdrawn'; actorId: string; at: number }
 
 export interface PlannedApplication {
-  id: string; jobId: string; seekerId: string; resumeId: string; snapshot: string; fileKey: string | null; filePlain: Uint8Array | null;
+  id: string; jobId: string; seekerId: string; resumeId: string; resumeLang: ResumeLang; snapshot: string; fileKey: string | null; filePlain: Uint8Array | null;
   consentAt: number | null; consentVersion: string; ts: number; keepDays: number; events: PlannedEvent[];
 }
 
@@ -390,32 +267,41 @@ export async function buildBulkPlan(params: BulkParams, ctx: BulkPlanCtx): Promi
     for (const c of req) consents.push({ id: bulkId(7, ++consentNo), user_id: id, type: c.type, version: c.version, agreed_at: created });
     return id;
   };
+  /** 가중치 [값, 무게] 에서 하나. */
+  const pickW = <T>(xs: ReadonlyArray<readonly [T, number]>): T => {
+    let x = r() * xs.reduce((s, [, w]) => s + w, 0);
+    for (const [v, w] of xs) { if ((x -= w) < 0) return v; }
+    return xs[xs.length - 1]![0];
+  };
 
   const industries = activeOf(ctx.options, 'industry');
   const roles = new Set(activeOf(ctx.options, 'role_category').map((o) => o.code));
   const locations = activeOf(ctx.options, 'location');
-  const families = FAMILIES.filter((f) => roles.has(f.role));
-  if (!industries.length || !locations.length || !families.length) throw new Error('bulk: no active options');
+  const itFamilies = IT_FAMILIES.filter((f) => roles.has(f.role));
+  const otherFamilies = OTHER_FAMILIES.filter((f) => roles.has(f.role));
+  if (!industries.length || !locations.length || !(itFamilies.length + otherFamilies.length)) throw new Error('bulk: no active options');
   const inactive = { role: new Set(inactiveOf(ctx.options, 'role_category').map((o) => o.code)), industry: inactiveOf(ctx.options, 'industry'), location: inactiveOf(ctx.options, 'location') };
+  const locOf = (code: string) => locations.find((o) => o.code === code);
 
   // ── 기업·담당자·서류
-  const brands = BRAND_A.flatMap((a) => BRAND_B.map((b) => [a, b] as const));
-  r.shuffle(brands);
   const companies: BulkCompanyRow[] = [];
   const members: BulkMemberRow[] = [];
   const docs: BulkDocRow[] = [];
   const docFiles: BulkPlan['docFiles'] = [];
   const docPdf = demoDocPdf();
   const membersOf = new Map<string, BulkMemberRow[]>();
+  const specOf = new Map<string, CompanySpec>();
   const companyWeight: number[] = [];
   for (let i = 1; i <= params.companies; i++) {
     const id = bulkId(2, i);
-    const [[az, ak], [bz, bk]] = brands[(i - 1) % brands.length]!;
-    const series = i > brands.length ? ` ${Math.ceil(i / brands.length)}` : '';
-    const ind = industries[(i * 7) % industries.length]!;
-    const [iz, ik] = INDUSTRY_WORD[ind.code] ?? INDUSTRY_WORD.other!;
-    const entity: 'kr_entity' | 'cn_hq' = r.chance(0.12) ? 'cn_hq' : 'kr_entity';
-    const stage = entity === 'cn_hq' ? 'preparing' : r.pick(ENTRY_STAGES);
+    const spec = COMPANIES[(i - 1) % COMPANIES.length]!;
+    specOf.set(id, spec);
+    const series = i > COMPANIES.length ? ` ${Math.ceil(i / COMPANIES.length)}` : '';
+    const indCode = spec.industry ?? SECTOR[spec.sector].industry;
+    const ind = industries.find((o) => o.code === indCode) ?? industries[(i * 7) % industries.length]!;
+    const entity: 'kr_entity' | 'cn_hq' = spec.cnHq ? 'cn_hq' : 'kr_entity';
+    const stage = spec.stage;
+    const [cityZh, cityKo] = CITY[spec.city]!;
     const created = ago(r.int(100, 140));
     const want: 'verified' | 'pending' | 'rejected' = i % 13 === 6 ? 'pending' : i % 23 === 11 ? 'rejected' : 'verified';
     const bizNo = entity === 'kr_entity' ? fakeBizNo(i) : null;
@@ -428,10 +314,16 @@ export async function buildBulkPlan(params: BulkParams, ctx: BulkPlanCtx): Promi
     // 검증 상태는 verifyBlocks 가 정한다 (확인을 마친 서류만 센다).
     const verified = want === 'verified' && verifyBlocks({ entity_type: entity, biz_no: bizNo, docTypes: [docType] }).length === 0;
     const status = verified ? 'verified' as const : want === 'rejected' ? 'rejected' as const : 'pending' as const;
+    // 진출 이유에 이미 법인 이야기가 있으면 단계 문장을 되풀이하지 않는다.
+    const [stageZh, stageKo] = spec.why[1].includes('법인') ? ['', ''] : STAGE_LINE[stage];
     companies.push({
-      id, name_ko: `${ak}${bk}${ik}${entity === 'kr_entity' ? '코리아' : ''}${series} (가상)`, name_zh: `${az}${bz}${iz}${entity === 'kr_entity' ? '韩国' : ''}${series}（虚拟）`,
-      biz_no: bizNo, entity_type: entity, hq_name: `${az}${bz}${iz}有限公司${series}（虚拟）`, entry_stage: stage, industry: ind.label_ko,
-      profile_ko: `※ 대량 테스트용 가상 기업입니다. 실제 기업이 아니며 공고도 예시입니다.\n\n${ind.label_ko} 분야의 중국 기업입니다. ${STAGE_KO[stage]}`,
+      id, name_ko: `${spec.name[1]}${entity === 'kr_entity' ? ' 코리아' : ''}${series} (가상)`, name_zh: `${spec.name[0]}${entity === 'kr_entity' ? '韩国' : ''}${series}（虚拟）`,
+      biz_no: bizNo, entity_type: entity, hq_name: `${cityZh}${spec.hq ?? (spec.name[0].length <= 2 ? `${spec.name[0]}${SECTOR[spec.sector].hqWord}` : spec.name[0])}有限公司${series}（虚拟）`, entry_stage: stage, industry: ind.label_ko,
+      profile_ko: lines(
+        '※ 대량 테스트용 가상 기업입니다. 실제 기업이 아니며 공고도 예시입니다.', '',
+        `${cityKo}에 본사를 둔 ${spec.product[1]} 기업입니다. ${spec.why[1]}${stageKo ? ` ${stageKo}` : ''}`, '',
+        `【公司简介】总部位于${cityZh}，主营${spec.product[0]}。${spec.why[0]}${stageZh}`,
+      ),
       verify_status: status, verified_at: verified ? created + DAY : null,
       reject_reason: status === 'rejected' ? '테스트 데이터: 서류의 상호가 읽히지 않는 예시입니다.' : null, created_at: created,
     });
@@ -452,9 +344,10 @@ export async function buildBulkPlan(params: BulkParams, ctx: BulkPlanCtx): Promi
     // 검증 전·반려 기업은 공고가 적다 (초안 몇 건) — 목록 화면의 공고 수가 기업 상태에 크게 흔들리지 않게.
     companyWeight.push(status !== 'verified' ? 0.3 : r.chance(0.15) ? 6 + r() * 6 : 0.4 + r() * 1.6);
   }
-  const companyById = new Map(companies.map((c) => [c.id, c]));
 
-  // ── 공고
+  // ── 공고: 기업의 업계·진출 단계에 맞는 직무 묶음 (특화 묶음은 무게 2.5). IT 가 BULK_IT_SHARE 쯤.
+  const famChoices = (spec: CompanySpec, pool: readonly Family[]): Array<readonly [Family, number]> =>
+    pool.filter((f) => (!f.stages || f.stages.includes(spec.stage)) && (!f.sectors || f.sectors.includes(spec.sector))).map((f) => [f, f.sectors ? 2.5 : 1] as const);
   const cumC: number[] = [];
   companyWeight.reduce((s, w, i) => (cumC[i] = s + w), 0);
   const pickCompany = (): BulkCompanyRow => {
@@ -464,36 +357,79 @@ export async function buildBulkPlan(params: BulkParams, ctx: BulkPlanCtx): Promi
     return companies[lo]!;
   };
   const jobs: PlannedJob[] = [];
+  const jobMeta = new Map<string, { fam: Family; cn: CnLevel }>();
+  const techFamily = otherFamilies.find((f) => f.key === 'kc_cert') ?? otherFamilies[0] ?? itFamilies[0]!;
   for (let n = 1; n <= params.jobs; n++) {
     const co = pickCompany();
+    const spec = specOf.get(co.id)!;
     const ms = membersOf.get(co.id)!;
     const author = r.pick(ms);
-    const fam = r.pick(families);
     const x = r();
     const want: JobWant = x < 0.01 ? 'tech' : x < 0.03 ? 'blocked' : x < 0.06 ? 'draft' : x < 0.08 ? 'review' : x < 0.17 ? 'closed' : 'open';
-    const [tz, tk] = want === 'tech' ? TECH_LEAK.title : r.pick(fam.titles);
-    const senior = want !== 'tech' && r.chance(0.2);
-    const loc = inactive.location.length && r.chance(0.02) ? r.pick(inactive.location) : r.pick(locations);
+    const wantIt = r.chance(BULK_IT_SHARE);
+    const first = famChoices(spec, wantIt ? itFamilies : otherFamilies);
+    const choices = first.length ? first : famChoices(spec, wantIt ? otherFamilies : itFamilies);
+    const fam = want === 'tech' ? techFamily : choices.length ? pickW(choices) : r.pick(wantIt && itFamilies.length ? itFamilies : otherFamilies.length ? otherFamilies : itFamilies);
+    const [cityZh, cityKo] = CITY[spec.city]!;
+
+    // 레벨·경력 연차·제목
+    const [bz, bk] = want === 'tech' ? TECH_LEAK.title : r.pick(fam.sectorTitles?.[spec.sector] ?? fam.titles);
+    let level: Level = fam.years ? 'mid' : fam.levels ? r.pick(['junior', 'mid', 'mid', 'mid', 'senior', 'senior', 'lead'] as const) : r.chance(0.2) ? 'senior' : 'mid';
+    if (SENIOR_TITLE.test(bz) && level === 'junior') level = 'mid';
+    if (/主管|负责人/.test(bz) && level === 'lead') level = 'senior';
+    const y = fam.years ?? LEVEL_YEARS[level];
+    const title_zh = want === 'tech' || fam.years ? bz : level === 'junior' ? `初级${bz}` : level === 'senior' ? `${fam.levels ? '高级' : '资深'}${bz}` : level === 'lead' ? leadZh(bz) : bz;
+    const title_ko = want === 'tech' || fam.years ? bk : level === 'junior' ? `주니어 ${bk}` : level === 'senior' ? `시니어 ${bk}` : level === 'lead' ? leadKo(bk) : bk;
+
+    const locPool = fam.locs ?? (fam.role === 'it' ? ['seoul', 'seoul', 'seoul', 'gyeonggi', 'gyeonggi', 'remote'] : SECTOR[spec.sector].locs);
+    const cands = locPool.map(locOf).filter((o): o is NonNullable<typeof o> => !!o);
+    const loc = inactive.location.length && r.chance(0.02) ? r.pick(inactive.location) : !cands.length || r.chance(0.05) ? r.pick(locations) : r.pick(cands);
     const indCode = inactive.industry.length && r.chance(0.02) ? r.pick(inactive.industry).code
       : (industries.find((o) => o.label_ko === co.industry) ?? r.pick(industries)).code;
-    const cn = r.pick(['none', 'basic', 'basic', 'business', 'business', 'business', 'native'] as const);
-    const report = co.entity_type === 'cn_hq' || r.chance(0.3) ? 'cn_hq' as const : 'kr_head' as const;
-    const duties = r.shuffle([...fam.duties]).slice(0, r.int(2, 3));
+    const cn = r.pick(fam.cn);
+    const report = co.entity_type === 'cn_hq' || spec.stage === 'preparing' || r.chance(0.3) ? 'cn_hq' as const : 'kr_head' as const;
+    const rep = report === 'kr_head' ? REPORT_KR : r.pick(fam.role === 'it' ? REPORT_HQ_IT : REPORT_HQ);
+
+    // 본문: 짧은 공고 / 보통 / 자세한 공고. 중국어 원문은 중국 본사 인사팀이 쓰는 모양(【岗位职责】…), 한국어는 같은 구조의 승인된 현지화본.
+    const style = r() < 0.3 ? 'short' : r() < 0.55 ? 'medium' : 'detailed';
+    // 첫 업무(그 직무의 핵심)는 맨 앞에 두고, 나머지만 섞는다.
+    const duties = [fam.duties[0]!, ...r.shuffle(fam.duties.slice(1))].slice(0, style === 'short' ? 2 : style === 'medium' ? r.int(3, 4) : 5);
     if (want === 'tech') duties.unshift(TECH_LEAK.duty);
-    const reqs = r.shuffle([...fam.reqs]).slice(0, 2);
-    const perks = r.shuffle([...PERKS]).slice(0, r.int(1, 3));
-    const zh = lines('【岗位职责】', ...duties.map(([z]) => `- ${z}`), `- ${REPORT_LINE[report]![0]}`,
-      '【任职要求】', ...reqs.map(([z]) => `- ${z}`), `- ${CN_LINE[cn]![0]}`,
-      '【工作条件】', `- 工作地点：${loc.label_zh}`, ...perks.map(([z]) => `- ${z}`));
-    const ko = lines('[담당 업무]', ...duties.map(([, k]) => `- ${k}`), `- ${REPORT_LINE[report]![1]}`,
-      '[자격 요건]', ...reqs.map(([, k]) => `- ${k}`), `- ${CN_LINE[cn]![1]}`,
-      '[근무 조건]', `- 근무지: ${loc.label_ko}`, ...perks.map(([, k]) => `- ${k}`));
-    const title_zh = `${senior ? '资深' : ''}${tz}`;
-    const title_ko = `${senior ? '시니어 ' : ''}${tk}`;
-    // 연봉: 30% 협의(숫자 없음, 그중 절반은 퇴직금 기준만 적음), 나머지는 범위 + 퇴직금 포함/별도
+    const yearsReq: P = level === 'junior' && r.chance(0.35) ? NEWGRAD_REQ : fam.reqs[0]!;
+    const restReqs = r.shuffle(fam.reqs.slice(1)).slice(0, style === 'short' ? 1 : style === 'medium' ? 2 : fam.reqs.length);
+    const reqs: P[] = [yearsReq, ...restReqs];
+    if (style !== 'short' && spec.stage !== 'operating' && !fam.startupReq && r.chance(0.5)) reqs.push(STARTUP_REQ);
+    if (style !== 'short' && r.chance(report === 'cn_hq' ? 0.5 : 0.2)) reqs.push(r.pick(TRAVEL));
+    reqs.push(r.pick(CN_LINE[cn]));
+    const plus = style === 'detailed' ? r.shuffle([...fam.plus]).slice(0, r.int(1, 2)) : style === 'medium' && r.chance(0.4) ? [r.pick(fam.plus)] : [];
+    const perks: P[] = style === 'short' ? [] : r.shuffle([...PERKS]).slice(0, style === 'medium' ? 2 : r.int(3, 4));
+    // 가끔 중국 회사 습관 표현(五险一金). 같은 공고에 한국 4대 보험 줄이 있으면 뺀다 (서로 다른 제도를 한 공고에 함께 적지 않게).
+    if (perks.length && r.chance(0.1)) { perks.splice(0, perks.length, ...perks.filter((p) => !p[1].includes('4대 보험')), PERK_CN_STYLE); }
+    if (perks.length && fam.role === 'it' && r.chance(0.4)) perks.push(r.pick(PERK_IT));
+    const v = { y, city: cityZh }, vk = { y, city: cityKo };
+    // 단락 사이는 빈 줄 (화면이 줄바꿈을 그대로 보인다).
+    const paras = (...bs: Array<string[] | false>) => bs.filter((b): b is string[] => !!b && b.length > 0).map((b) => lines(...b)).join('\n\n');
+    const zh = paras(
+      [...(style === 'short' ? [] : [`汇报对象：${rep[0]}`]), `工作地点：${loc.label_zh}`],
+      style === 'detailed' && ['【关于我们】', `总部位于${cityZh}，主营${spec.product[0]}。${spec.why[0]}`],
+      ['【岗位职责】', ...numZh(duties.map(([z]) => fill(z, v)))],
+      ['【任职要求】', ...numZh(reqs.map(([z]) => fill(z, v)))],
+      plus.length > 0 && ['【加分项】', ...plus.map(([z]) => `· ${z}`)],
+      perks.length > 0 && ['【我们提供】', ...perks.map(([z]) => `· ${z}`)],
+    );
+    const ko = paras(
+      [...(style === 'short' ? [] : [`보고 대상: ${rep[1]}`]), `근무지: ${loc.label_ko}`],
+      style === 'detailed' && ['[회사 소개]', `${cityKo}에 본사를 둔 ${spec.product[1]} 기업입니다. ${spec.why[1]}`],
+      ['[담당 업무]', ...numKo(duties.map(([, k]) => fill(k, vk)))],
+      ['[자격 요건]', ...numKo(reqs.map(([, k]) => fill(k, vk)))],
+      plus.length > 0 && ['[우대 사항]', ...plus.map(([, k]) => `- ${k}`)],
+      perks.length > 0 && ['[제공 사항]', ...perks.map(([, k]) => `- ${k}`)],
+    );
+    // 연봉 (만원, 구조화 칸 — 본문에 쓰지 않는다): 30% 협의(숫자 없음, 그중 절반은 퇴직금 기준만 적음), 나머지는 레벨에 맞는 범위
+    const band: readonly [number, number] = fam.key === 'country_manager' ? [90, 140] : ({ junior: [30, 40], mid: [40, 58], senior: [58, 80], lead: [78, 100] } as const)[level];
     const negotiable = r.chance(0.3);
-    const smin = negotiable ? null : r.int(28, 80) * 100;
-    const smax = smin === null ? null : smin + r.int(3, 20) * 100;
+    const smin = negotiable ? null : r.int(band[0], band[1]) * 100;
+    const smax = smin === null ? null : smin + r.int(3, level === 'lead' || fam.key === 'country_manager' ? 30 : 15) * 100;
     const basis = !negotiable || r.chance(0.5) ? r.pick(['severance_excluded', 'severance_excluded', 'severance_included'] as const) : null;
     const start = r.pick(['08:30', '09:00', '09:00', '09:30', '10:00']);
     const end = { '08:30': '17:30', '09:00': '18:00', '09:30': '18:30', '10:00': '19:00' }[start]!;
@@ -524,49 +460,102 @@ export async function buildBulkPlan(params: BulkParams, ctx: BulkPlanCtx): Promi
       row, want, publishAt: publishable ? Math.min(publishAt, now - 60) : null, closeAt: publishable ? closeAt : null, companyVerified, members: ms,
       need: consentNeed({ hqMembers: ms.filter((m) => m.is_hq === 1).length, localMembers: ms.filter((m) => m.is_hq === 0).length }),
     });
+    jobMeta.set(row.id, { fam, cn });
   }
 
-  // ── 구직자·이력서
+  // ── 구직자·이력서: IT 경력자가 절반 이상. 중국어 업무 가능·원어민 수준 구직자의 일부는 중국어 이력서만, 일부는 한국어(대표) + 중국어 두 개.
   const resumes: BulkResumeRow[] = [];
   const resumeFiles: BulkPlan['resumeFiles'] = [];
-  const seekerResume: Array<{ seekerId: string; resumeId: string; body: ResumeBody; filePlain: Uint8Array | null; created: number }> = [];
-  let fileNo = 0;
+  interface SeekerResume { id: string; lang: ResumeLang; body: ResumeBody; filePlain: Uint8Array | null }
+  interface Seeker { id: string; created: number; fam: Family; level: CnLevel; resumes: SeekerResume[] }
+  const seekers: Seeker[] = [];
+  let fileNo = 0, resumeNo = 0;
+  const seekerFamilies = { it: itFamilies.length ? itFamilies : otherFamilies, other: otherFamilies.length ? otherFamilies : itFamilies };
   for (let s = 1; s <= params.seekers; s++) {
     const email = `seeker${pad(s, 4)}@${BULK_MAIL_DOMAIN}`;
     const created = ago(r.int(95, 130));
     const uid = addUser(email, 'seeker', r.chance(0.1) ? 'zh' : 'ko', created);
-    if (!r.chance(250 / 300)) continue;
-    const fam = r.pick(FAMILIES);
-    const years = r.chance(0.12) ? 0 : r.int(1, 18);
-    const level = r.pick(['none', 'basic', 'business', 'business', 'native'] as const) as ResumeChineseLevel;
-    const withFile = r.chance(0.3);
-    const withExp = !withFile || r.chance(0.7); // 첨부도 경력 요약도 없는 이력서는 지원할 수 없으므로 만들지 않는다
-    const since = 2026 - Math.max(years, 1);
-    const exp = withExp ? lines(
-      ...r.shuffle([...fam.resume.exp]).slice(0, 2).map((e, k) => `- ${k === 0 ? `${since}~현재` : `${since - 2}~${since}`} 가상기업 ${'ABCDEFGH'[r.int(0, 7)]}사: ${e}`),
-      `- 중국어: ${{ none: '못함', basic: '기초 회화', business: '업무 소통 가능', native: '원어민 수준' }[level]}`,
-    ) : null;
-    let filePlain: Uint8Array | null = null;
-    let fileKey: string | null = null;
-    let meta: ResumeBody['file'] = null;
-    if (withFile) {
-      fileNo += 1;
-      filePlain = fakeResumePdf(fileNo);
-      fileKey = resumeFileKey(fileNo);
-      meta = { name: r.chance(0.5) ? '경력기술서.pdf' : 'resume.pdf', ext: 'pdf', mime: 'application/pdf', size: filePlain.length };
-      resumeFiles.push({ key: fileKey, plain: filePlain });
-    }
-    const body: ResumeBody = {
-      v: 1, name: `${r.pick(SURNAMES)}${r.pick(GIVEN_A)}${r.pick(GIVEN_B)}(가상)`, chinese_level: level, years,
-      headline: `${fam.resume.headline}${years ? ` ${years}년` : ' (신입)'}`.slice(0, 100), contact_email: email,
-      phone: r.chance(0.6) ? `010-0000-${pad(s % 10000, 4)}` : null, desired_role: fam.resume.desired, experience_text: exp, file: meta,
+    if (!r.chance(260 / 300)) continue;
+    const fam = r.pick(r.chance(BULK_IT_SEEKER_SHARE) ? seekerFamilies.it : seekerFamilies.other);
+    const level: CnLevel = fam.key === 'interpreter' ? 'native'
+      : fam.key === 'first_hire' || fam.key === 'country_manager' || fam.key === 'itpm' ? r.pick(['business', 'native'] as const)
+      : pickW([['none', 25], ['basic', 20], ['business', 35], ['native', 20]] as const);
+    const years = fam.years ? r.int(Math.max(1, fam.years - 2), fam.years + 6) : r.chance(0.1) ? 0 : r.int(1, 15);
+    const bilingual = level === 'business' || level === 'native';
+    const y = r();
+    const langs: ResumeLang[] = !bilingual ? ['ko'] : y < 0.34 ? ['ko', 'zh'] : y < 0.64 ? ['zh'] : ['ko'];
+    const name = `${r.pick(SURNAMES)}${r.pick(GIVEN_A)}${r.pick(GIVEN_B)}(가상)`;
+    const phone = r.chance(0.6) ? `010-0000-${pad(s % 10000, 4)}` : null;
+    const seeker: Seeker = { id: uid, created, fam, level, resumes: [] };
+    // 경력·학력·어학은 두 언어 이력서가 같은 사실을 적는다 (같은 사람).
+    const career = r.shuffle([...fam.resume.exp]).slice(0, years === 0 ? 1 : years <= 3 ? 1 : years <= 8 ? 2 : 3);
+    const spans = career.map((_, k) => (years === 0 ? 0 : k === career.length - 1 ? Math.max(1, years - (career.length - 1) * Math.floor(years / career.length)) : Math.max(1, Math.floor(years / career.length))));
+    const month = r.int(1, 10);
+    const edu = EDU[r.pick(fam.resume.edu)] ?? EDU.biz!;
+    const china = bilingual ? r.pick(years >= 4 && r.chance(0.5) ? CHINA_WORK : CHINA_STUDY) : null;
+    const hsk = level === 'business' || level === 'native' ? r.pick(HSK[level]) : null;
+    const self = r.pick(bilingual && r.chance(0.4) ? SELF_BILINGUAL : SELF);
+    const brief = r.chance(0.3);
+    const dated = (lang: ResumeLang): string[] => {
+      const out: string[] = [];
+      let endY = 2026, endM = month;
+      career.forEach((e, k) => {
+        const [org, team, a, b] = lang === 'ko' ? e.ko : e.zh;
+        if (years === 0) {
+          out.push(lang === 'ko' ? `신입 (인턴 6개월 | ${org} · ${team})` : `应届毕业（实习6个月：${org}｜${team}）`, lang === 'ko' ? `- ${a}` : `· ${a}`);
+          return;
+        }
+        const startY = endY - spans[k]!, startM = endM;
+        const from = `${startY}.${pad(startM, 2)}`, to = k === 0 ? (lang === 'ko' ? '현재' : '至今') : `${endY}.${pad(endM, 2)}`;
+        out.push(lang === 'ko' ? `${from} ~ ${to} | ${org} · ${team}` : `${from} – ${to}　${org}｜${team}`);
+        out.push(...(lang === 'ko' ? [`- ${a}`, `- ${b}`] : [`· ${a}`, `· ${b}`]));
+        endY = startY; endM = Math.max(1, startM - 1);
+      });
+      return out;
     };
-    const rid = bulkId(4, s);
-    resumes.push({ id: rid, user_id: uid, title: fam.resume.title, is_default: 1, body: await sealResume(ctx.encKey, body), file_r2_key: fileKey, created_at: created + 3600, updated_at: created + 7200 });
-    seekerResume.push({ seekerId: uid, resumeId: rid, body, filePlain, created });
+    for (const lang of langs) {
+      const withFile = r.chance(lang === 'ko' ? 0.3 : 0.2);
+      const withExp = !withFile || r.chance(0.7); // 첨부도 경력 요약도 없는 이력서는 지원할 수 없으므로 만들지 않는다
+      const sections = (...bs: Array<string[] | false>) => bs.filter((b): b is string[] => !!b).map((b) => lines(...b)).join('\n\n');
+      const exp = !withExp ? null : lang === 'ko' ? sections(
+        ['[경력]', ...dated('ko')], ['[학력]', edu[1]],
+        level !== 'none' && ['[어학]', level === 'basic' ? '- 중국어: 기초 회화' : `- ${hsk![1]}`, ...(china ? [`- ${china[1]}`] : [])],
+        !brief && ['[기술·역량]', fam.resume.skills[1]], !brief && ['[자기소개]', self[1]],
+      ) : sections(
+        ['【工作经历】', ...dated('zh')], ['【教育背景】', edu[0]],
+        ['【语言能力】', `韩语（母语）；中文（${level === 'native' ? '可作为工作语言' : hsk![0]}）`], !!china && ['【海外经历】', china![0]],
+        !brief && ['【专业技能】', fam.resume.skills[0]], !brief && ['【自我评价】', self[0]],
+      );
+      let filePlain: Uint8Array | null = null;
+      let fileKey: string | null = null;
+      let meta: ResumeBody['file'] = null;
+      if (withFile) {
+        fileNo += 1;
+        filePlain = fakeResumePdf(fileNo);
+        fileKey = resumeFileKey(fileNo);
+        meta = { name: lang === 'zh' ? '中文简历.pdf' : r.chance(0.5) ? '경력기술서.pdf' : 'resume.pdf', ext: 'pdf', mime: 'application/pdf', size: filePlain.length };
+        resumeFiles.push({ key: fileKey, plain: filePlain });
+      }
+      const [dz, dk] = fam.resume.desired;
+      const headline = years === 0
+        ? (lang === 'ko' ? `${dk} 분야 신입, 인턴 경험` : `应届毕业生，有${dz}方向实习经验`)
+        : fill(lang === 'ko' ? fam.resume.headline[1] : fam.resume.headline[0], { y: years });
+      const body: ResumeBody = {
+        v: 1, name, chinese_level: level, years, headline: headline.slice(0, 100), contact_email: email, phone,
+        desired_role: lang === 'ko' ? dk : dz, experience_text: exp, file: meta,
+      };
+      const title = lang === 'ko' ? r.pick([`${dk} 지원용`, '기본 이력서', dk]).slice(0, 40)
+        : langs.length > 1 ? '중국어 이력서' : r.pick(['中文简历', '중국어 이력서', `${dz}简历`]).slice(0, 40);
+      const rid = bulkId(4, ++resumeNo);
+      const at = created + 3600 * (seeker.resumes.length + 1);
+      resumes.push({ id: rid, user_id: uid, title, lang, is_default: seeker.resumes.length === 0 ? 1 : 0, body: await sealResume(ctx.encKey, body), file_r2_key: fileKey, created_at: at, updated_at: at + 3600 });
+      seeker.resumes.push({ id: rid, lang, body, filePlain });
+    }
+    seekers.push(seeker);
   }
 
   // ── 지원: 지금 공개 목록에 보이는 공고(게재될 공고)에만. 인기 공고와 지원 없는 공고가 함께 있게 가중치를 준다.
+  // 지원자는 같은 직무 경력자가 많고(IT 공고에는 IT 경력자), 두 언어 이력서가 있으면 공고의 중국어 수준에 맞춰 고른다 (실제 구직자가 고르듯).
   const visible = jobs.filter((j) => j.publishAt !== null
     && isPubliclyVisible({ status: 'published', agency_id: null, job_family: 'office', closes_at: j.row.closes_at, company_verify_status: j.companyVerified ? 'verified' : 'pending' }, { flags: ctx.flags, now }));
   r.shuffle(visible);
@@ -580,24 +569,44 @@ export async function buildBulkPlan(params: BulkParams, ctx: BulkPlanCtx): Promi
     while (lo < hi) { const mid = (lo + hi) >> 1; if (cumJ[mid]! <= x) lo = mid + 1; else hi = mid; }
     return visible[lo]!;
   };
+  const byFam = new Map<string, Seeker[]>();
+  const byIt = new Map<boolean, Seeker[]>([[true, []], [false, []]]);
+  for (const sk of seekers) {
+    if (!byFam.has(sk.fam.key)) byFam.set(sk.fam.key, []);
+    byFam.get(sk.fam.key)!.push(sk);
+    byIt.get(sk.fam.role === 'it')!.push(sk);
+  }
+  const pickSeeker = (fam: Family, cn: CnLevel): Seeker => {
+    const x = r();
+    let pool = x < 0.5 ? byFam.get(fam.key) : x < 0.82 ? byIt.get(fam.role === 'it') : undefined;
+    if (!pool?.length) pool = seekers;
+    let sk = r.pick(pool);
+    if ((cn === 'business' || cn === 'native') && sk.level === 'none' && r.chance(0.6)) sk = r.pick(pool);
+    return sk;
+  };
+  const ZH_PICK: Readonly<Record<CnLevel, number>> = { native: 0.75, business: 0.5, basic: 0.15, none: 0.05 };
   const applications: PlannedApplication[] = [];
   const keepDays = ctx.retention.application_keep_days;
   const used = new Set<string>();
   let appNo = 0, appFileNo = 0, attempts = 0;
-  while (applications.length < params.applications && totalW > 0 && seekerResume.length && attempts++ < params.applications * 30) {
+  while (applications.length < params.applications && totalW > 0 && seekers.length && attempts++ < params.applications * 30) {
     const job = pickJob();
-    const sk = r.pick(seekerResume);
-    const pair = `${job.row.id}|${sk.seekerId}`;
+    const meta = jobMeta.get(job.row.id)!;
+    const sk = pickSeeker(meta.fam, meta.cn);
+    const pair = `${job.row.id}|${sk.id}`;
     if (used.has(pair)) continue;
     const until = Math.min(job.closeAt ?? now, now) - 120;
     const from = Math.max(job.publishAt!, sk.created + 3 * 3600);
     if (until <= from) continue;
     used.add(pair);
     const ts = from + Math.floor(r() * (until - from));
-    const fields = { name: sk.body.name, chinese_level: sk.body.chinese_level, years: sk.body.years, headline: sk.body.headline, contact_email: sk.body.contact_email,
-      phone: sk.body.phone, desired_role: sk.body.desired_role, experience_text: sk.body.experience_text };
-    const include = !!sk.filePlain && (!sk.body.experience_text || r.chance(0.85));
-    const snapshot = buildSnapshot(sk.body, fields, { include, copied: include });
+    const zhRes = sk.resumes.find((x) => x.lang === 'zh');
+    const res = sk.resumes.length > 1 && zhRes && r.chance(ZH_PICK[meta.cn]) ? zhRes : sk.resumes[0]!;
+    const b = res.body;
+    const fields = { name: b.name, chinese_level: b.chinese_level, years: b.years, headline: b.headline, contact_email: b.contact_email,
+      phone: b.phone, desired_role: b.desired_role, experience_text: b.experience_text };
+    const include = !!res.filePlain && (!b.experience_text || r.chance(0.85));
+    const snapshot = buildSnapshot(b, fields, { include, copied: include }, res.lang);
     const consentGiven = job.need === 'required' ? true : job.need === 'optional' ? r.chance(0.6) : false;
     // 실제 지원과 같은 판단 (lib/application.applyBlocks). 막히면 넣지 않는다.
     if (applyBlocks({ canApply: true, jobVisible: true, alreadyApplied: false, resumeReady: resumeReadyToApply(snapshot), consentNeed: job.need, consentGiven }).length) continue;
@@ -606,11 +615,11 @@ export async function buildBulkPlan(params: BulkParams, ctx: BulkPlanCtx): Promi
     if (include) { appFileNo += 1; fileKey = applicationFileKey(appFileNo); }
     const consent = consentAt(job.need, consentGiven, ts);
     const app: PlannedApplication = {
-      id: bulkId(5, appNo), jobId: job.row.id, seekerId: sk.seekerId, resumeId: sk.resumeId, snapshot: await sealResume(ctx.encKey, snapshot),
-      fileKey, filePlain: include ? sk.filePlain : null, consentAt: consent, consentVersion: crossBorderVersion(keepDays), ts, keepDays, events: [],
+      id: bulkId(5, appNo), jobId: job.row.id, seekerId: sk.id, resumeId: res.id, resumeLang: res.lang, snapshot: await sealResume(ctx.encKey, snapshot),
+      fileKey, filePlain: include ? res.filePlain : null, consentAt: consent, consentVersion: crossBorderVersion(keepDays), ts, keepDays, events: [],
     };
     // 이후 이벤트 계획 (시각은 차례로 늘어난다). 회사 쪽 이벤트를 낸 사람은 그 지원서를 볼 수 있는 담당자다 (authz.canViewApplication).
-    const ref = { seeker_id: sk.seekerId, job: { company_id: job.row.company_id, agency_id: null, created_by: job.row.created_by }, cross_border_consent_at: consent, status: 'submitted' };
+    const ref = { seeker_id: sk.id, job: { company_id: job.row.company_id, agency_id: null, created_by: job.row.created_by }, cross_border_consent_at: consent, status: 'submitted' };
     const viewers = job.members.filter((m) => canViewApplication(actorOf(m), ref).allow);
     let t = ts;
     const later = (): number | null => { t += r.int(3600, 5 * DAY); return t < now - 60 ? t : null; };
@@ -626,13 +635,12 @@ export async function buildBulkPlan(params: BulkParams, ctx: BulkPlanCtx): Promi
       } else if (r.chance(0.05)) push('reject_mail', viewer.user_id);
     }
     // 취소는 진행 중인 지원만 할 수 있다 (불합격 뒤에는 계획하지 않는다).
-    if (!app.events.some((e) => e.event === 'reject_mail') && r.chance(0.05)) push('withdrawn', sk.seekerId);
+    if (!app.events.some((e) => e.event === 'reject_mail') && r.chance(0.05)) push('withdrawn', sk.id);
     applications.push(app);
   }
 
   return { base: { users, consents, companies, members, docs }, docFiles, jobs, resumes, resumeFiles, applications };
 }
-
 /** 계획의 개수 (출력용 — 이름·내용 없음). */
 export function planCounts(p: BulkPlan): Record<string, number> {
   const ev = p.applications.flatMap((a) => a.events);
@@ -641,7 +649,8 @@ export function planCounts(p: BulkPlan): Record<string, number> {
     company_users: p.base.users.filter((u) => u.role === 'company').length, seekers: p.base.users.filter((u) => u.role === 'seeker').length,
     jobs: p.jobs.length, jobs_to_publish: p.jobs.filter((j) => j.publishAt !== null).length,
     jobs_to_close: p.jobs.filter((j) => j.publishAt !== null && j.want === 'closed').length, jobs_to_block: p.jobs.filter((j) => j.publishAt !== null && j.want === 'blocked').length,
-    resumes: p.resumes.length, resume_files: p.resumeFiles.length, applications: p.applications.length,
+    jobs_it: p.jobs.filter((j) => j.row.role_category === 'it').length,
+    resumes: p.resumes.length, resumes_zh: p.resumes.filter((x) => x.lang === 'zh').length, resume_files: p.resumeFiles.length, applications: p.applications.length,
     application_files: p.applications.filter((a) => a.fileKey).length, events: ev.length,
   };
 }
@@ -719,7 +728,7 @@ export async function createBulk(env: Env, plan: BulkPlan, ts: number, params: B
   for (const a of plan.applications) {
     if (a.fileKey && a.filePlain) await env.FILES.put(a.fileKey, await encryptFile(key, a.filePlain, a.fileKey));
     const ok = await insertApplication(env.DB, {
-      id: a.id, jobId: a.jobId, seekerId: a.seekerId, resumeId: a.resumeId, snapshot: a.snapshot, fileKey: a.fileKey,
+      id: a.id, jobId: a.jobId, seekerId: a.seekerId, resumeId: a.resumeId, resumeLang: a.resumeLang, snapshot: a.snapshot, fileKey: a.fileKey,
       consentAt: a.consentAt, consentVersion: a.consentVersion, ts: a.ts, keepDays: a.keepDays,
     }, flags);
     if (!ok) { if (a.fileKey) await env.FILES.delete(a.fileKey); continue; }

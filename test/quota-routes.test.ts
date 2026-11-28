@@ -92,7 +92,7 @@ type World = ReturnType<typeof world>;
 
 async function applyAs(w: World, who: 's1' | 's2' | 's3') {
   const fd = new FormData();
-  const fields = { title: '영업직용', name: `가짜${who}`, chinese_level: 'business', years: '5', headline: '가짜한줄소개', contact_email: `${who}.contact@example.test`, experience_text: '경력 요약 가짜' };
+  const fields = { title: '영업직용', lang: 'ko', name: `가짜${who}`, chinese_level: 'business', years: '5', headline: '가짜한줄소개', contact_email: `${who}.contact@example.test`, experience_text: '경력 요약 가짜' };
   for (const [k, v] of Object.entries(fields)) fd.set(k, v);
   fd.set('attachment', new File([], '', { type: 'application/octet-stream' }));
   expect((await w.post('/my/resumes/new', fd, who)).status).toBe(302);

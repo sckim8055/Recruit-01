@@ -2,7 +2,7 @@
 import type { Db } from './types';
 
 /** migrations/pg/ 의 파일 이름 (번호 순서). 새 파일을 더하면 여기에도 적는다 — test/pg-schema.test.ts 가 폴더와 같은지 본다. */
-export const PG_MIGRATIONS: readonly string[] = ['0001_init.sql'];
+export const PG_MIGRATIONS: readonly string[] = ['0001_init.sql', '0002_resume_lang.sql'];
 
 /** 적용 기록 표. scripts/db-migrate.mjs 가 만들고 채운다 (같은 정의가 그 파일에도 있다). */
 export const SCHEMA_MIGRATIONS_DDL =

@@ -7,10 +7,10 @@ import { fmtDate, fmtDateTime } from '../lib/company';
 import { t } from '../lib/i18n';
 import type { RetentionValues } from '../lib/retention';
 import { tRetention } from '../legal/render';
-import type { ResumeBody, ResumeFieldError, ResumeFileMeta, ResumeInput } from '../lib/resume';
+import { snapshotLang, type ResumeBody, type ResumeFieldError, type ResumeFileMeta, type ResumeInput, type ResumeLang } from '../lib/resume';
 import type { ApplicationRow, OwnApplicationListRow } from '../db/applications';
 import { Flash } from './company';
-import { FieldErrors, ResumeFieldInputs, levelText } from './resumes';
+import { FieldErrors, LangLabel, ResumeFieldInputs, levelText } from './resumes';
 
 /** 지원 화면 위쪽에 보일 공고 정보. companyName 이 null 이면 기업명 비공개 공고다. */
 export interface ApplyJob { id: string; title: string | null; companyName: string | null }
@@ -50,7 +50,7 @@ export const ApplyNeedResume = ({ locale, job, hasAny }: { locale: Locale; job: 
 
 // ── 지원 1단계: 이력서 고르기
 
-export interface ResumeChoice { id: string; title: string; headline: string; isDefault: boolean; ready: boolean }
+export interface ResumeChoice { id: string; title: string; lang: ResumeLang; headline: string; isDefault: boolean; ready: boolean }
 
 export const ApplyChooseResume = (p: { locale: Locale; job: ApplyJob; items: ResumeChoice[]; selected: string | null; error?: string }) => {
   const l = p.locale;
@@ -70,6 +70,7 @@ export const ApplyChooseResume = (p: { locale: Locale; job: ApplyJob; items: Res
               <span>
                 {r.title}
                 {r.isDefault && <> <span class="badge s-verified">{t(l, 'resume.default')}</span></>}
+                {' '}<LangLabel locale={l} lang={r.lang} />
                 {' '}<span class="muted">{r.headline}</span>
                 {!r.ready && <> · <span class="warn">{t(l, 'resume.not_ready')}</span></>}
               </span>
@@ -222,6 +223,7 @@ export const SnapshotFields = (p: {
   const none = <span class="muted">{t(l, 'job.none')}</span>;
   return (
     <dl class="kv">
+      <dt>{t(l, 'resume.f.lang')}</dt><dd><LangLabel locale={l} lang={snapshotLang(b)} /></dd>
       <dt>{t(l, 'resume.f.name')}</dt><dd>{b.name}</dd>
       <dt>{t(l, 'resume.f.contact_email')}</dt><dd>{b.contact_email}</dd>
       <dt>{t(l, 'resume.f.phone')}</dt><dd>{b.phone ?? none}</dd>

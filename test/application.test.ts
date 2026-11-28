@@ -75,14 +75,14 @@ const base: ResumeBody = {
 describe('지원서 복사본', () => {
   const edited = { name: '홍길동', chinese_level: 'native' as const, years: 6, headline: '이번 지원용', contact_email: 'h2@example.test', phone: null, desired_role: null, experience_text: '고친 경력' };
   it('이번 지원에만 고친 항목이 들어가고, 원본은 바뀌지 않는다', () => {
-    const snap = buildSnapshot(base, edited, { include: true, copied: true });
-    expect(snap).toEqual({ v: 1, ...edited, file: base.file });
+    const snap = buildSnapshot(base, edited, { include: true, copied: true }, 'ko');
+    expect(snap).toEqual({ v: 1, ...edited, lang: 'ko', file: base.file });
     expect(base.headline).toBe('원본');
   });
   it('첨부를 빼기로 했거나 복사에 실패했으면 파일 정보를 남기지 않는다', () => {
-    expect(buildSnapshot(base, edited, { include: false, copied: true }).file).toBeNull();
-    expect(buildSnapshot(base, edited, { include: true, copied: false }).file).toBeNull();
-    expect(buildSnapshot({ ...base, file: null }, edited, { include: true, copied: true }).file).toBeNull();
+    expect(buildSnapshot(base, edited, { include: false, copied: true }, 'ko').file).toBeNull();
+    expect(buildSnapshot(base, edited, { include: true, copied: false }, 'ko').file).toBeNull();
+    expect(buildSnapshot({ ...base, file: null }, edited, { include: true, copied: true }, 'ko').file).toBeNull();
   });
 });
 
@@ -127,7 +127,7 @@ describe.skipIf(!hasDb)('지원 DB 문장', () => {
     return { raw, d1 };
   };
   const apply = (d1: Db, p: Partial<Parameters<typeof insertApplication>[1]> = {}) =>
-    insertApplication(d1, { id: 'a1', jobId: 'j1', seekerId: 's1', resumeId: 'r1', snapshot: 'v1.x.y', fileKey: 'rfiles/k1', consentAt: null, consentVersion: CROSS_BORDER_VERSION, ts: 100, keepDays: 180, ...p }, FLAGS);
+    insertApplication(d1, { id: 'a1', jobId: 'j1', seekerId: 's1', resumeId: 'r1', resumeLang: 'ko', snapshot: 'v1.x.y', fileKey: 'rfiles/k1', consentAt: null, consentVersion: CROSS_BORDER_VERSION, ts: 100, keepDays: 180, ...p }, FLAGS);
 
   it('공개 중인 공고에만 지원이 들어간다', async () => {
     const { d1 } = setup();

@@ -8,7 +8,7 @@
 // - 취소하면 복사본과 첨부파일을 바로 지운다. 지원했다는 기록(행)만 남는다.
 import type { AppStatus } from './rules';
 import { nextStatus } from './rules';
-import type { ResumeBody } from './resume';
+import type { ResumeBody, ResumeLang } from './resume';
 
 /** 국외 이전 동의 문구의 판(版). 문구를 바꾸면 이 값을 올린다 (consents.version 에 남는다). 문구(locales 의 apply.consent.*)는 개인정보처리방침 5항(src/legal/privacy.ts)과 같은 내용이어야 한다. */
 export const CROSS_BORDER_VERSION = '2026-11-1';
@@ -69,11 +69,12 @@ export function consentAt(need: ConsentNeed, given: boolean, ts: number): number
 /**
  * 지원서에 들어갈 내용. 이력서에서 이번 지원에만 고친 항목(fields)을 쓰고,
  * 첨부파일은 넣기로 했고 실제로 복사된 경우에만 정보를 남긴다 (복사 실패·"첨부 제외" 는 null).
+ * lang 은 고른 이력서의 작성 언어(resumes.lang, T-22) — 기업 화면의 "한국어 이력서 / 中文简历" 표시에만 쓴다.
  */
 export function buildSnapshot(
-  base: ResumeBody, fields: Omit<ResumeBody, 'v' | 'file'>, file: { include: boolean; copied: boolean },
+  base: ResumeBody, fields: Omit<ResumeBody, 'v' | 'file' | 'lang'>, file: { include: boolean; copied: boolean }, lang: ResumeLang,
 ): ResumeBody {
-  return { v: 1, ...fields, file: file.include && file.copied ? base.file : null };
+  return { v: 1, ...fields, lang, file: file.include && file.copied ? base.file : null };
 }
 
 // ── 취소

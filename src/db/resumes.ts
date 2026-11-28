@@ -10,6 +10,8 @@ export interface ResumeRow {
   id: string;
   user_id: string;
   title: string;
+  /** 작성 언어 'ko' | 'zh' (0002_resume_lang, T-22). 평문 — 개인정보가 아니다. */
+  lang: string;
   is_default: number;
   body: string;                 // 🔒 암호문
   file_r2_key: string | null;
@@ -17,7 +19,7 @@ export interface ResumeRow {
   updated_at: number;
 }
 
-const COLS = 'id, user_id, title, is_default, body, file_r2_key, created_at, updated_at';
+const COLS = 'id, user_id, title, lang, is_default, body, file_r2_key, created_at, updated_at';
 
 /** 내 이력서 목록: 대표 이력서가 맨 위, 그다음 최근 수정 순. */
 export async function listResumes(db: Db, userId: string): Promise<ResumeRow[]> {
@@ -40,13 +42,13 @@ export async function countResumes(db: Db, userId: string): Promise<number> {
  * [sqlite] FROM 없는 SELECT 에 바인딩한 값의 형: PostgreSQL 에서는 `?::integer` 같은 형 지정이 필요할 수 있다 (확인 필요).
  */
 export async function insertResume(
-  db: Db, r: { id: string; userId: string; title: string; body: string; fileKey: string | null; ts: number }, max: number,
+  db: Db, r: { id: string; userId: string; title: string; lang: string; body: string; fileKey: string | null; ts: number }, max: number,
 ): Promise<boolean> {
   const res = await db.prepare(
-    `INSERT INTO resumes (id, user_id, title, is_default, body, file_r2_key, created_at, updated_at)
-     SELECT ?, ?, ?, CASE WHEN EXISTS (SELECT 1 FROM resumes WHERE user_id = ?) THEN 0 ELSE 1 END, ?, ?, ?, ?
+    `INSERT INTO resumes (id, user_id, title, lang, is_default, body, file_r2_key, created_at, updated_at)
+     SELECT ?, ?, ?, ?, CASE WHEN EXISTS (SELECT 1 FROM resumes WHERE user_id = ?) THEN 0 ELSE 1 END, ?, ?, ?, ?
      WHERE (SELECT COUNT(*) FROM resumes WHERE user_id = ?) < ?`,
-  ).bind(r.id, r.userId, r.title, r.userId, r.body, r.fileKey, r.ts, r.ts, r.userId, max).run();
+  ).bind(r.id, r.userId, r.title, r.lang, r.userId, r.body, r.fileKey, r.ts, r.ts, r.userId, max).run();
   return res.meta.changes === 1;
 }
 
@@ -55,11 +57,11 @@ export async function insertResume(
  * 같은 초에 두 번 저장하는 경우까지 막지는 못한다 (본인 혼자 쓰는 자료라 충분하다).
  */
 export async function updateResume(
-  db: Db, r: { id: string; userId: string; title: string; body: string; fileKey: string | null; ts: number; expectedUpdatedAt: number },
+  db: Db, r: { id: string; userId: string; title: string; lang: string; body: string; fileKey: string | null; ts: number; expectedUpdatedAt: number },
 ): Promise<boolean> {
   const res = await db.prepare(
-    'UPDATE resumes SET title = ?, body = ?, file_r2_key = ?, updated_at = ? WHERE id = ? AND user_id = ? AND updated_at = ?',
-  ).bind(r.title, r.body, r.fileKey, r.ts, r.id, r.userId, r.expectedUpdatedAt).run();
+    'UPDATE resumes SET title = ?, lang = ?, body = ?, file_r2_key = ?, updated_at = ? WHERE id = ? AND user_id = ? AND updated_at = ?',
+  ).bind(r.title, r.lang, r.body, r.fileKey, r.ts, r.id, r.userId, r.expectedUpdatedAt).run();
   return res.meta.changes === 1;
 }
 

@@ -142,7 +142,7 @@ describe.skipIf(!hasDb)('지원서 열기', () => {
     ins.run('a2', 'j1', 's2', sealed, null, 7, 'withdrawn', 30, 20);
     const rows = await listJobApplications(d1, 'j1');
     expect(rows.map((r) => r.id)).toEqual(['a1', 'a2']);
-    expect(Object.keys(rows[0]!).sort()).toEqual(['created_at', 'cross_border_consent_at', 'has_file', 'id', 'status', 'status_changed_at']);
+    expect(Object.keys(rows[0]!).sort()).toEqual(['created_at', 'cross_border_consent_at', 'has_file', 'id', 'resume_lang', 'status', 'status_changed_at']); // resume_lang: 작성 언어 표시 (T-22, 개인정보 아님)
     expect(rows.map((r) => r.has_file)).toEqual([1, 0]);
     expect(JSON.stringify(rows)).not.toContain('v1.');
     expect(await listJobApplications(d1, 'j2')).toEqual([]);

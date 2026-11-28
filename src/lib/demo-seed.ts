@@ -105,7 +105,8 @@ export async function buildDemoSeed(ctx: DemoSeedCtx): Promise<DemoSeedRows> {
     if (!job || !resume || !seeker || resume.userId !== a.seekerId) continue;
     const members = DEMO_COMPANIES.find((c) => c.id === job.company_id)?.members ?? [];
     const need = consentNeed({ hqMembers: members.filter((m) => m.is_hq === 1).length, localMembers: members.filter((m) => m.is_hq === 0).length });
-    const snapshot = buildSnapshot(bodyOf(resume), resume.body, { include: false, copied: false });
+    // 시연 이력서는 모두 한국어로 쓴 것이다 (resumes.lang · applications.resume_lang 은 기본값 'ko').
+    const snapshot = buildSnapshot(bodyOf(resume), resume.body, { include: false, copied: false }, 'ko');
     const blocks = applyBlocks({
       canApply: seeker.role === 'seeker', jobVisible: job.status === 'published' && verifiedIds.has(job.company_id), alreadyApplied: false,
       resumeReady: resumeReadyToApply(snapshot), consentNeed: need, consentGiven: a.consent,

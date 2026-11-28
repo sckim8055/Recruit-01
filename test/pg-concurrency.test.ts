@@ -94,7 +94,7 @@ describe.skipIf(!URL_)('PostgreSQL 동시성 (PG_TEST_URL)', () => {
 
   it('applications.insertApplication: 같은 공고·같은 구직자 12번 동시에 → 1건', async () => {
     const r = await parallel(N, (i) => insertApplication(db, {
-      id: `a${i}`, jobId: 'j1', seekerId: 's1', resumeId: 'r', snapshot: 'v1.x.y', fileKey: null, consentAt: 1, consentVersion: 'v1', ts: 10, keepDays: 180,
+      id: `a${i}`, jobId: 'j1', seekerId: 's1', resumeId: 'r', resumeLang: 'ko', snapshot: 'v1.x.y', fileKey: null, consentAt: 1, consentVersion: 'v1', ts: 10, keepDays: 180,
     }, FLAGS));
     expect(trues(r)).toBe(1);
     expect(Number((await q('SELECT COUNT(*) AS n FROM applications'))[0]!.n)).toBe(1);
@@ -114,7 +114,7 @@ describe.skipIf(!URL_)('PostgreSQL 동시성 (PG_TEST_URL)', () => {
   });
 
   it('resumes.insertResume: 5개 한도 — 12번 동시에 → 5개, 대표는 하나', async () => {
-    const r = await parallel(N, (i) => insertResume(db, { id: `res${i}`, userId: 's1', title: 't', body: 'v1.a.b', fileKey: null, ts: i }, 5));
+    const r = await parallel(N, (i) => insertResume(db, { id: `res${i}`, userId: 's1', title: 't', lang: 'ko', body: 'v1.a.b', fileKey: null, ts: i }, 5));
     expect(trues(r)).toBe(5);
     expect(Number((await q("SELECT COUNT(*) AS n FROM resumes WHERE user_id = 's1'"))[0]!.n)).toBe(5);
     expect(Number((await q("SELECT COUNT(*) AS n FROM resumes WHERE user_id = 's1' AND is_default = 1"))[0]!.n)).toBe(1);
